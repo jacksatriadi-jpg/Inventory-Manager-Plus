@@ -3,6 +3,7 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { startBackupScheduler } from "./lib/backup-scheduler";
 import path from "path";
 import { fileURLToPath } from "url";
 import crypto from "crypto";
@@ -94,6 +95,23 @@ async function setupDatabase() {
       ALTER TABLE materials ADD COLUMN IF NOT EXISTS kategori TEXT NOT NULL DEFAULT 'scan';
     `);
 
+    // Auto backup config table
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS backup_config (
+        id SERIAL PRIMARY KEY,
+        enabled BOOLEAN NOT NULL DEFAULT false,
+        interval TEXT NOT NULL DEFAULT 'daily',
+        hour INTEGER NOT NULL DEFAULT 2,
+        minute INTEGER NOT NULL DEFAULT 0,
+        keep_count INTEGER NOT NULL DEFAULT 7,
+        last_run_at TIMESTAMPTZ
+      );
+    `);
+    const bcRows = await pool.query("SELECT id FROM backup_config LIMIT 1");
+    if (bcRows.rows.length === 0) {
+      await pool.query("INSERT INTO backup_config (enabled) VALUES (false)");
+    }
+
     logger.info("Database tables ready");
 
     // Seed admin user if no users exist
@@ -111,7 +129,9 @@ async function setupDatabase() {
   }
 }
 
-setupDatabase();
+setupDatabase().then(() => {
+  startBackupScheduler();
+});
 
 app.use("/api", router);
 

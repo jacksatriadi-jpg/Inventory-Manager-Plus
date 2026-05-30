@@ -1,7 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Database, Package2, Users2, Plus, Pencil, Trash2, Loader2, DatabaseBackup, Download, Upload, ShieldAlert, CheckCircle2 } from "lucide-react";
+import { Database, Package2, Users2, Plus, Pencil, Trash2, Loader2, DatabaseBackup, Download, Upload, ShieldAlert, CheckCircle2, Clock, Calendar, HardDrive, PlayCircle, RefreshCw } from "lucide-react";
 import { useListMaterials, useCreateMaterial, useUpdateMaterial, useDeleteMaterial, 
          useListUsers, useCreateUser, useUpdateUser, useDeleteUser, getListMaterialsQueryKey, getListUsersQueryKey } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -375,24 +375,124 @@ function UsersTab() {
 function BackupTab() {
   const { token } = useAuth();
   const { toast } = useToast();
+
+  // Manual backup/restore
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
-  const [lastBackup, setLastBackup] = useState<string | null>(null);
+  const [lastManualBackup, setLastManualBackup] = useState<string | null>(null);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [restoreResult, setRestoreResult] = useState<any>(null);
+
+  // Auto backup
+  type AutoConfig = { enabled: boolean; interval: string; hour: number; minute: number; keep_count: number };
+  const [autoConfig, setAutoConfig] = useState<AutoConfig>({ enabled: false, interval: "daily", hour: 2, minute: 0, keep_count: 7 });
+  const [isSavingConfig, setIsSavingConfig] = useState(false);
+  const [isRunningNow, setIsRunningNow] = useState(false);
+  const [lastRunAt, setLastRunAt] = useState<string | null>(null);
+  const [backupFiles, setBackupFiles] = useState<Array<{ filename: string; size: number; createdAt: string }>>([]);
+  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+
+  useEffect(() => {
+    loadAutoConfig();
+    loadBackupFiles();
+  }, []);
+
+  const loadAutoConfig = async () => {
+    try {
+      const res = await fetch("/api/auto-backup/config", { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const d = await res.json();
+        setAutoConfig({ enabled: d.enabled, interval: d.interval, hour: d.hour, minute: d.minute, keep_count: d.keep_count });
+        setLastRunAt(d.last_run_at ?? null);
+      }
+    } catch {}
+  };
+
+  const loadBackupFiles = async () => {
+    setIsLoadingFiles(true);
+    try {
+      const res = await fetch("/api/auto-backup/list", { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const d = await res.json();
+        setBackupFiles(d.files ?? []);
+      }
+    } catch {} finally {
+      setIsLoadingFiles(false);
+    }
+  };
+
+  const handleSaveConfig = async () => {
+    setIsSavingConfig(true);
+    try {
+      const res = await fetch("/api/auto-backup/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(autoConfig),
+      });
+      if (!res.ok) throw new Error("Gagal menyimpan");
+      toast({ title: "Konfigurasi disimpan", description: "Jadwal auto backup telah diperbarui." });
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err.message, variant: "destructive" });
+    } finally {
+      setIsSavingConfig(false);
+    }
+  };
+
+  const handleRunNow = async () => {
+    setIsRunningNow(true);
+    try {
+      const res = await fetch("/api/auto-backup/run-now", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Backup gagal");
+      const d = await res.json();
+      toast({ title: "Backup berhasil!", description: `Disimpan: ${d.filename}` });
+      loadBackupFiles();
+      loadAutoConfig();
+    } catch (err: any) {
+      toast({ title: "Backup gagal", description: err.message, variant: "destructive" });
+    } finally {
+      setIsRunningNow(false);
+    }
+  };
+
+  const handleDownloadServerFile = async (filename: string) => {
+    try {
+      const res = await fetch(`/api/auto-backup/download/${encodeURIComponent(filename)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Gagal mengunduh");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      toast({ title: "Gagal mengunduh", description: err.message, variant: "destructive" });
+    }
+  };
+
+  const handleDeleteServerFile = async (filename: string) => {
+    if (!confirm(`Hapus file backup "${filename}"?`)) return;
+    try {
+      const res = await fetch(`/api/auto-backup/file/${encodeURIComponent(filename)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Gagal menghapus");
+      toast({ title: "File backup dihapus" });
+      loadBackupFiles();
+    } catch (err: any) {
+      toast({ title: "Gagal menghapus", description: err.message, variant: "destructive" });
+    }
+  };
 
   const handleBackup = async () => {
     setIsBackingUp(true);
     try {
-      const res = await fetch("/api/backup", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Backup gagal");
-      }
-
+      const res = await fetch("/api/backup", { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.error || "Backup gagal"); }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -400,8 +500,7 @@ function BackupTab() {
       a.download = `backup_${format(new Date(), "yyyyMMdd_HHmmss")}.json`;
       a.click();
       URL.revokeObjectURL(url);
-
-      setLastBackup(new Date().toISOString());
+      setLastManualBackup(new Date().toISOString());
       toast({ title: "Backup berhasil", description: "File backup telah diunduh." });
     } catch (err: any) {
       toast({ title: "Backup gagal", description: err?.message, variant: "destructive" });
@@ -410,44 +509,21 @@ function BackupTab() {
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setRestoreFile(file);
-      setRestoreResult(null);
-    }
-  };
-
   const handleRestore = async () => {
     if (!restoreFile) return;
-
-    const confirmed = window.confirm(
-      "⚠️ PERINGATAN: Restore akan menghapus SEMUA data yang ada dan menggantinya dengan data dari file backup.\n\nLanjutkan?"
-    );
-    if (!confirmed) return;
-
+    if (!confirm("⚠️ PERINGATAN: Restore akan menghapus SEMUA data yang ada dan menggantinya dengan data dari file backup.\n\nLanjutkan?")) return;
     setIsRestoring(true);
     setRestoreResult(null);
-
     try {
       const text = await restoreFile.text();
       const backup = JSON.parse(text);
-
       const res = await fetch("/api/restore", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(backup),
       });
-
       const result = await res.json();
-
-      if (!res.ok) {
-        throw new Error(result.error || "Restore gagal");
-      }
-
+      if (!res.ok) throw new Error(result.error || "Restore gagal");
       setRestoreResult(result.restored);
       toast({ title: "Restore berhasil!", description: "Database telah dipulihkan dari backup." });
     } catch (err: any) {
@@ -457,118 +533,215 @@ function BackupTab() {
     }
   };
 
+  const intervalLabel: Record<string, string> = { daily: "Setiap Hari", weekly: "Setiap Minggu", monthly: "Setiap Bulan" };
+  const formatBytes = (b: number) => b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1024 / 1024).toFixed(2)} MB`;
+
   return (
     <div className="space-y-6 max-w-2xl">
-      {/* Export Backup Card */}
+
+      {/* Auto Backup Settings */}
+      <Card className="border-blue-500/30 shadow-sm">
+        <CardHeader className="bg-blue-50/50 dark:bg-blue-950/20 border-b border-border/50">
+          <CardTitle className="flex items-center gap-2 text-blue-700 dark:text-blue-400">
+            <Clock className="w-5 h-5" /> Auto Backup Terjadwal
+          </CardTitle>
+          <CardDescription>
+            Backup otomatis berjalan di server sesuai jadwal yang dikonfigurasi.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-5 space-y-5">
+          {/* Enable toggle */}
+          <div className="flex items-center justify-between rounded-lg border border-border p-4 bg-muted/20">
+            <div>
+              <p className="font-semibold text-sm">Aktifkan Auto Backup</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {autoConfig.enabled ? "Aktif — backup berjalan otomatis" : "Nonaktif — tidak ada backup otomatis"}
+              </p>
+            </div>
+            <button
+              onClick={() => setAutoConfig(c => ({ ...c, enabled: !c.enabled }))}
+              className={`relative w-12 h-6 rounded-full transition-colors focus:outline-none ${autoConfig.enabled ? "bg-blue-600" : "bg-muted-foreground/30"}`}
+            >
+              <span className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${autoConfig.enabled ? "translate-x-6" : "translate-x-0"}`} />
+            </button>
+          </div>
+
+          {/* Interval & time */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-1"><Calendar className="w-3.5 h-3.5" /> Interval</label>
+              <select
+                value={autoConfig.interval}
+                onChange={e => setAutoConfig(c => ({ ...c, interval: e.target.value }))}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="daily">Setiap Hari</option>
+                <option value="weekly">Setiap Minggu</option>
+                <option value="monthly">Setiap Bulan</option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Jam Eksekusi</label>
+              <div className="flex gap-2 items-center">
+                <Input
+                  type="number" min={0} max={23}
+                  value={autoConfig.hour}
+                  onChange={e => setAutoConfig(c => ({ ...c, hour: Number(e.target.value) }))}
+                  className="w-20 text-center font-mono"
+                />
+                <span className="text-muted-foreground font-bold">:</span>
+                <Input
+                  type="number" min={0} max={59}
+                  value={String(autoConfig.minute).padStart(2, "0")}
+                  onChange={e => setAutoConfig(c => ({ ...c, minute: Number(e.target.value) }))}
+                  className="w-20 text-center font-mono"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Keep count */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium flex items-center gap-1"><HardDrive className="w-3.5 h-3.5" /> Simpan {autoConfig.keep_count} file backup terbaru</label>
+            <input
+              type="range" min={1} max={30} value={autoConfig.keep_count}
+              onChange={e => setAutoConfig(c => ({ ...c, keep_count: Number(e.target.value) }))}
+              className="w-full accent-blue-600"
+            />
+            <div className="flex justify-between text-xs text-muted-foreground"><span>1</span><span>30</span></div>
+          </div>
+
+          {/* Status */}
+          {lastRunAt && (
+            <p className="text-xs text-muted-foreground flex items-center gap-1 bg-muted/30 rounded p-2">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+              Backup terakhir: {format(new Date(lastRunAt), "dd MMM yyyy, HH:mm:ss")}
+            </p>
+          )}
+
+          {/* Actions */}
+          <div className="flex gap-3">
+            <Button onClick={handleSaveConfig} disabled={isSavingConfig} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold uppercase tracking-wide">
+              {isSavingConfig ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Menyimpan...</> : "Simpan Jadwal"}
+            </Button>
+            <Button onClick={handleRunNow} disabled={isRunningNow} variant="outline" className="gap-2">
+              {isRunningNow ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
+              Jalankan Sekarang
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Server Backup Files */}
+      <Card className="border-violet-500/30 shadow-sm">
+        <CardHeader className="bg-violet-50/50 dark:bg-violet-950/20 border-b border-border/50">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2 text-violet-700 dark:text-violet-400">
+                <HardDrive className="w-5 h-5" /> Riwayat Backup Server
+              </CardTitle>
+              <CardDescription>File backup yang tersimpan di server ({backupFiles.length} file).</CardDescription>
+            </div>
+            <Button variant="ghost" size="icon" onClick={loadBackupFiles} title="Refresh">
+              <RefreshCw className={`w-4 h-4 ${isLoadingFiles ? "animate-spin" : ""}`} />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="p-0">
+          {isLoadingFiles ? (
+            <div className="p-8 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+          ) : backupFiles.length === 0 ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">
+              <HardDrive className="w-10 h-10 mx-auto mb-2 opacity-20" />
+              Belum ada file backup di server.<br />Klik "Jalankan Sekarang" untuk membuat backup pertama.
+            </div>
+          ) : (
+            <div className="divide-y divide-border">
+              {backupFiles.map((f) => (
+                <div key={f.filename} className="flex items-center justify-between px-4 py-3 hover:bg-muted/20 transition-colors">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-mono font-medium truncate">{f.filename}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {format(new Date(f.createdAt), "dd MMM yyyy, HH:mm")} · {formatBytes(f.size)}
+                    </p>
+                  </div>
+                  <div className="flex gap-1 ml-3 shrink-0">
+                    <Button variant="ghost" size="icon" onClick={() => handleDownloadServerFile(f.filename)} title="Unduh">
+                      <Download className="w-4 h-4" />
+                    </Button>
+                    <Button variant="ghost" size="icon" className="text-destructive hover:bg-destructive/10 hover:text-destructive" onClick={() => handleDeleteServerFile(f.filename)} title="Hapus">
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Manual Export */}
       <Card className="border-emerald-500/30 shadow-sm">
         <CardHeader className="bg-emerald-50/50 dark:bg-emerald-950/20 border-b border-border/50">
           <CardTitle className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
-            <Download className="w-5 h-5" /> Export Backup
+            <Download className="w-5 h-5" /> Export Manual
           </CardTitle>
-          <CardDescription>
-            Download snapshot lengkap semua data database sebagai file JSON.
-          </CardDescription>
+          <CardDescription>Download snapshot semua data sebagai file JSON ke perangkat Anda.</CardDescription>
         </CardHeader>
-        <CardContent className="pt-6 space-y-4">
-          <div className="bg-muted/40 rounded-lg p-4 text-sm text-muted-foreground space-y-1 border border-border">
-            <p>File backup mencakup:</p>
-            <ul className="list-disc list-inside space-y-0.5 mt-2">
-              <li>Semua pengguna (dengan password terenkripsi)</li>
-              <li>Semua material (termasuk kategori)</li>
-              <li>Semua sesi scan-in dan item</li>
-              <li>Semua sesi scan-out</li>
-              <li>Semua data material masuk (non-scan)</li>
-              <li>Semua data material keluar (non-scan)</li>
-            </ul>
-          </div>
-          {lastBackup && (
+        <CardContent className="pt-5 space-y-4">
+          {lastManualBackup && (
             <p className="text-xs text-muted-foreground flex items-center gap-1">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-              Backup terakhir: {format(new Date(lastBackup), "dd MMM yyyy, HH:mm:ss")}
+              Backup terakhir: {format(new Date(lastManualBackup), "dd MMM yyyy, HH:mm:ss")}
             </p>
           )}
-          <Button
-            onClick={handleBackup}
-            disabled={isBackingUp}
-            className="w-full h-12 bg-emerald-600 hover:bg-emerald-700 text-white font-bold uppercase tracking-wide"
-          >
-            {isBackingUp ? (
-              <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> Membuat Backup...</>
-            ) : (
-              <><Download className="w-5 h-5 mr-2" /> Download Backup</>
-            )}
+          <Button onClick={handleBackup} disabled={isBackingUp} className="w-full h-11 bg-emerald-600 hover:bg-emerald-700 text-white font-bold uppercase tracking-wide">
+            {isBackingUp ? <><Loader2 className="w-5 h-5 mr-2 animate-spin" />Membuat Backup...</> : <><Download className="w-5 h-5 mr-2" />Download Backup</>}
           </Button>
         </CardContent>
       </Card>
 
-      {/* Import / Restore Card */}
+      {/* Restore */}
       <Card className="border-amber-500/30 shadow-sm">
         <CardHeader className="bg-amber-50/50 dark:bg-amber-950/20 border-b border-border/50">
           <CardTitle className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
             <Upload className="w-5 h-5" /> Import / Restore
           </CardTitle>
-          <CardDescription>
-            Pulihkan database dari file backup yang sebelumnya diekspor.
-          </CardDescription>
+          <CardDescription>Pulihkan database dari file backup yang sebelumnya diekspor.</CardDescription>
         </CardHeader>
-        <CardContent className="pt-6 space-y-4">
-          <div className="bg-amber-50/50 dark:bg-amber-950/20 border border-amber-500/20 rounded-lg p-4 text-sm text-amber-700 dark:text-amber-400">
+        <CardContent className="pt-5 space-y-4">
+          <div className="bg-amber-50/50 dark:bg-amber-950/20 border border-amber-500/20 rounded-lg p-3 text-sm text-amber-700 dark:text-amber-400">
             <p className="font-semibold flex items-center gap-1"><ShieldAlert className="w-4 h-4" /> Peringatan</p>
-            <p className="mt-1">Restore akan menghapus semua data saat ini dan menggantinya dengan isi backup. Tindakan ini tidak dapat dibatalkan.</p>
+            <p className="mt-1 text-xs">Restore akan menghapus semua data saat ini dan menggantinya dengan isi backup. Tindakan ini tidak dapat dibatalkan.</p>
           </div>
-
           <div
-            className="border-2 border-dashed border-border rounded-lg p-8 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/20 transition-colors"
+            className="border-2 border-dashed border-border rounded-lg p-6 text-center cursor-pointer hover:border-primary/50 hover:bg-muted/20 transition-colors"
             onClick={() => document.getElementById("master-restore-file-input")?.click()}
           >
-            <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground opacity-50" />
+            <Upload className="w-7 h-7 mx-auto mb-2 text-muted-foreground opacity-50" />
             {restoreFile ? (
-              <div>
-                <p className="font-medium text-foreground">{restoreFile.name}</p>
-                <p className="text-xs text-muted-foreground mt-1">{(restoreFile.size / 1024).toFixed(1)} KB</p>
-              </div>
+              <div><p className="font-medium text-foreground">{restoreFile.name}</p><p className="text-xs text-muted-foreground mt-1">{(restoreFile.size / 1024).toFixed(1)} KB</p></div>
             ) : (
-              <div>
-                <p className="text-muted-foreground">Klik untuk memilih file backup</p>
-                <p className="text-xs text-muted-foreground mt-1">hanya file .json</p>
-              </div>
+              <div><p className="text-muted-foreground text-sm">Klik untuk memilih file backup</p><p className="text-xs text-muted-foreground mt-1">hanya file .json</p></div>
             )}
-            <input
-              id="master-restore-file-input"
-              type="file"
-              accept=".json"
-              className="hidden"
-              onChange={handleFileChange}
-            />
+            <input id="master-restore-file-input" type="file" accept=".json" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) { setRestoreFile(f); setRestoreResult(null); } }} />
           </div>
-
           {restoreResult && (
             <div className="bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-500/20 rounded-lg p-4 text-sm space-y-2">
-              <p className="font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
-                <CheckCircle2 className="w-4 h-4" /> Restore Berhasil
-              </p>
+              <p className="font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-4 h-4" /> Restore Berhasil</p>
               <div className="grid grid-cols-2 gap-1 text-muted-foreground">
-                <span>Users dipulihkan:</span><span className="font-mono font-bold text-foreground">{restoreResult.users}</span>
-                <span>Material dipulihkan:</span><span className="font-mono font-bold text-foreground">{restoreResult.materials}</span>
+                <span>Users:</span><span className="font-mono font-bold text-foreground">{restoreResult.users}</span>
+                <span>Material:</span><span className="font-mono font-bold text-foreground">{restoreResult.materials}</span>
                 <span>Sesi scan-in:</span><span className="font-mono font-bold text-foreground">{restoreResult.scanIns}</span>
                 <span>Item scan:</span><span className="font-mono font-bold text-foreground">{restoreResult.scanItems}</span>
                 <span>Sesi scan-out:</span><span className="font-mono font-bold text-foreground">{restoreResult.scanOuts}</span>
-                <span>Material masuk (non-scan):</span><span className="font-mono font-bold text-foreground">{restoreResult.nonScanMasuk}</span>
-                <span>Material keluar (non-scan):</span><span className="font-mono font-bold text-foreground">{restoreResult.nonScanKeluar}</span>
+                <span>Material masuk:</span><span className="font-mono font-bold text-foreground">{restoreResult.nonScanMasuk}</span>
+                <span>Material keluar:</span><span className="font-mono font-bold text-foreground">{restoreResult.nonScanKeluar}</span>
               </div>
             </div>
           )}
-
-          <Button
-            onClick={handleRestore}
-            disabled={!restoreFile || isRestoring}
-            className="w-full h-12 bg-amber-600 hover:bg-amber-700 text-white font-bold uppercase tracking-wide"
-          >
-            {isRestoring ? (
-              <><Loader2 className="w-5 h-5 mr-2 animate-spin" /> Memulihkan...</>
-            ) : (
-              <><Upload className="w-5 h-5 mr-2" /> Restore dari Backup</>
-            )}
+          <Button onClick={handleRestore} disabled={!restoreFile || isRestoring} className="w-full h-11 bg-amber-600 hover:bg-amber-700 text-white font-bold uppercase tracking-wide">
+            {isRestoring ? <><Loader2 className="w-5 h-5 mr-2 animate-spin" />Memulihkan...</> : <><Upload className="w-5 h-5 mr-2" />Restore dari Backup</>}
           </Button>
         </CardContent>
       </Card>
