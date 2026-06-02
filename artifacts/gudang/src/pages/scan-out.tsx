@@ -118,10 +118,17 @@ export default function ScanOutView() {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
         }
       });
+      // Enable continuous autofocus for close-up QR scanning
+      const track = stream.getVideoTracks()[0];
+      if (track) {
+        try {
+          await track.applyConstraints({ advanced: [{ focusMode: "continuous" } as any] });
+        } catch { /* not all browsers support this */ }
+      }
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.setAttribute("playsinline", "true");
@@ -153,18 +160,32 @@ export default function ScanOutView() {
     if (videoRef.current && canvasRef.current && videoRef.current.readyState >= videoRef.current.HAVE_ENOUGH_DATA) {
       const canvas = canvasRef.current;
       const video = videoRef.current;
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
+      // Scan center 70% of frame where the QR guide is focused
+      const cropW = Math.floor(video.videoWidth * 0.7);
+      const cropH = Math.floor(video.videoHeight * 0.7);
+      const cropX = Math.floor((video.videoWidth - cropW) / 2);
+      const cropY = Math.floor((video.videoHeight - cropH) / 2);
+      canvas.width = cropW;
+      canvas.height = cropH;
       const ctx = canvas.getContext("2d", { willReadFrequently: true });
       if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
+        // Boost contrast to help jsQR on blurry images
+        const imageData = ctx.getImageData(0, 0, cropW, cropH);
+        const d = imageData.data;
+        for (let i = 0; i < d.length; i += 4) {
+          const luma = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+          const boosted = Math.min(255, Math.max(0, (luma - 128) * 1.6 + 128));
+          d[i] = d[i + 1] = d[i + 2] = boosted;
+        }
+        ctx.putImageData(imageData, 0, 0);
+        const processed = ctx.getImageData(0, 0, cropW, cropH);
+        const code = jsQR(processed.data, processed.width, processed.height, {
           inversionAttempts: "attemptBoth",
         });
         if (code) {
           const now = Date.now();
-          if (now - lastScanTime.current > 2000) {
+          if (now - lastScanTime.current > 400) {
             lastScanTime.current = now;
             handleScanBox(code.data);
           }
