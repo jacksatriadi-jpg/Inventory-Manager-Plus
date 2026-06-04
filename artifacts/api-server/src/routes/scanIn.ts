@@ -81,12 +81,13 @@ router.post("/scan-in", async (req, res): Promise<void> => {
     await db.delete(scanInTable).where(eq(scanInTable.id, s.id));
   }
 
-  // Only count COMPLETED sessions for box label numbering so abandoned sessions don't inflate the sequence
-  const completedSessions = await db
+  // Count ALL sessions (scanning by other users + completed) so concurrent users get unique sequential numbers.
+  // This user's own abandoned sessions were deleted above, so they don't inflate the count.
+  const allSessions = await db
     .select()
     .from(scanInTable)
-    .where(and(eq(scanInTable.materialId, parsed.data.materialId), eq(scanInTable.status, "completed")));
-  const seqNum = (completedSessions.length + 1).toString().padStart(3, "0");
+    .where(eq(scanInTable.materialId, parsed.data.materialId));
+  const seqNum = (allSessions.length + 1).toString().padStart(3, "0");
   const boxLabel = `${material.code}${seqNum}`;
 
   const [scanIn] = await db

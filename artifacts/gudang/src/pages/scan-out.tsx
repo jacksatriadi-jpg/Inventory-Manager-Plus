@@ -25,6 +25,7 @@ export default function ScanOutView() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number | undefined>(undefined);
   const lastScanTime = useRef<number>(0);
+  const lastProcessTime = useRef<number>(0);
   const inputRef = useRef<HTMLInputElement>(null);
   // Ref to avoid stale closure in rAF loop
   const cameraRunning = useRef(false);
@@ -157,38 +158,39 @@ export default function ScanOutView() {
 
   const tick = useCallback(() => {
     if (!cameraRunning.current) return;
-    if (videoRef.current && canvasRef.current && videoRef.current.readyState >= videoRef.current.HAVE_ENOUGH_DATA) {
+    const now = Date.now();
+    if (
+      videoRef.current &&
+      canvasRef.current &&
+      videoRef.current.readyState >= videoRef.current.HAVE_ENOUGH_DATA &&
+      now - lastProcessTime.current >= 200
+    ) {
+      lastProcessTime.current = now;
       const canvas = canvasRef.current;
       const video = videoRef.current;
-      // Scan center 70% of frame where the QR guide is focused
-      const cropW = Math.floor(video.videoWidth * 0.7);
-      const cropH = Math.floor(video.videoHeight * 0.7);
-      const cropX = Math.floor((video.videoWidth - cropW) / 2);
-      const cropY = Math.floor((video.videoHeight - cropH) / 2);
-      canvas.width = cropW;
-      canvas.height = cropH;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
       const ctx = canvas.getContext("2d", { willReadFrequently: true });
       if (ctx) {
-        ctx.drawImage(video, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH);
-        // Boost contrast to help jsQR on blurry images
-        const imageData = ctx.getImageData(0, 0, cropW, cropH);
-        const d = imageData.data;
-        for (let i = 0; i < d.length; i += 4) {
-          const luma = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-          const boosted = Math.min(255, Math.max(0, (luma - 128) * 1.6 + 128));
-          d[i] = d[i + 1] = d[i + 2] = boosted;
-        }
-        ctx.putImageData(imageData, 0, 0);
-        const processed = ctx.getImageData(0, 0, cropW, cropH);
-        const code = jsQR(processed.data, processed.width, processed.height, {
-          inversionAttempts: "attemptBoth",
-        });
-        if (code) {
-          const now = Date.now();
-          if (now - lastScanTime.current > 400) {
-            lastScanTime.current = now;
-            handleScanBox(code.data);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        // Pass 1: raw frame — jsQR works best on unmodified images
+        const raw = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        let code = jsQR(raw.data, raw.width, raw.height, { inversionAttempts: "attemptBoth" });
+        // Pass 2: contrast-boosted fallback for blurry/dark frames
+        if (!code) {
+          const d = raw.data;
+          for (let i = 0; i < d.length; i += 4) {
+            const luma = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+            const v = Math.min(255, Math.max(0, (luma - 128) * 1.8 + 128));
+            d[i] = d[i + 1] = d[i + 2] = v;
           }
+          ctx.putImageData(raw, 0, 0);
+          const boosted = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          code = jsQR(boosted.data, boosted.width, boosted.height, { inversionAttempts: "attemptBoth" });
+        }
+        if (code && now - lastScanTime.current > 1500) {
+          lastScanTime.current = now;
+          handleScanBox(code.data);
         }
       }
     }
