@@ -20,13 +20,15 @@ export default function ScanOutView() {
 
   const [scanMethod, setScanMethod] = useState<"camera" | "manual">("manual");
   const [manualInput, setManualInput] = useState("");
+  const [isScannerActive, setIsScannerActive] = useState(false);
   const [isCameraActive, setIsCameraActive] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const requestRef = useRef<number | undefined>(undefined);
   const lastScanTime = useRef<number>(0);
   const lastProcessTime = useRef<number>(0);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const scannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Ref to avoid stale closure in rAF loop
   const cameraRunning = useRef(false);
   const activeSessionRef = useRef<any>(null);
@@ -73,6 +75,22 @@ export default function ScanOutView() {
     }
   };
 
+  const handleManualInput = (value: string) => {
+    setManualInput(value);
+    setIsScannerActive(true);
+    if (scannerTimerRef.current) clearTimeout(scannerTimerRef.current);
+    if (value.trim()) {
+      scannerTimerRef.current = setTimeout(() => {
+        setIsScannerActive(false);
+        handleScanBox(value);
+        setManualInput("");
+        setTimeout(() => inputRef.current?.focus(), 50);
+      }, 350);
+    } else {
+      setIsScannerActive(false);
+    }
+  };
+
   const handleScanBox = useCallback(async (qrData: string) => {
     const session = activeSessionRef.current;
     if (!session) return;
@@ -94,6 +112,8 @@ export default function ScanOutView() {
       if (scanMethod === "manual") inputRef.current?.focus();
     } catch (error: any) {
       playBeep(false);
+      setManualInput("");
+      setTimeout(() => inputRef.current?.focus(), 50);
       toast({
         title: "Scan gagal",
         description: error?.message || "QR tidak valid, box tidak ditemukan, atau sudah pernah dispatch.",
@@ -283,22 +303,49 @@ export default function ScanOutView() {
               <div className="flex-1 flex flex-col">
                 <div className="p-4 border-b border-border/50 bg-amber-50/30 dark:bg-amber-950/10">
                   {scanMethod === "manual" ? (
-                    <form
-                      onSubmit={(e) => { e.preventDefault(); handleScanBox(manualInput); }}
-                      className="flex gap-2"
-                    >
-                      <Input
-                        ref={inputRef}
-                        placeholder="Paste data QR dus..."
-                        value={manualInput}
-                        onChange={(e) => setManualInput(e.target.value)}
-                        className="h-14 font-mono"
-                        autoFocus
-                      />
-                      <Button type="submit" className="h-14 px-6 bg-amber-600 hover:bg-amber-700 text-white" disabled={!manualInput || addItemMutation.isPending}>
-                        Dispatch
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <textarea
+                          ref={inputRef}
+                          rows={1}
+                          placeholder="Arahkan scanner QR eksternal ke sini, lalu tahan di atas QR code pada dus..."
+                          value={manualInput}
+                          onChange={(e) => handleManualInput(e.target.value)}
+                          className="w-full px-4 py-3 text-sm font-mono border border-input rounded-md bg-background resize-none overflow-hidden focus:outline-none focus:ring-2 focus:ring-amber-400/60 transition-shadow"
+                          style={{ height: "56px" }}
+                          autoFocus
+                        />
+                        {isScannerActive && (
+                          <div className="absolute right-3 top-3 flex items-center gap-1.5 text-amber-600 pointer-events-none">
+                            <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
+                            <span className="text-xs font-semibold">Membaca...</span>
+                          </div>
+                        )}
+                        {addItemMutation.isPending && (
+                          <div className="absolute right-3 top-3 flex items-center gap-1.5 text-emerald-600 pointer-events-none">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span className="text-xs font-semibold">Dispatch...</span>
+                          </div>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground text-center">
+                        Scanner akan otomatis dispatch setelah QR terbaca — atau klik tombol di bawah
+                      </p>
+                      <Button
+                        type="button"
+                        className="w-full h-12 bg-amber-600 hover:bg-amber-700 text-white font-bold uppercase tracking-wide"
+                        disabled={!manualInput.trim() || addItemMutation.isPending}
+                        onClick={() => {
+                          if (scannerTimerRef.current) clearTimeout(scannerTimerRef.current);
+                          handleScanBox(manualInput);
+                          setManualInput("");
+                          setTimeout(() => inputRef.current?.focus(), 50);
+                        }}
+                      >
+                        <ArrowUpRight className="w-4 h-4 mr-2" />
+                        Dispatch Manual
                       </Button>
-                    </form>
+                    </div>
                   ) : (
                     <div className="space-y-2">
                       <div className="relative w-full max-w-md mx-auto bg-black rounded-lg overflow-hidden" style={{aspectRatio: '1/1'}}>
