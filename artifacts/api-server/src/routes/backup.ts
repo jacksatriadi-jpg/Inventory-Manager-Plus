@@ -49,7 +49,15 @@ router.get("/backup", async (req, res): Promise<void> => {
     const backup = {
       exportedAt: new Date().toISOString(),
       version: 2,
-      data: { users, materials, scanIns, scanItems, scanOuts, nonScanMasuk, nonScanKeluar },
+      data: {
+        users,
+        materials,
+        scanIns: scanIns.map(({ qrCodeData: _qr, ...rest }) => rest),
+        scanItems,
+        scanOuts,
+        nonScanMasuk,
+        nonScanKeluar,
+      },
     };
 
     res.setHeader("Content-Type", "application/json");
@@ -72,60 +80,106 @@ router.post("/restore", async (req, res): Promise<void> => {
 
     const { users = [], materials = [], scanIns = [], scanItems = [], scanOuts = [], nonScanMasuk = [], nonScanKeluar = [] } = data;
 
-    await db.delete(nonScanKeluarTable);
-    await db.delete(nonScanMasukTable);
-    await db.delete(scanItemsTable);
-    await db.delete(scanOutTable);
-    await db.delete(scanInTable);
-    await db.delete(materialsTable);
-    await db.delete(usersTable);
-
     let insertedUsers = 0, insertedMaterials = 0, insertedScanIns = 0;
     let insertedScanItems = 0, insertedScanOuts = 0, insertedNonScanMasuk = 0, insertedNonScanKeluar = 0;
 
-    if (users.length > 0) {
-      const rows = users.map((u: any) => ({ ...u, createdAt: toDate(u.createdAt) }));
-      await db.insert(usersTable).values(rows);
-      insertedUsers = rows.length;
-    }
-    if (materials.length > 0) {
-      const rows = materials.map((m: any) => ({ ...m, kategori: m.kategori ?? "scan", createdAt: toDate(m.createdAt) }));
-      await db.insert(materialsTable).values(rows);
-      insertedMaterials = rows.length;
-    }
-    if (scanIns.length > 0) {
-      const rows = scanIns.map((s: any) => ({ ...s, createdAt: toDate(s.createdAt), completedAt: toDate(s.completedAt) }));
-      await db.insert(scanInTable).values(rows);
-      insertedScanIns = rows.length;
-    }
-    if (scanItems.length > 0) {
-      const rows = scanItems.map((i: any) => ({ ...i, createdAt: toDate(i.createdAt) }));
-      await db.insert(scanItemsTable).values(rows);
-      insertedScanItems = rows.length;
-    }
-    if (scanOuts.length > 0) {
-      const rows = scanOuts.map((o: any) => ({ ...o, createdAt: toDate(o.createdAt) }));
-      await db.insert(scanOutTable).values(rows);
-      insertedScanOuts = rows.length;
-    }
-    if (nonScanMasuk.length > 0) {
-      const rows = nonScanMasuk.map((nm: any) => ({ ...nm, createdAt: toDate(nm.createdAt) }));
-      await db.insert(nonScanMasukTable).values(rows);
-      insertedNonScanMasuk = rows.length;
-    }
-    if (nonScanKeluar.length > 0) {
-      const rows = nonScanKeluar.map((nk: any) => ({ ...nk, createdAt: toDate(nk.createdAt) }));
-      await db.insert(nonScanKeluarTable).values(rows);
-      insertedNonScanKeluar = rows.length;
-    }
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
 
-    await db.execute(sql`SELECT setval('users_id_seq', COALESCE((SELECT MAX(id) FROM users), 0) + 1, false)`);
-    await db.execute(sql`SELECT setval('materials_id_seq', COALESCE((SELECT MAX(id) FROM materials), 0) + 1, false)`);
-    await db.execute(sql`SELECT setval('scan_in_id_seq', COALESCE((SELECT MAX(id) FROM scan_in), 0) + 1, false)`);
-    await db.execute(sql`SELECT setval('scan_items_id_seq', COALESCE((SELECT MAX(id) FROM scan_items), 0) + 1, false)`);
-    await db.execute(sql`SELECT setval('scan_out_id_seq', COALESCE((SELECT MAX(id) FROM scan_out), 0) + 1, false)`);
-    await db.execute(sql`SELECT setval('non_scan_masuk_id_seq', COALESCE((SELECT MAX(id) FROM non_scan_masuk), 0) + 1, false)`);
-    await db.execute(sql`SELECT setval('non_scan_keluar_id_seq', COALESCE((SELECT MAX(id) FROM non_scan_keluar), 0) + 1, false)`);
+      await client.query("DELETE FROM non_scan_keluar");
+      await client.query("DELETE FROM non_scan_masuk");
+      await client.query("DELETE FROM scan_items");
+      await client.query("DELETE FROM scan_out");
+      await client.query("DELETE FROM scan_in");
+      await client.query("DELETE FROM materials");
+      await client.query("DELETE FROM users");
+
+      if (users.length > 0) {
+        for (const u of users) {
+          await client.query(
+            `INSERT INTO users (id, username, password_hash, role, created_at) VALUES ($1,$2,$3,$4,$5)`,
+            [u.id, u.username, u.passwordHash ?? u.password_hash, u.role ?? "user", toDate(u.createdAt) ?? toDate(u.created_at) ?? new Date()]
+          );
+        }
+        insertedUsers = users.length;
+      }
+
+      if (materials.length > 0) {
+        for (const m of materials) {
+          await client.query(
+            `INSERT INTO materials (id, name, code, description, kategori, created_at) VALUES ($1,$2,$3,$4,$5,$6)`,
+            [m.id, m.name, m.code, m.description ?? null, m.kategori ?? "scan", toDate(m.createdAt) ?? toDate(m.created_at) ?? new Date()]
+          );
+        }
+        insertedMaterials = materials.length;
+      }
+
+      if (scanIns.length > 0) {
+        for (const s of scanIns) {
+          await client.query(
+            `INSERT INTO scan_in (id, material_id, box_label, status, user_id, qr_code_data, created_at, completed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+            [s.id, s.materialId ?? s.material_id, s.boxLabel ?? s.box_label, s.status ?? "completed", s.userId ?? s.user_id, null, toDate(s.createdAt) ?? toDate(s.created_at) ?? new Date(), toDate(s.completedAt) ?? toDate(s.completed_at) ?? null]
+          );
+        }
+        insertedScanIns = scanIns.length;
+      }
+
+      if (scanItems.length > 0) {
+        for (const i of scanItems) {
+          await client.query(
+            `INSERT INTO scan_items (id, serial_number, scan_in_id, scan_out_id, created_at) VALUES ($1,$2,$3,$4,$5)`,
+            [i.id, i.serialNumber ?? i.serial_number, i.scanInId ?? i.scan_in_id ?? null, i.scanOutId ?? i.scan_out_id ?? null, toDate(i.createdAt) ?? toDate(i.created_at) ?? new Date()]
+          );
+        }
+        insertedScanItems = scanItems.length;
+      }
+
+      if (scanOuts.length > 0) {
+        for (const o of scanOuts) {
+          await client.query(
+            `INSERT INTO scan_out (id, user_id, created_at) VALUES ($1,$2,$3)`,
+            [o.id, o.userId ?? o.user_id, toDate(o.createdAt) ?? toDate(o.created_at) ?? new Date()]
+          );
+        }
+        insertedScanOuts = scanOuts.length;
+      }
+
+      if (nonScanMasuk.length > 0) {
+        for (const nm of nonScanMasuk) {
+          await client.query(
+            `INSERT INTO non_scan_masuk (id, material_id, kode_material, jumlah, satuan, user_id, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+            [nm.id, nm.materialId ?? nm.material_id, nm.kodeMaterial ?? nm.kode_material, nm.jumlah, nm.satuan, nm.userId ?? nm.user_id, toDate(nm.createdAt) ?? toDate(nm.created_at) ?? new Date()]
+          );
+        }
+        insertedNonScanMasuk = nonScanMasuk.length;
+      }
+
+      if (nonScanKeluar.length > 0) {
+        for (const nk of nonScanKeluar) {
+          await client.query(
+            `INSERT INTO non_scan_keluar (id, material_id, jumlah, user_id, created_at) VALUES ($1,$2,$3,$4,$5)`,
+            [nk.id, nk.materialId ?? nk.material_id, nk.jumlah, nk.userId ?? nk.user_id, toDate(nk.createdAt) ?? toDate(nk.created_at) ?? new Date()]
+          );
+        }
+        insertedNonScanKeluar = nonScanKeluar.length;
+      }
+
+      await client.query(`SELECT setval('users_id_seq', COALESCE((SELECT MAX(id) FROM users), 0) + 1, false)`);
+      await client.query(`SELECT setval('materials_id_seq', COALESCE((SELECT MAX(id) FROM materials), 0) + 1, false)`);
+      await client.query(`SELECT setval('scan_in_id_seq', COALESCE((SELECT MAX(id) FROM scan_in), 0) + 1, false)`);
+      await client.query(`SELECT setval('scan_items_id_seq', COALESCE((SELECT MAX(id) FROM scan_items), 0) + 1, false)`);
+      await client.query(`SELECT setval('scan_out_id_seq', COALESCE((SELECT MAX(id) FROM scan_out), 0) + 1, false)`);
+      await client.query(`SELECT setval('non_scan_masuk_id_seq', COALESCE((SELECT MAX(id) FROM non_scan_masuk), 0) + 1, false)`);
+      await client.query(`SELECT setval('non_scan_keluar_id_seq', COALESCE((SELECT MAX(id) FROM non_scan_keluar), 0) + 1, false)`);
+
+      await client.query("COMMIT");
+    } catch (txErr) {
+      await client.query("ROLLBACK");
+      throw txErr;
+    } finally {
+      client.release();
+    }
 
     res.json({
       success: true,

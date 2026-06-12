@@ -184,9 +184,9 @@ export default function ScanInView() {
       return;
     }
     try {
+      await updateScanInMutation.mutateAsync({ id: activeSession.id, data: { status: "completed" } });
       const qrText = scannedItems.map(i => i.serialNumber).join('\n');
       const qrDataUrl = await QRCode.toDataURL(qrText, { errorCorrectionLevel: 'M', margin: 2, width: 300 });
-      await updateScanInMutation.mutateAsync({ id: activeSession.id, data: { status: "completed", qrCodeData: qrDataUrl } });
       setGeneratedQr(qrDataUrl);
       localStorage.removeItem(SESSION_KEY);
       queryClient.invalidateQueries({ queryKey: getListScanInQueryKey() });
