@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight, CalendarRange } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { format } from "date-fns";
 import * as XLSX from "xlsx";
@@ -28,14 +28,20 @@ export default function Riwayat() {
   const { toast } = useToast();
   const [filterType,   setFilterType]   = useState<"all" | "in" | "out">("all");
   const [filterSource, setFilterSource] = useState<"all" | "scan" | "non-scan">("all");
+  const [filterFrom,   setFilterFrom]   = useState("");
+  const [filterTo,     setFilterTo]     = useState("");
   const [searchQuery,  setSearchQuery]  = useState("");
   const [selectedIds,  setSelectedIds]  = useState<Set<number>>(new Set());
   const [pageSize,     setPageSize]     = useState<number>(16);
   const [currentPage,  setCurrentPage]  = useState(1);
 
-  const { data: history, isLoading, refetch } = useListHistory(
-    { type: filterType === "all" ? undefined : filterType },
-  );
+  const hasDateFilter = filterFrom !== "" || filterTo !== "";
+
+  const { data: history, isLoading, refetch } = useListHistory({
+    type: filterType === "all" ? undefined : filterType,
+    from: filterFrom || undefined,
+    to:   filterTo   ? filterTo + "T23:59:59" : undefined,
+  });
 
   const deleteHistoryMutation = useDeleteHistory();
 
@@ -327,6 +333,48 @@ export default function Riwayat() {
                 </Select>
               </div>
             </div>
+            {/* ── date range row ─────────────────────────────────────── */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <CalendarRange className="w-4 h-4 shrink-0" />
+                <span className="shrink-0">Dari</span>
+              </div>
+              <Input
+                type="date"
+                value={filterFrom}
+                max={filterTo || undefined}
+                onChange={e => { setFilterFrom(e.target.value); setSelectedIds(new Set()); resetPage(); }}
+                className="h-9 w-[150px] cursor-pointer"
+              />
+              <span className="text-sm text-muted-foreground shrink-0">—</span>
+              <Input
+                type="date"
+                value={filterTo}
+                min={filterFrom || undefined}
+                onChange={e => { setFilterTo(e.target.value); setSelectedIds(new Set()); resetPage(); }}
+                className="h-9 w-[150px] cursor-pointer"
+              />
+              {hasDateFilter && (
+                <Button
+                  variant="ghost" size="sm"
+                  className="h-9 px-2 text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => { setFilterFrom(""); setFilterTo(""); setSelectedIds(new Set()); resetPage(); }}
+                >
+                  <X className="w-3.5 h-3.5 mr-1" /> Hapus tanggal
+                </Button>
+              )}
+              {hasDateFilter && (
+                <Badge variant="outline" className="text-primary border-primary/40 text-xs">
+                  {filterFrom && filterTo
+                    ? `${format(new Date(filterFrom), "dd MMM yyyy")} — ${format(new Date(filterTo), "dd MMM yyyy")}`
+                    : filterFrom
+                    ? `Dari ${format(new Date(filterFrom), "dd MMM yyyy")}`
+                    : `Sampai ${format(new Date(filterTo), "dd MMM yyyy")}`}
+                </Badge>
+              )}
+            </div>
+
+            {/* ── search row ──────────────────────────────────────────── */}
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
               <Input
