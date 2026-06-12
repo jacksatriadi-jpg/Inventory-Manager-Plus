@@ -112,6 +112,17 @@ async function setupDatabase() {
       await pool.query("INSERT INTO backup_config (enabled) VALUES (false)");
     }
 
+    // Migrate: add Google Drive columns if not exist (safe for existing databases)
+    await pool.query(`
+      ALTER TABLE backup_config
+        ADD COLUMN IF NOT EXISTS gdrive_enabled BOOLEAN NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS gdrive_access_token TEXT,
+        ADD COLUMN IF NOT EXISTS gdrive_refresh_token TEXT,
+        ADD COLUMN IF NOT EXISTS gdrive_token_expiry TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS gdrive_account_email TEXT,
+        ADD COLUMN IF NOT EXISTS gdrive_folder_id TEXT;
+    `);
+
     logger.info("Database tables ready");
 
     // Seed admin user if no users exist

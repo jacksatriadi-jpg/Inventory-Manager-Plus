@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Database, Package2, Users2, Plus, Pencil, Trash2, Loader2, DatabaseBackup, Download, Upload, ShieldAlert, CheckCircle2, Clock, Calendar, HardDrive, PlayCircle, RefreshCw } from "lucide-react";
+import { Database, Package2, Users2, Plus, Pencil, Trash2, Loader2, DatabaseBackup, Download, Upload, ShieldAlert, CheckCircle2, Clock, Calendar, HardDrive, PlayCircle, RefreshCw, Link2, Link2Off, CloudUpload } from "lucide-react";
 import { useListMaterials, useCreateMaterial, useUpdateMaterial, useDeleteMaterial, 
          useListUsers, useCreateUser, useUpdateUser, useDeleteUser, getListMaterialsQueryKey, getListUsersQueryKey } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -383,18 +383,40 @@ function BackupTab() {
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [restoreResult, setRestoreResult] = useState<any>(null);
 
-  // Auto backup
-  type AutoConfig = { enabled: boolean; interval: string; hour: number; minute: number; keep_count: number };
-  const [autoConfig, setAutoConfig] = useState<AutoConfig>({ enabled: false, interval: "daily", hour: 2, minute: 0, keep_count: 7 });
+  // Auto backup schedule
+  type AutoConfig = { enabled: boolean; interval: string; hour: number; minute: number; keep_count: number; gdrive_enabled: boolean };
+  const [autoConfig, setAutoConfig] = useState<AutoConfig>({ enabled: false, interval: "daily", hour: 2, minute: 0, keep_count: 7, gdrive_enabled: false });
   const [isSavingConfig, setIsSavingConfig] = useState(false);
   const [isRunningNow, setIsRunningNow] = useState(false);
   const [lastRunAt, setLastRunAt] = useState<string | null>(null);
   const [backupFiles, setBackupFiles] = useState<Array<{ filename: string; size: number; createdAt: string }>>([]);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
 
+  // Google Drive state
+  const [gdriveConnected, setGdriveConnected] = useState(false);
+  const [gdriveEmail, setGdriveEmail] = useState<string | null>(null);
+  const [isConnectingDrive, setIsConnectingDrive] = useState(false);
+  const [isDisconnectingDrive, setIsDisconnectingDrive] = useState(false);
+
   useEffect(() => {
     loadAutoConfig();
     loadBackupFiles();
+    loadDriveStatus();
+
+    // Detect post-OAuth redirect from Google
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("gdrive") === "connected") {
+      const email = params.get("email") ?? "";
+      toast({ title: "Google Drive Terhubung! ✅", description: `Akun ${email} berhasil disambungkan.` });
+      loadDriveStatus();
+      loadAutoConfig();
+      // Clean URL without reloading
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (params.get("gdrive") === "error") {
+      const msg = params.get("msg") ?? "Terjadi kesalahan";
+      toast({ title: "Gagal Terhubung ke Google Drive", description: msg, variant: "destructive" });
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, []);
 
   const loadAutoConfig = async () => {
@@ -402,7 +424,14 @@ function BackupTab() {
       const res = await fetch("/api/auto-backup/config", { headers: { Authorization: `Bearer ${token}` } });
       if (res.ok) {
         const d = await res.json();
-        setAutoConfig({ enabled: d.enabled, interval: d.interval, hour: d.hour, minute: d.minute, keep_count: d.keep_count });
+        setAutoConfig({
+          enabled: d.enabled,
+          interval: d.interval,
+          hour: d.hour,
+          minute: d.minute,
+          keep_count: d.keep_count,
+          gdrive_enabled: d.gdrive_enabled ?? false,
+        });
         setLastRunAt(d.last_run_at ?? null);
       }
     } catch {}
@@ -418,6 +447,51 @@ function BackupTab() {
       }
     } catch {} finally {
       setIsLoadingFiles(false);
+    }
+  };
+
+  const loadDriveStatus = async () => {
+    try {
+      const res = await fetch("/api/auto-backup/google/status", { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const d = await res.json();
+        setGdriveConnected(d.connected);
+        setGdriveEmail(d.email ?? null);
+      }
+    } catch {}
+  };
+
+  const handleConnectDrive = async () => {
+    setIsConnectingDrive(true);
+    try {
+      const res = await fetch("/api/auto-backup/google/auth-url", { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error("Gagal mendapatkan URL autentikasi Google.");
+      const { url } = await res.json();
+      // Open in the same tab so the redirect back works
+      window.location.href = url;
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err.message, variant: "destructive" });
+      setIsConnectingDrive(false);
+    }
+  };
+
+  const handleDisconnectDrive = async () => {
+    if (!confirm(`Putuskan koneksi akun Google "${gdriveEmail}" dari Auto Backup?\n\nBackup lokal di server tetap tersimpan.`)) return;
+    setIsDisconnectingDrive(true);
+    try {
+      const res = await fetch("/api/auto-backup/google/disconnect", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Gagal memutuskan koneksi");
+      setGdriveConnected(false);
+      setGdriveEmail(null);
+      setAutoConfig(c => ({ ...c, gdrive_enabled: false }));
+      toast({ title: "Google Drive diputuskan", description: "Backup otomatis ke Drive dinonaktifkan." });
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err.message, variant: "destructive" });
+    } finally {
+      setIsDisconnectingDrive(false);
     }
   };
 
@@ -533,24 +607,24 @@ function BackupTab() {
     }
   };
 
-  const intervalLabel: Record<string, string> = { daily: "Setiap Hari", weekly: "Setiap Minggu", monthly: "Setiap Bulan" };
   const formatBytes = (b: number) => b < 1024 * 1024 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1024 / 1024).toFixed(2)} MB`;
 
   return (
     <div className="space-y-6 max-w-2xl">
 
-      {/* Auto Backup Settings */}
+      {/* ── Auto Backup Settings ───────────────────────────────────────────── */}
       <Card className="border-blue-500/30 shadow-sm">
         <CardHeader className="bg-blue-50/50 dark:bg-blue-950/20 border-b border-border/50">
           <CardTitle className="flex items-center gap-2 text-blue-700 dark:text-blue-400">
             <Clock className="w-5 h-5" /> Auto Backup Terjadwal
           </CardTitle>
           <CardDescription>
-            Backup otomatis berjalan di server sesuai jadwal yang dikonfigurasi.
+            Backup otomatis berjalan di server sesuai jadwal. File disimpan lokal dan opsional ke Google Drive.
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-5 space-y-5">
-          {/* Enable toggle */}
+
+          {/* Enable schedule toggle */}
           <div className="flex items-center justify-between rounded-lg border border-border p-4 bg-muted/20">
             <div>
               <p className="font-semibold text-sm">Aktifkan Auto Backup</p>
@@ -559,6 +633,7 @@ function BackupTab() {
               </p>
             </div>
             <button
+              id="auto-backup-toggle"
               onClick={() => setAutoConfig(c => ({ ...c, enabled: !c.enabled }))}
               className={`relative w-12 h-6 rounded-full transition-colors focus:outline-none ${autoConfig.enabled ? "bg-blue-600" : "bg-muted-foreground/30"}`}
             >
@@ -611,7 +686,115 @@ function BackupTab() {
             <div className="flex justify-between text-xs text-muted-foreground"><span>1</span><span>30</span></div>
           </div>
 
-          {/* Status */}
+          {/* ── Google Drive Section ─────────────────────────────────────── */}
+          <div className="rounded-xl border border-border overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center gap-3 px-4 py-3 bg-gradient-to-r from-[#4285F4]/10 via-[#34A853]/10 to-[#EA4335]/10 border-b border-border">
+              {/* Google Drive coloured icon */}
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 87.3 78" xmlns="http://www.w3.org/2000/svg">
+                <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3L27.5 53H0c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+                <path d="M43.65 25L29.9 0c-1.35.8-2.5 1.9-3.3 3.3L1.2 48.5c-.8 1.4-1.2 2.95-1.2 4.5h27.5z" fill="#00ac47"/>
+                <path d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59.8l5.85 10.5z" fill="#ea4335"/>
+                <path d="M43.65 25L57.4 0H29.9z" fill="#00832d"/>
+                <path d="M59.8 53H87.3c0-1.55-.4-3.1-1.2-4.5L72.55 25H43.65z" fill="#2684fc"/>
+                <path d="M27.5 53l-13.75 23.8c1.35.8 2.9 1.2 4.5 1.2h51.5c1.6 0 3.15-.4 4.5-1.2L60.5 53H27.5z" fill="#ffba00"/>
+              </svg>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm">Google Drive</p>
+                <p className="text-xs text-muted-foreground">Upload otomatis backup ke Google Drive Anda</p>
+              </div>
+              {/* Connected badge */}
+              {gdriveConnected && (
+                <span className="flex items-center gap-1 text-xs font-semibold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 px-2 py-0.5 rounded-full">
+                  <CheckCircle2 className="w-3 h-3" /> Terhubung
+                </span>
+              )}
+            </div>
+
+            <div className="px-4 py-4 space-y-3 bg-background">
+              {!gdriveConnected ? (
+                /* Not connected state */
+                <div className="flex flex-col items-center gap-3 py-2">
+                  <p className="text-sm text-muted-foreground text-center">
+                    Hubungkan akun Google untuk mengaktifkan backup otomatis ke Google Drive.
+                  </p>
+                  <Button
+                    id="connect-google-drive-btn"
+                    onClick={handleConnectDrive}
+                    disabled={isConnectingDrive}
+                    variant="outline"
+                    className="gap-2 border-[#4285F4]/50 hover:bg-[#4285F4]/5 hover:border-[#4285F4] text-foreground font-medium"
+                  >
+                    {isConnectingDrive ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Link2 className="w-4 h-4 text-[#4285F4]" />
+                    )}
+                    Hubungkan Akun Google
+                  </Button>
+                </div>
+              ) : (
+                /* Connected state */
+                <div className="space-y-3">
+                  {/* Account chip */}
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-border">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-gradient-to-br from-[#4285F4] to-[#34A853] flex items-center justify-center text-white text-xs font-bold shrink-0">
+                        {gdriveEmail?.[0]?.toUpperCase() ?? "G"}
+                      </div>
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{gdriveEmail}</p>
+                        <p className="text-xs text-muted-foreground">Google Account</p>
+                      </div>
+                    </div>
+                    <Button
+                      id="disconnect-google-drive-btn"
+                      variant="ghost"
+                      size="sm"
+                      onClick={handleDisconnectDrive}
+                      disabled={isDisconnectingDrive}
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive shrink-0 ml-2"
+                    >
+                      {isDisconnectingDrive ? <Loader2 className="w-4 h-4 animate-spin" /> : <Link2Off className="w-4 h-4" />}
+                      <span className="ml-1 hidden sm:inline">Putuskan</span>
+                    </Button>
+                  </div>
+
+                  {/* Upload to Drive toggle */}
+                  <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2.5 bg-muted/10">
+                    <div className="flex items-center gap-2">
+                      <CloudUpload className="w-4 h-4 text-[#4285F4]" />
+                      <div>
+                        <p className="text-sm font-medium">Upload ke Google Drive</p>
+                        <p className="text-xs text-muted-foreground">
+                          {autoConfig.gdrive_enabled
+                            ? "Setiap backup diunggah ke folder \"Inventory Backups\" di Drive"
+                            : "Upload ke Drive dinonaktifkan"}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      id="gdrive-upload-toggle"
+                      onClick={() => setAutoConfig(c => ({ ...c, gdrive_enabled: !c.gdrive_enabled }))}
+                      className={`relative w-11 h-6 rounded-full transition-colors focus:outline-none shrink-0 ${autoConfig.gdrive_enabled ? "bg-[#4285F4]" : "bg-muted-foreground/30"}`}
+                    >
+                      <span className={`absolute top-1 left-1 w-4 h-4 rounded-full bg-white shadow transition-transform ${autoConfig.gdrive_enabled ? "translate-x-5" : "translate-x-0"}`} />
+                    </button>
+                  </div>
+
+                  {autoConfig.gdrive_enabled && (
+                    <p className="text-xs text-muted-foreground flex items-center gap-1 bg-blue-50/50 dark:bg-blue-950/20 rounded-md px-3 py-2 border border-blue-100 dark:border-blue-900">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                      File backup disimpan lokal di server <strong>dan</strong> diunggah ke Google Drive Anda secara otomatis.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+          {/* ── End Google Drive Section ─────────────────────────────────── */}
+
+          {/* Last run status */}
           {lastRunAt && (
             <p className="text-xs text-muted-foreground flex items-center gap-1 bg-muted/30 rounded p-2">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
@@ -621,10 +804,10 @@ function BackupTab() {
 
           {/* Actions */}
           <div className="flex gap-3">
-            <Button onClick={handleSaveConfig} disabled={isSavingConfig} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold uppercase tracking-wide">
+            <Button id="save-backup-schedule-btn" onClick={handleSaveConfig} disabled={isSavingConfig} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold uppercase tracking-wide">
               {isSavingConfig ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Menyimpan...</> : "Simpan Jadwal"}
             </Button>
-            <Button onClick={handleRunNow} disabled={isRunningNow} variant="outline" className="gap-2">
+            <Button id="run-backup-now-btn" onClick={handleRunNow} disabled={isRunningNow} variant="outline" className="gap-2">
               {isRunningNow ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlayCircle className="w-4 h-4" />}
               Jalankan Sekarang
             </Button>
@@ -632,7 +815,7 @@ function BackupTab() {
         </CardContent>
       </Card>
 
-      {/* Server Backup Files */}
+      {/* ── Server Backup Files ────────────────────────────────────────────── */}
       <Card className="border-violet-500/30 shadow-sm">
         <CardHeader className="bg-violet-50/50 dark:bg-violet-950/20 border-b border-border/50">
           <div className="flex items-center justify-between">
@@ -680,7 +863,7 @@ function BackupTab() {
         </CardContent>
       </Card>
 
-      {/* Manual Export */}
+      {/* ── Manual Export ─────────────────────────────────────────────────── */}
       <Card className="border-emerald-500/30 shadow-sm">
         <CardHeader className="bg-emerald-50/50 dark:bg-emerald-950/20 border-b border-border/50">
           <CardTitle className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
@@ -695,13 +878,13 @@ function BackupTab() {
               Backup terakhir: {format(new Date(lastManualBackup), "dd MMM yyyy, HH:mm:ss")}
             </p>
           )}
-          <Button onClick={handleBackup} disabled={isBackingUp} className="w-full h-11 bg-emerald-600 hover:bg-emerald-700 text-white font-bold uppercase tracking-wide">
+          <Button id="manual-download-backup-btn" onClick={handleBackup} disabled={isBackingUp} className="w-full h-11 bg-emerald-600 hover:bg-emerald-700 text-white font-bold uppercase tracking-wide">
             {isBackingUp ? <><Loader2 className="w-5 h-5 mr-2 animate-spin" />Membuat Backup...</> : <><Download className="w-5 h-5 mr-2" />Download Backup</>}
           </Button>
         </CardContent>
       </Card>
 
-      {/* Restore */}
+      {/* ── Restore ───────────────────────────────────────────────────────── */}
       <Card className="border-amber-500/30 shadow-sm">
         <CardHeader className="bg-amber-50/50 dark:bg-amber-950/20 border-b border-border/50">
           <CardTitle className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
@@ -740,7 +923,7 @@ function BackupTab() {
               </div>
             </div>
           )}
-          <Button onClick={handleRestore} disabled={!restoreFile || isRestoring} className="w-full h-11 bg-amber-600 hover:bg-amber-700 text-white font-bold uppercase tracking-wide">
+          <Button id="restore-from-backup-btn" onClick={handleRestore} disabled={!restoreFile || isRestoring} className="w-full h-11 bg-amber-600 hover:bg-amber-700 text-white font-bold uppercase tracking-wide">
             {isRestoring ? <><Loader2 className="w-5 h-5 mr-2 animate-spin" />Memulihkan...</> : <><Upload className="w-5 h-5 mr-2" />Restore dari Backup</>}
           </Button>
         </CardContent>

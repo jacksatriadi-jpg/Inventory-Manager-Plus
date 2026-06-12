@@ -6,6 +6,7 @@ import { db, usersTable, materialsTable, scanInTable, scanItemsTable, scanOutTab
 import { pool } from "@workspace/db";
 import { parseToken } from "../lib/auth";
 import { runBackupToFile, listBackupFiles, getBackupFilePath, ensureBackupDir } from "../lib/backup-scheduler";
+import { getAuthUrl, exchangeCodeAndSave, disconnectGoogleDrive, getGoogleDriveStatus } from "../lib/google-drive";
 
 const router: IRouter = Router();
 
@@ -200,7 +201,7 @@ router.get("/auto-backup/config", async (req, res): Promise<void> => {
   if (!requireMaster(req, res)) return;
   try {
     const result = await pool.query("SELECT * FROM backup_config LIMIT 1");
-    res.json(result.rows[0] ?? { enabled: false, interval: "daily", hour: 2, minute: 0, keep_count: 7, last_run_at: null });
+    res.json(result.rows[0] ?? { enabled: false, interval: "daily", hour: 2, minute: 0, keep_count: 7, last_run_at: null, gdrive_enabled: false, gdrive_account_email: null });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -209,7 +210,7 @@ router.get("/auto-backup/config", async (req, res): Promise<void> => {
 router.post("/auto-backup/config", async (req, res): Promise<void> => {
   if (!requireMaster(req, res)) return;
   try {
-    const { enabled, interval, hour, minute, keep_count } = req.body;
+    const { enabled, interval, hour, minute, keep_count, gdrive_enabled } = req.body;
     const validIntervals = ["daily", "weekly", "monthly"];
     if (!validIntervals.includes(interval)) {
       res.status(400).json({ error: "Invalid interval" });
@@ -219,9 +220,14 @@ router.post("/auto-backup/config", async (req, res): Promise<void> => {
     const m = Math.max(0, Math.min(59, Number(minute) || 0));
     const k = Math.max(1, Math.min(30, Number(keep_count) || 7));
 
+    // Only set gdrive_enabled if account is already connected
+    const currentConfig = await pool.query("SELECT gdrive_access_token FROM backup_config LIMIT 1");
+    const hasToken = !!currentConfig.rows[0]?.gdrive_access_token;
+    const gdriveEnabled = hasToken ? Boolean(gdrive_enabled) : false;
+
     await pool.query(
-      `UPDATE backup_config SET enabled=$1, interval=$2, hour=$3, minute=$4, keep_count=$5`,
-      [Boolean(enabled), interval, h, m, k]
+      `UPDATE backup_config SET enabled=$1, interval=$2, hour=$3, minute=$4, keep_count=$5, gdrive_enabled=$6`,
+      [Boolean(enabled), interval, h, m, k, gdriveEnabled]
     );
     res.json({ success: true });
   } catch (err: any) {
@@ -280,6 +286,71 @@ router.delete("/auto-backup/file/:filename", async (req, res): Promise<void> => 
       return;
     }
     fs.unlinkSync(filepath);
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Google Drive OAuth ───────────────────────────────────────────────────────
+
+/**
+ * GET /api/auto-backup/google/auth-url
+ * Returns the Google OAuth consent URL for the frontend to open.
+ */
+router.get("/auto-backup/google/auth-url", (req, res): void => {
+  if (!requireMaster(req, res)) return;
+  try {
+    const url = getAuthUrl();
+    res.json({ url });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/auto-backup/google/callback
+ * Google redirects here after the user approves access.
+ * Exchanges the code for tokens, stores them, and redirects the browser
+ * back to the Master page.
+ */
+router.get("/auto-backup/google/callback", async (req, res): Promise<void> => {
+  const code = req.query.code as string | undefined;
+  if (!code) {
+    res.status(400).send("Missing authorization code from Google.");
+    return;
+  }
+  try {
+    const { email } = await exchangeCodeAndSave(code);
+    // Redirect browser to the Master Backup tab, flagging success
+    res.redirect(`/master?tab=backup&gdrive=connected&email=${encodeURIComponent(email)}`);
+  } catch (err: any) {
+    res.redirect(`/master?tab=backup&gdrive=error&msg=${encodeURIComponent(err.message)}`);
+  }
+});
+
+/**
+ * GET /api/auto-backup/google/status
+ * Returns whether a Google account is connected and its email.
+ */
+router.get("/auto-backup/google/status", async (req, res): Promise<void> => {
+  if (!requireMaster(req, res)) return;
+  try {
+    const status = await getGoogleDriveStatus();
+    res.json(status);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/auto-backup/google/disconnect
+ * Removes stored tokens and disables Google Drive uploads.
+ */
+router.post("/auto-backup/google/disconnect", async (req, res): Promise<void> => {
+  if (!requireMaster(req, res)) return;
+  try {
+    await disconnectGoogleDrive();
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

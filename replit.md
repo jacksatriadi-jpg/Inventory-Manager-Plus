@@ -66,3 +66,77 @@ _Populate as you build — explicit user instructions worth remembering across s
 ## Pointers
 
 - See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+
+## ⚠️ TODO — Google Drive Backup Setup (Pending — Do On Server)
+
+The Google Drive auto-backup feature has been fully coded but requires the following steps
+to be completed **on the Replit/server environment** before it will work.
+
+### Step 1 — Install the googleapis package
+
+Run this in the Replit shell:
+
+```sh
+pnpm add googleapis --filter @workspace/api-server
+```
+
+### Step 2 — Create a Google Cloud Project (free, any Gmail account)
+
+1. Go to https://console.cloud.google.com
+2. Create a new project (e.g. "Inventory Backup")
+3. In the left menu → **APIs & Services** → **Library**
+4. Search for **Google Drive API** → click **Enable**
+5. Go to **APIs & Services** → **Credentials** → **Create Credentials** → **OAuth 2.0 Client ID**
+6. Application type: **Web application**
+7. Under **Authorized redirect URIs**, add:
+   ```
+   https://<your-replit-app-domain>/api/auto-backup/google/callback
+   ```
+   (Replace `<your-replit-app-domain>` with your actual Replit domain, e.g. `myapp.replit.app`)
+8. Click **Create** — copy the **Client ID** and **Client Secret**
+
+### Step 3 — Set Environment Variables on Replit
+
+In Replit → **Secrets** tab, add:
+
+| Secret Key | Value |
+|---|---|
+| `GOOGLE_CLIENT_ID` | Paste your Client ID from Step 2 |
+| `GOOGLE_CLIENT_SECRET` | Paste your Client Secret from Step 2 |
+| `GOOGLE_REDIRECT_URI` | `https://<your-replit-app-domain>/api/auto-backup/google/callback` |
+
+### Step 4 — Rebuild and restart
+
+```sh
+pnpm run build
+```
+
+Then restart the api-server workflow.
+
+### Step 5 — Connect the account in the UI
+
+1. Log in as **admin (master)**
+2. Go to **Master** → **Backup** tab
+3. In the **Auto Backup Terjadwal** card, find the **Google Drive** section
+4. Click **Hubungkan Akun Google** → approve the Google consent screen
+5. After redirect back, the connected Gmail address will appear
+6. Toggle **Upload ke Google Drive** → ON
+7. Click **Simpan Jadwal**
+
+### How It Works (After Setup)
+
+- Every scheduled auto-backup (and manual "Jalankan Sekarang") will:
+  1. Save the file locally on the server under `backups/`
+  2. Upload the same file to a folder named **"Inventory Backups"** in the connected Google Drive
+- If Drive upload fails (e.g. network error), the local backup is still safely saved
+- Tokens are refreshed automatically — no need to re-connect
+- To switch accounts: click **Putuskan** → **Hubungkan** with a different Google account
+
+### Files Changed For This Feature
+
+- `artifacts/api-server/package.json` — added `googleapis`
+- `artifacts/api-server/src/app.ts` — DB migration for `gdrive_*` columns
+- `artifacts/api-server/src/lib/google-drive.ts` — NEW: OAuth + Drive upload library
+- `artifacts/api-server/src/lib/backup-scheduler.ts` — auto-upload after local save
+- `artifacts/api-server/src/routes/backup.ts` — 4 new Google OAuth routes
+- `artifacts/gudang/src/pages/master.tsx` — Google Drive UI section in BackupTab
