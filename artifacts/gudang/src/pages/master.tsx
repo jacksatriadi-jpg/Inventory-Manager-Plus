@@ -1,7 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
+import * as xlsx from "xlsx";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Database, Package2, Users2, Plus, Pencil, Trash2, Loader2, DatabaseBackup, Download, Upload, ShieldAlert, CheckCircle2, Clock, Calendar, HardDrive, PlayCircle, RefreshCw, Link2, Link2Off, CloudUpload } from "lucide-react";
+import { Database, Package2, Users2, Plus, Pencil, Trash2, Loader2, DatabaseBackup, Download, Upload, ShieldAlert, CheckCircle2, Clock, Calendar, HardDrive, PlayCircle, RefreshCw, Link2, Link2Off, CloudUpload, FileSpreadsheet } from "lucide-react";
 import { useListMaterials, useCreateMaterial, useUpdateMaterial, useDeleteMaterial, 
          useListUsers, useCreateUser, useUpdateUser, useDeleteUser, getListMaterialsQueryKey, getListUsersQueryKey } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -114,7 +115,12 @@ function MaterialsTab() {
           <CardTitle>Material Catalog</CardTitle>
           <CardDescription>Manage materials that can be scanned.</CardDescription>
         </div>
-        <Dialog open={isOpen} onOpenChange={setIsOpen}>
+        <div className="flex items-center gap-2">
+          <ImportMaterialDialog
+            existingNames={(materials ?? []).map(m => m.name)}
+            onImported={() => queryClient.invalidateQueries({ queryKey: getListMaterialsQueryKey() })}
+          />
+          <Dialog open={isOpen} onOpenChange={setIsOpen}>
           <DialogTrigger asChild>
             <Button onClick={() => handleOpen()} className="uppercase tracking-wide font-bold">
               <Plus className="w-4 h-4 mr-2" /> Add Material
@@ -179,6 +185,7 @@ function MaterialsTab() {
             </form>
           </DialogContent>
         </Dialog>
+        </div>
       </CardHeader>
       <CardContent className="p-0">
         {isLoading ? (
@@ -216,6 +223,295 @@ function MaterialsTab() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Import Material Dialog ────────────────────────────────────────────────
+
+interface ImportRow {
+  rowNum: number;
+  name: string;
+  code: string;
+  codeAutoGen: boolean;
+  description: string;
+  kategori: "scan" | "non-scan";
+  status: "new" | "exists";
+}
+
+function ImportMaterialDialog({
+  existingNames,
+  onImported,
+}: {
+  existingNames: string[];
+  onImported: () => void;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [stage, setStage] = useState<"upload" | "preview" | "importing" | "done">("upload");
+  const [rows, setRows] = useState<ImportRow[]>([]);
+  const [progress, setProgress] = useState(0);
+  const [result, setResult] = useState({ added: 0, skipped: 0, failed: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const createMutation = useCreateMaterial();
+  const { toast } = useToast();
+
+  const parseFile = async (file: File) => {
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = xlsx.read(buffer);
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rawData: any[][] = xlsx.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+
+      // skip first row (header)
+      const parsed: ImportRow[] = rawData
+        .slice(1)
+        .map((row, idx) => {
+          const name        = String(row[0] ?? "").trim();
+          const rawCode     = String(row[1] ?? "").trim();
+          const description = String(row[2] ?? "").trim();
+          const rawKategori = String(row[3] ?? "").trim().toLowerCase();
+
+          const code        = rawCode || name.substring(0, 30).toUpperCase().replace(/\s+/g, "-").replace(/[^A-Z0-9\-]/g, "") || `AUTO-${idx + 2}`;
+          const codeAutoGen = !rawCode && name !== "";
+          const kategori: "scan" | "non-scan" = rawKategori.includes("non") ? "non-scan" : "scan";
+          const alreadyExists = existingNames.some(n => n.toLowerCase() === name.toLowerCase());
+          const status: ImportRow["status"] = alreadyExists ? "exists" : "new";
+
+          return { rowNum: idx + 2, name, code, codeAutoGen, description, kategori, status };
+        })
+        .filter(r => r.name !== "");
+
+      if (parsed.length === 0) {
+        toast({ title: "File kosong atau tidak ada data valid", variant: "destructive" });
+        return;
+      }
+      setRows(parsed);
+      setStage("preview");
+    } catch {
+      toast({ title: "Gagal membaca file Excel", variant: "destructive" });
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) parseFile(file);
+  };
+
+  const handleImport = async () => {
+    const toAdd = rows.filter(r => r.status === "new");
+    let added = 0, failed = 0;
+    setProgress(0);
+    setStage("importing");
+
+    for (let i = 0; i < toAdd.length; i++) {
+      const row = toAdd[i];
+      setProgress(Math.round(((i + 1) / toAdd.length) * 100));
+      try {
+        await createMutation.mutateAsync({
+          data: { name: row.name, code: row.code, description: row.description || undefined, kategori: row.kategori },
+        });
+        added++;
+      } catch {
+        failed++;
+      }
+    }
+
+    setResult({ added, skipped: rows.filter(r => r.status === "exists").length, failed });
+    setStage("done");
+    if (added > 0) onImported();
+  };
+
+  const reset = () => { setStage("upload"); setRows([]); setProgress(0); setResult({ added: 0, skipped: 0, failed: 0 }); };
+
+  const newCount    = rows.filter(r => r.status === "new").length;
+  const existsCount = rows.filter(r => r.status === "exists").length;
+
+  return (
+    <Dialog open={isOpen} onOpenChange={o => { setIsOpen(o); if (!o) reset(); }}>
+      <DialogTrigger asChild>
+        <Button variant="outline" className="font-semibold">
+          <FileSpreadsheet className="w-4 h-4 mr-2" /> Import Excel
+        </Button>
+      </DialogTrigger>
+      <DialogContent className={stage === "preview" ? "max-w-5xl" : "max-w-lg"}>
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+            Import Data Material dari Excel
+          </DialogTitle>
+        </DialogHeader>
+
+        {/* ── Stage 1: Upload ─────────────────────────────────────── */}
+        {stage === "upload" && (
+          <div className="py-2 space-y-4">
+            <div className="bg-muted/50 rounded-lg p-4 text-sm space-y-3">
+              <p className="font-semibold text-foreground">Format kolom Excel yang diharapkan:</p>
+              <div className="grid grid-cols-4 gap-2 text-center">
+                {([["A", "Name"], ["B", "Code"], ["C", "Description"], ["D", "Kategori"]] as const).map(([col, field]) => (
+                  <div key={col} className="bg-background border rounded px-2 py-2">
+                    <div className="font-bold text-primary text-base">{col}</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">{field}</div>
+                  </div>
+                ))}
+              </div>
+              <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
+                <li>Baris pertama dianggap <strong>header</strong> dan akan dilewati.</li>
+                <li>Material dengan <strong>Nama (A) yang sama</strong> di database akan dilewati otomatis.</li>
+                <li>Kolom B kosong → kode digenerate otomatis dari nama.</li>
+                <li>Kolom kosong lainnya dibiarkan kosong.</li>
+                <li>Kolom D: isi "non-scan" untuk material manual, lainnya default "scan".</li>
+              </ul>
+            </div>
+
+            <div
+              className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors select-none ${
+                isDragging ? "border-primary bg-primary/5" : "border-border hover:border-primary/50 hover:bg-muted/30"
+              }`}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={handleDrop}
+            >
+              <FileSpreadsheet className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
+              <p className="font-semibold text-base">Klik atau drag & drop file Excel di sini</p>
+              <p className="text-xs text-muted-foreground mt-1">Mendukung .xlsx dan .xls</p>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".xlsx,.xls"
+                className="hidden"
+                onChange={e => { const f = e.target.files?.[0]; if (f) parseFile(f); e.target.value = ""; }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* ── Stage 2: Preview ────────────────────────────────────── */}
+        {stage === "preview" && (
+          <div className="py-2 space-y-4">
+            <div className="flex gap-2 flex-wrap">
+              <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 text-sm font-semibold dark:bg-emerald-900/30 dark:text-emerald-400">
+                <Plus className="w-3.5 h-3.5" /> {newCount} akan ditambah
+              </span>
+              {existsCount > 0 && (
+                <span className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-700 text-sm font-semibold dark:bg-amber-900/30 dark:text-amber-400">
+                  {existsCount} sudah ada — dilewati
+                </span>
+              )}
+            </div>
+
+            <div className="max-h-[420px] overflow-auto rounded-lg border">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/60 sticky top-0 z-10">
+                  <tr>
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground w-10">#</th>
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">Name (A)</th>
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">Code (B)</th>
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">Description (C)</th>
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">Kategori (D)</th>
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-muted-foreground">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map(r => (
+                    <tr
+                      key={r.rowNum}
+                      className={`border-t transition-colors ${r.status === "exists" ? "opacity-40 bg-muted/20" : "hover:bg-muted/10"}`}
+                    >
+                      <td className="px-3 py-2 text-xs text-muted-foreground">{r.rowNum}</td>
+                      <td className="px-3 py-2 font-medium max-w-[180px] truncate" title={r.name}>{r.name}</td>
+                      <td className="px-3 py-2 font-mono text-xs max-w-[130px] truncate" title={r.code}>
+                        {r.code}
+                        {r.codeAutoGen && (
+                          <span className="ml-1 text-amber-500 text-[10px]" title="Digenerate otomatis dari nama">★</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground max-w-[160px] truncate" title={r.description}>
+                        {r.description || <span className="italic text-muted-foreground/50">—</span>}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                          r.kategori === "non-scan"
+                            ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+                            : "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                        }`}>
+                          {r.kategori}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        {r.status === "new"    && <span className="px-2 py-0.5 rounded text-xs font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">Baru</span>}
+                        {r.status === "exists" && <span className="px-2 py-0.5 rounded text-xs font-semibold bg-muted text-muted-foreground">Sudah Ada</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {rows.some(r => r.codeAutoGen) && (
+              <p className="text-xs text-muted-foreground">
+                ★ Kode digenerate otomatis dari nama karena kolom B kosong.
+              </p>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={reset}>← Ganti File</Button>
+              <Button
+                onClick={handleImport}
+                disabled={newCount === 0}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold"
+              >
+                <Upload className="w-4 h-4 mr-2" />
+                Import {newCount} Material
+              </Button>
+            </DialogFooter>
+          </div>
+        )}
+
+        {/* ── Stage 3: Importing ──────────────────────────────────── */}
+        {stage === "importing" && (
+          <div className="py-14 flex flex-col items-center gap-5">
+            <Loader2 className="w-10 h-10 animate-spin text-primary" />
+            <p className="font-semibold text-lg">Mengimpor material...</p>
+            <div className="w-full bg-muted rounded-full h-2.5">
+              <div
+                className="bg-primary h-2.5 rounded-full transition-all duration-300"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">{progress}% selesai</p>
+          </div>
+        )}
+
+        {/* ── Stage 4: Done ───────────────────────────────────────── */}
+        {stage === "done" && (
+          <div className="py-10 flex flex-col items-center gap-5 text-center">
+            <CheckCircle2 className="w-14 h-14 text-emerald-500" />
+            <h3 className="text-xl font-bold">Import Selesai!</h3>
+            <div className="flex gap-3 flex-wrap justify-center">
+              <span className="px-4 py-2 rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 font-semibold">
+                ✓ {result.added} berhasil ditambah
+              </span>
+              {result.skipped > 0 && (
+                <span className="px-4 py-2 rounded-lg bg-muted text-muted-foreground font-semibold">
+                  {result.skipped} dilewati (sudah ada)
+                </span>
+              )}
+              {result.failed > 0 && (
+                <span className="px-4 py-2 rounded-lg bg-destructive/10 text-destructive font-semibold">
+                  {result.failed} gagal
+                </span>
+              )}
+            </div>
+            <Button className="w-full mt-2" onClick={() => { setIsOpen(false); reset(); }}>
+              Tutup
+            </Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
