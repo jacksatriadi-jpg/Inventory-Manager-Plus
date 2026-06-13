@@ -193,3 +193,86 @@ tmux send-keys -t api 'C-c' && pnpm --filter @workspace/api-server run start
 - `artifacts/api-server/src/lib/backup-scheduler.ts` — auto-upload after local save
 - `artifacts/api-server/src/routes/backup.ts` — 4 new Google OAuth routes
 - `artifacts/gudang/src/pages/master.tsx` — Google Drive UI section in BackupTab
+
+## ⚠️ TODO — Google Sheets Integration Setup (Pending — Do On Termux)
+
+The "Connect Spreadsheet" + "Stock Excel" feature is fully coded. Requires these steps on Termux.
+
+**Production domain:** `https://app.gudangpemaron.my.id`
+
+---
+
+### Step 1 — Enable Google Sheets API (same Google Cloud project)
+
+1. Go to **https://console.cloud.google.com** → your existing project
+2. Left menu → **APIs & Services** → **Library**
+3. Search **Google Sheets API** → click **Enable**
+
+> ✅ No new credentials needed — uses the same OAuth tokens already stored for Google Drive.
+
+---
+
+### Step 2 — Share the Spreadsheet
+
+The spreadsheet must be accessible to the connected Google account. Either:
+- **Option A (recommended):** Share the spreadsheet to your connected Gmail (Viewer is enough)
+- **Option B:** Set sharing to **"Anyone with the link can view"**
+
+---
+
+### Step 3 — Connect Spreadsheet in the UI
+
+1. Open **https://app.gudangpemaron.my.id** → log in as admin
+2. Go to **Master** → **Spreadsheet** tab (4th tab, new)
+3. Paste the Google Spreadsheet ID or full URL → field **Google Spreadsheet ID atau URL**
+4. Isi field **Nama Tab / Sheet** dengan nama tab yang berisi data (misal: `STOCK`, `Data`, `Sheet1`)
+   - Nama tab bisa dilihat di bagian bawah file Google Sheets (tab strip)
+   - Kosongkan jika data ada di tab pertama (default)
+5. Klik **Simpan ID**
+6. Klik **Test Koneksi** untuk verifikasi — menampilkan jumlah material yang ditemukan
+
+---
+
+### Step 4 — Use Stock Excel on Dashboard
+
+1. Go to **Dashboard**
+2. Click the green **Fetch** button (next to Excel/PDF buttons)
+3. The **Stock Excel** column populates with values from the spreadsheet
+4. Matching: `materialCode` (case-insensitive) vs column C of the spreadsheet
+
+---
+
+### How It Works
+
+| Detail | Value |
+|---|---|
+| Spreadsheet ID stored | In `spreadsheet_config` DB table |
+| Sheet/Tab name stored | In `spreadsheet_config.sheet_name` (nullable) |
+| Auth | Reuses Google Drive OAuth tokens (no re-login needed) |
+| Sheet range read | `SheetName!C9:J` jika nama tab diisi, atau `C9:J` untuk tab pertama |
+| Matching | `materialCode.toLowerCase()` vs col C |
+| Fetch trigger | Manual — click **Fetch** button |
+| Display | Green badge, or `—` if no match |
+
+---
+
+### Spreadsheet Column Layout Expected
+
+| Column | Content |
+|---|---|
+| **C** | Nama / kode material (mulai baris 9) |
+| D–I | Diabaikan |
+| **J** | Nilai stok dari spreadsheet |
+
+Baris 1–8 diabaikan (header area). Data dimulai dari **baris 9**.
+
+---
+
+### Files Changed For This Feature
+
+- `artifacts/api-server/src/app.ts` — DB migration for `spreadsheet_config` table
+- `artifacts/api-server/src/lib/google-sheets.ts` — NEW: reads col C & J via Sheets API
+- `artifacts/api-server/src/routes/sheets.ts` — NEW: GET/POST config, GET /sheets/stock
+- `artifacts/api-server/src/routes/index.ts` — registered sheetsRouter
+- `artifacts/gudang/src/pages/master.tsx` — added Spreadsheet tab (4th tab) with SpreadsheetTab
+- `artifacts/gudang/src/pages/dashboard.tsx` — added Fetch button + Stock Excel column

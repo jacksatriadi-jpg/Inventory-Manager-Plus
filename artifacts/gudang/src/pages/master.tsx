@@ -28,7 +28,7 @@ export default function Master() {
       </div>
 
       <Tabs defaultValue="materials" className="w-full">
-        <TabsList className="h-12 w-full max-w-xl grid grid-cols-3">
+        <TabsList className="h-12 w-full max-w-2xl grid grid-cols-4">
           <TabsTrigger value="materials" className="text-base">
             <Package2 className="w-4 h-4 mr-2" /> Materials
           </TabsTrigger>
@@ -37,6 +37,9 @@ export default function Master() {
           </TabsTrigger>
           <TabsTrigger value="backup" className="text-base">
             <DatabaseBackup className="w-4 h-4 mr-2" /> Backup
+          </TabsTrigger>
+          <TabsTrigger value="spreadsheet" className="text-base">
+            <FileSpreadsheet className="w-4 h-4 mr-2" /> Spreadsheet
           </TabsTrigger>
         </TabsList>
         
@@ -50,6 +53,10 @@ export default function Master() {
 
         <TabsContent value="backup" className="mt-6">
           <BackupTab />
+        </TabsContent>
+
+        <TabsContent value="spreadsheet" className="mt-6">
+          <SpreadsheetTab />
         </TabsContent>
       </Tabs>
     </div>
@@ -1222,6 +1229,275 @@ function BackupTab() {
           <Button id="restore-from-backup-btn" onClick={handleRestore} disabled={!restoreFile || isRestoring} className="w-full h-11 bg-amber-600 hover:bg-amber-700 text-white font-bold uppercase tracking-wide">
             {isRestoring ? <><Loader2 className="w-5 h-5 mr-2 animate-spin" />Memulihkan...</> : <><Upload className="w-5 h-5 mr-2" />Restore dari Backup</>}
           </Button>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ─── Spreadsheet Tab ─────────────────────────────────────────────────────────
+
+function SpreadsheetTab() {
+  const { token } = useAuth();
+  const { toast } = useToast();
+  const [spreadsheetId, setSpreadsheetId] = useState("");
+  const [sheetName, setSheetName] = useState("");
+  const [savedId, setSavedId] = useState<string | null>(null);
+  const [savedSheetName, setSavedSheetName] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{ count: number; sample: string[] } | null>(null);
+  const [testError, setTestError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/sheets/config", { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.spreadsheet_id) {
+          setSavedId(d.spreadsheet_id);
+          setSpreadsheetId(d.spreadsheet_id);
+        }
+        if (d?.sheet_name) {
+          setSavedSheetName(d.sheet_name);
+          setSheetName(d.sheet_name);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleSave = async () => {
+    const raw = spreadsheetId.trim();
+    if (!raw) {
+      toast({ title: "ID Spreadsheet tidak boleh kosong", variant: "destructive" });
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const res = await fetch("/api/sheets/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ spreadsheet_id: raw, sheet_name: sheetName.trim() || null }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Gagal menyimpan");
+      setSavedId(d.spreadsheet_id);
+      setSpreadsheetId(d.spreadsheet_id);
+      setSavedSheetName(d.sheet_name ?? null);
+      setTestResult(null);
+      setTestError(null);
+      const sheetInfo = d.sheet_name ? ` · Tab: "${d.sheet_name}"` : " · Tab: (default/pertama)";
+      toast({ title: "Konfigurasi Spreadsheet disimpan ✅", description: `ID: ${d.spreadsheet_id}${sheetInfo}` });
+    } catch (err: any) {
+      toast({ title: "Gagal", description: err.message, variant: "destructive" });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleTest = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+    setTestError(null);
+    try {
+      const res = await fetch("/api/sheets/stock", { headers: { Authorization: `Bearer ${token}` } });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Gagal membaca spreadsheet");
+      const sample = d.stock.slice(0, 5).map((r: any) => `${r.materialName} → ${r.stockExcel}`);
+      setTestResult({ count: d.stock.length, sample });
+      toast({ title: "Koneksi berhasil! ✅", description: `${d.stock.length} material ditemukan di spreadsheet.` });
+    } catch (err: any) {
+      setTestError(err.message);
+      toast({ title: "Gagal membaca spreadsheet", description: err.message, variant: "destructive" });
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6 max-w-2xl">
+      {/* Main config card */}
+      <Card className="border-green-500/30 shadow-sm">
+        <CardHeader className="bg-green-50/50 dark:bg-green-950/20 border-b border-border/50">
+          <CardTitle className="flex items-center gap-2 text-green-700 dark:text-green-400">
+            {/* Google Sheets icon */}
+            <svg className="w-5 h-5 shrink-0" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+              <path d="M29 1H9C6.79 1 5 2.79 5 5v38c0 2.21 1.79 4 4 4h30c2.21 0 4-1.79 4-4V15L29 1z" fill="#23A566"/>
+              <path d="M29 1l14 14H29V1z" fill="#159F54"/>
+              <rect x="14" y="21" width="20" height="2" rx="1" fill="white" fillOpacity="0.9"/>
+              <rect x="14" y="26" width="20" height="2" rx="1" fill="white" fillOpacity="0.9"/>
+              <rect x="14" y="31" width="14" height="2" rx="1" fill="white" fillOpacity="0.9"/>
+            </svg>
+            Connect Google Spreadsheet
+          </CardTitle>
+          <CardDescription>
+            Hubungkan Google Spreadsheet untuk menampilkan kolom "Stock Excel" di Dashboard.
+            Data diambil dari kolom C (nama material, mulai baris 9) dan kolom J (nilai stok).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="pt-6 space-y-5">
+
+          {/* ID input */}
+          <div className="space-y-2">
+            <Label htmlFor="spreadsheet-id-input" className="font-semibold">Google Spreadsheet ID atau URL</Label>
+            <Input
+              id="spreadsheet-id-input"
+              value={spreadsheetId}
+              onChange={e => setSpreadsheetId(e.target.value)}
+              placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms"
+              className="font-mono text-sm"
+            />
+            <p className="text-xs text-muted-foreground">
+              Bisa paste URL lengkap seperti{" "}
+              <code className="bg-muted px-1 rounded text-[11px]">
+                https://docs.google.com/spreadsheets/d/<strong>1BxiMV...</strong>/edit
+              </code>
+              , sistem akan otomatis mengekstrak ID-nya.
+            </p>
+          </div>
+
+          {/* Sheet/Tab Name input */}
+          <div className="space-y-2">
+            <Label htmlFor="sheet-name-input" className="font-semibold">
+              Nama Tab / Sheet
+              <span className="ml-2 text-xs font-normal text-muted-foreground">(opsional)</span>
+            </Label>
+            <Input
+              id="sheet-name-input"
+              value={sheetName}
+              onChange={e => setSheetName(e.target.value)}
+              placeholder="Sheet1"
+              className="text-sm"
+            />
+            <p className="text-xs text-muted-foreground">
+              Nama tab sheet tempat data berada (lihat nama tab di bagian bawah file Google Sheets).
+              Kosongkan jika data ada di tab <strong>pertama</strong> (default).
+            </p>
+          </div>
+
+          {/* Saved badge */}
+          {savedId && (
+            <div className="flex flex-col gap-1 text-sm text-emerald-700 dark:text-emerald-400 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 rounded-lg px-3 py-2">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 shrink-0" />
+                <span>ID: <code className="font-mono text-xs">{savedId}</code></span>
+              </div>
+              <div className="flex items-center gap-2 pl-6">
+                <span className="text-xs text-muted-foreground">
+                  Tab: <strong>{savedSheetName ? `"${savedSheetName}"` : "(default/tab pertama)"}</strong>
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Requirement notice */}
+          <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-3 text-sm text-amber-700 dark:text-amber-400 space-y-1">
+            <p className="font-semibold flex items-center gap-1.5">
+              <ShieldAlert className="w-4 h-4 shrink-0" />
+              Syarat agar bisa membaca spreadsheet:
+            </p>
+            <ol className="list-decimal list-inside space-y-0.5 text-xs">
+              <li>Akun Google sudah terkoneksi di tab <strong>Backup → Google Drive</strong></li>
+              <li>Spreadsheet harus di-<strong>share</strong> ke akun Google tersebut (minimal Viewer), atau diset <strong>Anyone with the link can view</strong></li>
+            </ol>
+          </div>
+
+          {/* Action buttons */}
+          <div className="flex gap-3">
+            <Button
+              id="save-spreadsheet-btn"
+              onClick={handleSave}
+              disabled={isSaving}
+              className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold uppercase tracking-wide"
+            >
+              {isSaving ? <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Menyimpan...</> : "Simpan ID"}
+            </Button>
+            <Button
+              id="test-spreadsheet-btn"
+              onClick={handleTest}
+              disabled={isTesting || !savedId}
+              variant="outline"
+              className="gap-2"
+            >
+              {isTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+              Test Koneksi
+            </Button>
+          </div>
+
+          {/* Test result */}
+          {testResult && (
+            <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/60 dark:bg-emerald-950/20 p-4 text-sm space-y-2">
+              <p className="font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1">
+                <CheckCircle2 className="w-4 h-4" />
+                Berhasil! {testResult.count} material ditemukan di spreadsheet.
+              </p>
+              {testResult.sample.length > 0 && (
+                <div className="space-y-1">
+                  <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wide">Contoh data (5 pertama):</p>
+                  {testResult.sample.map((s, i) => (
+                    <p key={i} className="font-mono text-xs bg-muted/50 rounded px-2 py-0.5">{s}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {testError && (
+            <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-950/20 p-3 text-sm text-red-700 dark:text-red-400">
+              <p className="font-semibold flex items-center gap-1"><ShieldAlert className="w-4 h-4" /> Gagal membaca spreadsheet</p>
+              <p className="text-xs mt-1">{testError}</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* How-to card */}
+      <Card className="border-border/50 shadow-sm">
+        <CardHeader className="border-b border-border/40">
+          <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+            Format Spreadsheet yang Diharapkan
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-4 text-sm text-muted-foreground space-y-3">
+          <div className="overflow-x-auto rounded-lg border border-border">
+            <table className="w-full text-xs font-mono">
+              <thead>
+                <tr className="bg-muted/40 border-b border-border">
+                  <th className="py-2 px-3 text-left text-muted-foreground">Baris</th>
+                  <th className="py-2 px-3 text-center font-bold text-green-700">Kolom C</th>
+                  <th className="py-2 px-3 text-center text-muted-foreground">D–I</th>
+                  <th className="py-2 px-3 text-center font-bold text-blue-700">Kolom J</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                <tr className="bg-muted/20">
+                  <td className="py-1.5 px-3 text-muted-foreground">1–8</td>
+                  <td className="py-1.5 px-3 text-center" colSpan={3}>Header / informasi lainnya (diabaikan)</td>
+                </tr>
+                <tr>
+                  <td className="py-1.5 px-3 text-muted-foreground">9</td>
+                  <td className="py-1.5 px-3 text-center text-green-700">MCB 4A</td>
+                  <td className="py-1.5 px-3 text-center text-muted-foreground">...</td>
+                  <td className="py-1.5 px-3 text-center text-blue-700">150</td>
+                </tr>
+                <tr className="bg-muted/10">
+                  <td className="py-1.5 px-3 text-muted-foreground">10</td>
+                  <td className="py-1.5 px-3 text-center text-green-700">KABEL NYM 3x1.5</td>
+                  <td className="py-1.5 px-3 text-center text-muted-foreground">...</td>
+                  <td className="py-1.5 px-3 text-center text-blue-700">230</td>
+                </tr>
+                <tr>
+                  <td className="py-1.5 px-3 text-muted-foreground">dst...</td>
+                  <td className="py-1.5 px-3 text-center text-green-700">...</td>
+                  <td className="py-1.5 px-3 text-center text-muted-foreground">...</td>
+                  <td className="py-1.5 px-3 text-center text-blue-700">...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="text-xs">
+            Nilai di kolom C dicocokkan dengan <strong>kode material</strong> di Dashboard (case-insensitive).
+            Nilai dari kolom J ditampilkan di kolom <strong>"Stock Excel"</strong>.
+          </p>
         </CardContent>
       </Card>
     </div>
