@@ -97,6 +97,7 @@ export async function getSheetStockMap(
     response = await sheets.spreadsheets.values.get({
       spreadsheetId,
       range,
+      valueRenderOption: "UNFORMATTED_VALUE",
     });
   } catch (apiErr: any) {
     const status = apiErr?.response?.status;
@@ -125,7 +126,9 @@ export async function getSheetStockMap(
     if (!materialName || materialName.toString().trim() === "") continue;
 
     const key = materialName.toString().trim().toLowerCase();
-    const numericVal = parseFloat(String(stockVal ?? "").replace(/[^0-9.-]/g, ""));
+    
+    // UNFORMATTED_VALUE returns actual numbers (or strings if text)
+    const numericVal = Number(stockVal);
     stockMap.set(key, isNaN(numericVal) ? 0 : numericVal);
   }
 
