@@ -67,75 +67,128 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 - See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
 
-## ⚠️ TODO — Google Drive Backup Setup (Pending — Do On Server)
+## ⚠️ TODO — Google Drive Backup Setup (Pending — Do On Termux)
 
 The Google Drive auto-backup feature has been fully coded but requires the following steps
-to be completed **on the Replit/server environment** before it will work.
+to be completed **on the Termux/server environment** before it will work.
 
-### Step 1 — Install the googleapis package
+**Production domain:** `https://app.gudangpemaron.my.id`
 
-Run this in the Replit shell:
+---
+
+### Step 1 — Install Node packages (Termux shell)
 
 ```sh
+# Make sure you are in the project directory first
+cd ~/Inventory-Manager-Plus    # or wherever the repo lives in Termux
+
 pnpm add googleapis --filter @workspace/api-server
 ```
 
+> `googleapis` is pure JavaScript — no native bindings, fully compatible with Termux.
+
+---
+
 ### Step 2 — Create a Google Cloud Project (free, any Gmail account)
 
-1. Go to https://console.cloud.google.com
-2. Create a new project (e.g. "Inventory Backup")
-3. In the left menu → **APIs & Services** → **Library**
-4. Search for **Google Drive API** → click **Enable**
-5. Go to **APIs & Services** → **Credentials** → **Create Credentials** → **OAuth 2.0 Client ID**
-6. Application type: **Web application**
-7. Under **Authorized redirect URIs**, add:
+1. Open **https://console.cloud.google.com** in a browser (phone or PC)
+2. Create a new project → name it e.g. **"Inventory Backup"**
+3. Left menu → **APIs & Services** → **Library** → search **Google Drive API** → **Enable**
+4. Left menu → **APIs & Services** → **Credentials** → **Create Credentials** → **OAuth 2.0 Client ID**
+5. Application type: **Web application**
+6. Under **Authorized redirect URIs**, add **exactly**:
    ```
-   https://<your-replit-app-domain>/api/auto-backup/google/callback
+   https://app.gudangpemaron.my.id/api/auto-backup/google/callback
    ```
-   (Replace `<your-replit-app-domain>` with your actual Replit domain, e.g. `myapp.replit.app`)
-8. Click **Create** — copy the **Client ID** and **Client Secret**
+7. Click **Create** → copy the **Client ID** and **Client Secret**
 
-### Step 3 — Set Environment Variables on Replit
+> ⚠️ If the redirect URI doesn't match exactly (including `https://`), Google will reject the OAuth flow.
 
-In Replit → **Secrets** tab, add:
+---
 
-| Secret Key | Value |
-|---|---|
-| `GOOGLE_CLIENT_ID` | Paste your Client ID from Step 2 |
-| `GOOGLE_CLIENT_SECRET` | Paste your Client Secret from Step 2 |
-| `GOOGLE_REDIRECT_URI` | `https://<your-replit-app-domain>/api/auto-backup/google/callback` |
+### Step 3 — Set Environment Variables (Termux)
+
+Termux doesn't have a "Secrets" panel — set env vars in a `.env` file at the project root:
+
+```sh
+# In the project root on Termux
+cat >> .env << 'EOF'
+GOOGLE_CLIENT_ID=paste_your_client_id_here
+GOOGLE_CLIENT_SECRET=paste_your_client_secret_here
+GOOGLE_REDIRECT_URI=https://app.gudangpemaron.my.id/api/auto-backup/google/callback
+EOF
+```
+
+**Make sure your server loads `.env`** — check if the startup script already does `source .env` or uses `dotenv`. If not, add this before starting the API server:
+
+```sh
+export $(grep -v '^#' .env | xargs)
+```
+
+Or add all three lines directly to `~/.bashrc` / `~/.zshrc` to persist across Termux sessions:
+
+```sh
+echo 'export GOOGLE_CLIENT_ID="your_client_id"' >> ~/.bashrc
+echo 'export GOOGLE_CLIENT_SECRET="your_client_secret"' >> ~/.bashrc
+echo 'export GOOGLE_REDIRECT_URI="https://app.gudangpemaron.my.id/api/auto-backup/google/callback"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+---
 
 ### Step 4 — Rebuild and restart
 
 ```sh
 pnpm run build
+# Then restart your api-server process (e.g. with pm2 or tmux)
+pm2 restart api-server   # if using pm2
+# or
+tmux send-keys -t api 'C-c' && pnpm --filter @workspace/api-server run start
 ```
 
-Then restart the api-server workflow.
+---
 
 ### Step 5 — Connect the account in the UI
 
-1. Log in as **admin (master)**
+1. Open **https://app.gudangpemaron.my.id** and log in as **admin (master)**
 2. Go to **Master** → **Backup** tab
 3. In the **Auto Backup Terjadwal** card, find the **Google Drive** section
-4. Click **Hubungkan Akun Google** → approve the Google consent screen
-5. After redirect back, the connected Gmail address will appear
-6. Toggle **Upload ke Google Drive** → ON
-7. Click **Simpan Jadwal**
+4. Click **Hubungkan Akun Google** — this opens Google's consent screen
+5. Choose your Gmail account and approve access
+6. After redirect, the connected Gmail address will appear in the card
+7. Toggle **Upload ke Google Drive** → ON
+8. Click **Simpan Jadwal**
+
+---
 
 ### How It Works (After Setup)
 
-- Every scheduled auto-backup (and manual "Jalankan Sekarang") will:
+- Every scheduled auto-backup and manual **"Jalankan Sekarang"** will:
   1. Save the file locally on the server under `backups/`
   2. Upload the same file to a folder named **"Inventory Backups"** in the connected Google Drive
-- If Drive upload fails (e.g. network error), the local backup is still safely saved
-- Tokens are refreshed automatically — no need to re-connect
-- To switch accounts: click **Putuskan** → **Hubungkan** with a different Google account
+- Drive upload failure (e.g. no internet) does **NOT** affect the local backup — it is always saved first
+- Access tokens are refreshed automatically — no need to re-connect every day
+- To switch Google accounts: click **Putuskan** → re-connect with the new account
+- Backup files appear in **Google Drive → My Drive → Inventory Backups**
+
+---
+
+### Termux Compatibility Notes
+
+| Concern | Status |
+|---|---|
+| `googleapis` npm package | ✅ Pure JS, no native bindings, works on Termux |
+| File upload via `fs.createReadStream` | ✅ Standard Node.js — works on Termux |
+| OAuth redirect (needs HTTPS) | ✅ Using `https://app.gudangpemaron.my.id` |
+| Token storage (PostgreSQL) | ✅ Stored in DB — no keychain/credential manager needed |
+| Auto token refresh | ✅ Handled in code, no OS-level scheduler needed |
+
+---
 
 ### Files Changed For This Feature
 
 - `artifacts/api-server/package.json` — added `googleapis`
-- `artifacts/api-server/src/app.ts` — DB migration for `gdrive_*` columns
+- `artifacts/api-server/src/app.ts` — DB migration for `gdrive_*` columns in `backup_config`
 - `artifacts/api-server/src/lib/google-drive.ts` — NEW: OAuth + Drive upload library
 - `artifacts/api-server/src/lib/backup-scheduler.ts` — auto-upload after local save
 - `artifacts/api-server/src/routes/backup.ts` — 4 new Google OAuth routes
