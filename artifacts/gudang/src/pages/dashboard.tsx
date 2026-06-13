@@ -307,7 +307,7 @@ export default function Dashboard() {
                           </td>
                           <td className="py-3.5 px-4 text-center">
                             {(() => {
-                              const key = (s.materialCode ?? s.materialName ?? "").toLowerCase();
+                              const key = (s.materialName ?? "").toLowerCase();
                               const val = sheetStockMap.get(key);
                               return val !== undefined ? (
                                 <span className="inline-flex items-center justify-center font-mono font-bold text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/30 rounded-lg px-3 py-1 min-w-[48px]">

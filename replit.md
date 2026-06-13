@@ -238,7 +238,7 @@ The spreadsheet must be accessible to the connected Google account. Either:
 1. Go to **Dashboard**
 2. Click the green **Fetch** button (next to Excel/PDF buttons)
 3. The **Stock Excel** column populates with values from the spreadsheet
-4. Matching: `materialCode` (case-insensitive) vs column C of the spreadsheet
+4. Matching: `materialName` (case-insensitive) vs column C of the spreadsheet
 
 ---
 
@@ -250,7 +250,7 @@ The spreadsheet must be accessible to the connected Google account. Either:
 | Sheet/Tab name stored | In `spreadsheet_config.sheet_name` (nullable) |
 | Auth | Reuses Google Drive OAuth tokens (no re-login needed) |
 | Sheet range read | `SheetName!C9:J` jika nama tab diisi, atau `C9:J` untuk tab pertama |
-| Matching | `materialCode.toLowerCase()` vs col C |
+| Matching | `materialName.toLowerCase()` vs col C |
 | Fetch trigger | Manual — click **Fetch** button |
 | Display | Green badge, or `—` if no match |
 
