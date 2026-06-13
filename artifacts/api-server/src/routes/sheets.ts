@@ -97,6 +97,64 @@ router.get("/sheets/stock", async (req, res): Promise<void> => {
 
     res.json({ stock, spreadsheetId, sheetName });
   } catch (err: any) {
+    // Return the full error message so the frontend can show it
+    res.status(500).json({ error: err.message ?? "Terjadi kesalahan saat membaca spreadsheet." });
+  }
+});
+
+// ─── Diagnose ─────────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/sheets/diagnose
+ * Returns a diagnostic checklist — useful to figure out why Sheets fetch fails.
+ */
+router.get("/sheets/diagnose", async (req, res): Promise<void> => {
+  if (!requireMaster(req, res)) return;
+  try {
+    const checks: Record<string, { ok: boolean; detail: string }> = {};
+
+    // 1. googleapis installed?
+    try {
+      require("googleapis");
+      checks.googleapis = { ok: true, detail: "googleapis package terinstall" };
+    } catch {
+      checks.googleapis = { ok: false, detail: "googleapis belum terinstall. Jalankan: pnpm add googleapis --filter @workspace/api-server" };
+    }
+
+    // 2. Env vars set?
+    const hasClientId = !!process.env.GOOGLE_CLIENT_ID;
+    const hasClientSecret = !!process.env.GOOGLE_CLIENT_SECRET;
+    checks.env_vars = {
+      ok: hasClientId && hasClientSecret,
+      detail: hasClientId && hasClientSecret
+        ? "GOOGLE_CLIENT_ID dan GOOGLE_CLIENT_SECRET sudah diset"
+        : `Missing: ${!hasClientId ? "GOOGLE_CLIENT_ID " : ""}${!hasClientSecret ? "GOOGLE_CLIENT_SECRET" : ""}`,
+    };
+
+    // 3. Google account connected?
+    const bcResult = await pool.query("SELECT gdrive_access_token, gdrive_refresh_token, gdrive_account_email FROM backup_config LIMIT 1");
+    const bc = bcResult.rows[0];
+    const hasTokens = !!(bc?.gdrive_access_token && bc?.gdrive_refresh_token);
+    checks.google_account = {
+      ok: hasTokens,
+      detail: hasTokens
+        ? `Terhubung: ${bc?.gdrive_account_email ?? "unknown"}`
+        : "Google account belum terkoneksi. Buka Master → Backup → Hubungkan Akun Google",
+    };
+
+    // 4. Spreadsheet configured?
+    const scResult = await pool.query("SELECT spreadsheet_id, sheet_name FROM spreadsheet_config LIMIT 1");
+    const sc = scResult.rows[0];
+    checks.spreadsheet_config = {
+      ok: !!sc?.spreadsheet_id,
+      detail: sc?.spreadsheet_id
+        ? `ID: ${sc.spreadsheet_id}${sc.sheet_name ? ` | Tab: ${sc.sheet_name}` : " | Tab: (default)"}`
+        : "Spreadsheet ID belum dikonfigurasi. Buka Master → Spreadsheet",
+    };
+
+    const allOk = Object.values(checks).every(c => c.ok);
+    res.json({ allOk, checks });
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
