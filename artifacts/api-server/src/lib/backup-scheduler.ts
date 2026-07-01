@@ -3,6 +3,7 @@ import path from "path";
 import { db, usersTable, materialsTable, scanInTable, scanItemsTable, scanOutTable, nonScanMasukTable, nonScanKeluarTable } from "@workspace/db";
 import { pool } from "@workspace/db";
 import { logger } from "./logger";
+import { uploadBackupToDrive } from "./google-drive";
 
 export const BACKUP_DIR = path.resolve(process.cwd(), "backups");
 
@@ -36,6 +37,19 @@ export async function runBackupToFile(): Promise<string> {
   const filename = `auto_backup_${ts}.json`;
   const filepath = path.join(BACKUP_DIR, filename);
   fs.writeFileSync(filepath, JSON.stringify(backup, null, 2), "utf-8");
+
+  // ── Upload to Google Drive if configured ──────────────────────────────────
+  try {
+    const configResult = await pool.query("SELECT * FROM backup_config LIMIT 1");
+    const config = configResult.rows[0];
+    if (config?.gdrive_enabled && config?.gdrive_access_token && config?.gdrive_refresh_token) {
+      await uploadBackupToDrive(filepath, filename, config);
+      logger.info({ filename }, "Auto backup: uploaded to Google Drive");
+    }
+  } catch (driveErr) {
+    // Drive upload failure must NOT fail the local backup
+    logger.error({ err: driveErr }, "Auto backup: Google Drive upload failed (local backup still saved)");
+  }
 
   return filename;
 }

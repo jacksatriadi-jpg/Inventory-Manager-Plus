@@ -1,18 +1,24 @@
 import { useGetMaterialStats, useGetRecentActivity, useListMaterials, useGetDashboardSummary } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ArrowDownRight, ArrowUpRight, Activity, Loader2, PackagePlus, PackageMinus, Layers, FileSpreadsheet, FileText, Search, X } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, Activity, Loader2, PackagePlus, PackageMinus, Layers, FileSpreadsheet, FileText, Search, X, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/lib/auth";
 
 export default function Dashboard() {
   const [selectedMaterialId, setSelectedMaterialId] = useState<number | "all">("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const { token } = useAuth();
+
+  // Google Sheets stock state
+  const [sheetStockMap, setSheetStockMap] = useState<Map<string, number>>(new Map());
+  const [isFetchingSheet, setIsFetchingSheet] = useState(false);
 
   const { data: summary, isLoading: isLoadingSummary } = useGetDashboardSummary();
   const { data: materials } = useListMaterials();
@@ -46,6 +52,27 @@ export default function Dashboard() {
 
   const singleStat = searchedStats.length === 1 ? searchedStats[0] : null;
   const { toast } = useToast();
+
+  const handleFetchSheet = useCallback(async () => {
+    setIsFetchingSheet(true);
+    try {
+      const res = await fetch("/api/sheets/stock", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Gagal mengambil data spreadsheet");
+      const map = new Map<string, number>();
+      for (const row of d.stock) {
+        map.set(row.materialName.toLowerCase(), row.stockExcel);
+      }
+      setSheetStockMap(map);
+      toast({ title: "Data Spreadsheet berhasil diambil ✅", description: `${map.size} material dari Google Sheets.` });
+    } catch (err: any) {
+      toast({ title: "Gagal Fetch Spreadsheet", description: err.message, variant: "destructive" });
+    } finally {
+      setIsFetchingSheet(false);
+    }
+  }, [token, toast]);
 
   const handleExportExcel = () => {
     if (filteredStats.length === 0) {
@@ -207,6 +234,20 @@ export default function Dashboard() {
                 <Button
                   variant="outline"
                   size="sm"
+                  id="fetch-sheet-btn"
+                  className="h-9 gap-1.5 text-green-700 border-green-300 hover:bg-green-50 dark:text-green-400 dark:border-green-800 dark:hover:bg-green-950/30"
+                  onClick={handleFetchSheet}
+                  disabled={isFetchingSheet}
+                  title="Ambil data dari Google Spreadsheet"
+                >
+                  {isFetchingSheet
+                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                    : <RefreshCw className="w-4 h-4" />}
+                  Fetch
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
                   className="h-9 gap-1.5 text-rose-700 border-rose-300 hover:bg-rose-50 dark:text-rose-400 dark:border-rose-800 dark:hover:bg-rose-950/30"
                   onClick={handleExportPDF}
                   disabled={isLoadingStats || filteredStats.length === 0}
@@ -246,6 +287,7 @@ export default function Dashboard() {
                         <th className="text-center py-3 px-4 font-semibold text-emerald-600 uppercase tracking-wider text-xs">Masuk</th>
                         <th className="text-center py-3 px-4 font-semibold text-amber-600 uppercase tracking-wider text-xs">Keluar</th>
                         <th className="text-center py-3 px-4 font-semibold text-primary uppercase tracking-wider text-xs">Stock</th>
+                        <th className="text-center py-3 px-4 font-semibold text-green-600 uppercase tracking-wider text-xs">Stock Excel</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border/30">
@@ -262,6 +304,19 @@ export default function Dashboard() {
                             <span className="inline-flex items-center justify-center font-mono font-bold text-primary bg-primary/8 rounded-lg px-3 py-1 min-w-[48px]">
                               {s.currentStock}
                             </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            {(() => {
+                              const key = (s.materialName ?? "").toLowerCase();
+                              const val = sheetStockMap.get(key);
+                              return val !== undefined ? (
+                                <span className="inline-flex items-center justify-center font-mono font-bold text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-950/30 rounded-lg px-3 py-1 min-w-[48px]">
+                                  {val}
+                                </span>
+                              ) : (
+                                <span className="text-muted-foreground/40 text-xs">—</span>
+                              );
+                            })()}
                           </td>
                         </tr>
                       ))}

@@ -141,9 +141,6 @@ router.patch("/scan-in/:id", async (req, res): Promise<void> => {
       updateData.completedAt = new Date();
     }
   }
-  if (parsed.data.qrCodeData != null) {
-    updateData.qrCodeData = parsed.data.qrCodeData;
-  }
 
   const [scanIn] = await db
     .update(scanInTable)
