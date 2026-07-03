@@ -250,7 +250,7 @@ export default function Riwayat() {
     return pages;
   };
 
-  const colSpan = isGuest ? 6 : (user?.role === "master" ? 8 : 7);
+  const colSpan = isGuest ? 7 : (user?.role === "master" ? 9 : 8);
 
   const handlePrintSato = () => {
     const targets = effectiveRecords;
@@ -266,10 +266,15 @@ export default function Riwayat() {
       : `${record.serialNumbers.length} item`;
     const qrVal = isNonScan
       ? (record.materialCode || record.materialName || "MATERIAL")
+      : (record.serialNumbers?.length > 0
+          ? record.serialNumbers.join("\n")
+          : (record.boxLabel || record.materialCode || "BOX"));
+    const qrTitle = isNonScan
+      ? (record.materialCode || record.materialName || "MATERIAL")
       : (record.boxLabel || record.materialCode || "BOX");
     setLabelPreview({
       qrValue:      qrVal,
-      title:        qrVal,
+      title:        qrTitle,
       materialName: record.materialName || record.materialCode || "-",
       qty,
       type: isIn ? (isNonScan ? "Mat. Masuk" : "Scan Masuk") : (isNonScan ? "Mat. Keluar" : "Scan Keluar"),
@@ -454,6 +459,7 @@ export default function Riwayat() {
                       <TableHead>Material</TableHead>
                       <TableHead className="text-center">Qty</TableHead>
                       <TableHead>Operator</TableHead>
+                      <TableHead className="text-center w-12">Label</TableHead>
                       {user?.role === "master" && <TableHead className="text-right pr-4">Aksi</TableHead>}
                     </TableRow>
                   </TableHeader>
@@ -516,6 +522,36 @@ export default function Riwayat() {
                             <TableCell className="font-mono">{record.materialCode || record.materialName || "-"}</TableCell>
                             <TableCell className="text-center font-bold font-mono">{qty}</TableCell>
                             <TableCell>{record.userName}</TableCell>
+                            <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                              <Button
+                                variant="ghost" size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                                title="Cetak label SATO 6×3cm"
+                                onClick={() => {
+                                  const qrVal = isNonScan
+                                    ? (record.materialCode || record.materialName || "MATERIAL")
+                                    : (record.serialNumbers?.length > 0
+                                        ? record.serialNumbers.join("\n")
+                                        : (record.boxLabel || record.materialCode || "BOX"));
+                                  const qrTitle = isNonScan
+                                    ? (record.materialCode || record.materialName || "MATERIAL")
+                                    : (record.boxLabel || record.materialCode || "BOX");
+                                  setLabelPreview({
+                                    qrValue:      qrVal,
+                                    title:        qrTitle,
+                                    materialName: record.materialName || record.materialCode || "-",
+                                    qty,
+                                    type: isIn
+                                      ? (isNonScan ? "Mat. Masuk" : "Scan Masuk")
+                                      : (isNonScan ? "Mat. Keluar" : "Scan Keluar"),
+                                    date:     format(new Date(record.createdAt), "dd MMM yyyy HH:mm"),
+                                    operator: record.userName,
+                                  });
+                                }}
+                              >
+                                <Tag className="w-4 h-4" />
+                              </Button>
+                            </TableCell>
                             {user?.role === "master" && (
                               <TableCell className="text-right pr-4" onClick={(e) => e.stopPropagation()}>
                                 <Button
