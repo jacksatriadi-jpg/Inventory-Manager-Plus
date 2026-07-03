@@ -10,6 +10,7 @@ import dashboardRouter from "./dashboard";
 import backupRouter from "./backup";
 import materialMasukRouter from "./materialMasuk";
 import materialKeluarRouter from "./materialKeluar";
+import sheetsRouter from "./sheets";
 
 const router: IRouter = Router();
 
@@ -24,5 +25,6 @@ router.use(dashboardRouter);
 router.use(backupRouter);
 router.use(materialMasukRouter);
 router.use(materialKeluarRouter);
+router.use(sheetsRouter);
 
 export default router;

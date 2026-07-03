@@ -66,3 +66,213 @@ _Populate as you build — explicit user instructions worth remembering across s
 ## Pointers
 
 - See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+
+## ⚠️ TODO — Google Drive Backup Setup (Pending — Do On Termux)
+
+The Google Drive auto-backup feature has been fully coded but requires the following steps
+to be completed **on the Termux/server environment** before it will work.
+
+**Production domain:** `https://app.gudangpemaron.my.id`
+
+---
+
+### Step 1 — Install Node packages (Termux shell)
+
+```sh
+# Make sure you are in the project directory first
+cd ~/Inventory-Manager-Plus    # or wherever the repo lives in Termux
+
+pnpm add googleapis --filter @workspace/api-server
+```
+
+> `googleapis` is pure JavaScript — no native bindings, fully compatible with Termux.
+
+---
+
+### Step 2 — Create a Google Cloud Project (free, any Gmail account)
+
+1. Open **https://console.cloud.google.com** in a browser (phone or PC)
+2. Create a new project → name it e.g. **"Inventory Backup"**
+3. Left menu → **APIs & Services** → **Library** → search **Google Drive API** → **Enable**
+4. Left menu → **APIs & Services** → **Credentials** → **Create Credentials** → **OAuth 2.0 Client ID**
+5. Application type: **Web application**
+6. Under **Authorized redirect URIs**, add **exactly**:
+   ```
+   https://app.gudangpemaron.my.id/api/auto-backup/google/callback
+   ```
+7. Click **Create** → copy the **Client ID** and **Client Secret**
+
+> ⚠️ If the redirect URI doesn't match exactly (including `https://`), Google will reject the OAuth flow.
+
+---
+
+### Step 3 — Set Environment Variables (Termux)
+
+Termux doesn't have a "Secrets" panel — set env vars in a `.env` file at the project root:
+
+```sh
+# In the project root on Termux
+cat >> .env << 'EOF'
+GOOGLE_CLIENT_ID=paste_your_client_id_here
+GOOGLE_CLIENT_SECRET=paste_your_client_secret_here
+GOOGLE_REDIRECT_URI=https://app.gudangpemaron.my.id/api/auto-backup/google/callback
+EOF
+```
+
+**Make sure your server loads `.env`** — check if the startup script already does `source .env` or uses `dotenv`. If not, add this before starting the API server:
+
+```sh
+export $(grep -v '^#' .env | xargs)
+```
+
+Or add all three lines directly to `~/.bashrc` / `~/.zshrc` to persist across Termux sessions:
+
+```sh
+echo 'export GOOGLE_CLIENT_ID="your_client_id"' >> ~/.bashrc
+echo 'export GOOGLE_CLIENT_SECRET="your_client_secret"' >> ~/.bashrc
+echo 'export GOOGLE_REDIRECT_URI="https://app.gudangpemaron.my.id/api/auto-backup/google/callback"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+---
+
+### Step 4 — Rebuild and restart
+
+```sh
+pnpm run build
+# Then restart your api-server process (e.g. with pm2 or tmux)
+pm2 restart api-server   # if using pm2
+# or
+tmux send-keys -t api 'C-c' && pnpm --filter @workspace/api-server run start
+```
+
+---
+
+### Step 5 — Connect the account in the UI
+
+1. Open **https://app.gudangpemaron.my.id** and log in as **admin (master)**
+2. Go to **Master** → **Backup** tab
+3. In the **Auto Backup Terjadwal** card, find the **Google Drive** section
+4. Click **Hubungkan Akun Google** — this opens Google's consent screen
+5. Choose your Gmail account and approve access
+6. After redirect, the connected Gmail address will appear in the card
+7. Toggle **Upload ke Google Drive** → ON
+8. Click **Simpan Jadwal**
+
+---
+
+### How It Works (After Setup)
+
+- Every scheduled auto-backup and manual **"Jalankan Sekarang"** will:
+  1. Save the file locally on the server under `backups/`
+  2. Upload the same file to a folder named **"Inventory Backups"** in the connected Google Drive
+- Drive upload failure (e.g. no internet) does **NOT** affect the local backup — it is always saved first
+- Access tokens are refreshed automatically — no need to re-connect every day
+- To switch Google accounts: click **Putuskan** → re-connect with the new account
+- Backup files appear in **Google Drive → My Drive → Inventory Backups**
+
+---
+
+### Termux Compatibility Notes
+
+| Concern | Status |
+|---|---|
+| `googleapis` npm package | ✅ Pure JS, no native bindings, works on Termux |
+| File upload via `fs.createReadStream` | ✅ Standard Node.js — works on Termux |
+| OAuth redirect (needs HTTPS) | ✅ Using `https://app.gudangpemaron.my.id` |
+| Token storage (PostgreSQL) | ✅ Stored in DB — no keychain/credential manager needed |
+| Auto token refresh | ✅ Handled in code, no OS-level scheduler needed |
+
+---
+
+### Files Changed For This Feature
+
+- `artifacts/api-server/package.json` — added `googleapis`
+- `artifacts/api-server/src/app.ts` — DB migration for `gdrive_*` columns in `backup_config`
+- `artifacts/api-server/src/lib/google-drive.ts` — NEW: OAuth + Drive upload library
+- `artifacts/api-server/src/lib/backup-scheduler.ts` — auto-upload after local save
+- `artifacts/api-server/src/routes/backup.ts` — 4 new Google OAuth routes
+- `artifacts/gudang/src/pages/master.tsx` — Google Drive UI section in BackupTab
+
+## ⚠️ TODO — Google Sheets Integration Setup (Pending — Do On Termux)
+
+The "Connect Spreadsheet" + "Stock Excel" feature is fully coded. Requires these steps on Termux.
+
+**Production domain:** `https://app.gudangpemaron.my.id`
+
+---
+
+### Step 1 — Enable Google Sheets API (same Google Cloud project)
+
+1. Go to **https://console.cloud.google.com** → your existing project
+2. Left menu → **APIs & Services** → **Library**
+3. Search **Google Sheets API** → click **Enable**
+
+> ✅ No new credentials needed — uses the same OAuth tokens already stored for Google Drive.
+
+---
+
+### Step 2 — Share the Spreadsheet
+
+The spreadsheet must be accessible to the connected Google account. Either:
+- **Option A (recommended):** Share the spreadsheet to your connected Gmail (Viewer is enough)
+- **Option B:** Set sharing to **"Anyone with the link can view"**
+
+---
+
+### Step 3 — Connect Spreadsheet in the UI
+
+1. Open **https://app.gudangpemaron.my.id** → log in as admin
+2. Go to **Master** → **Spreadsheet** tab (4th tab, new)
+3. Paste the Google Spreadsheet ID or full URL → field **Google Spreadsheet ID atau URL**
+4. Isi field **Nama Tab / Sheet** dengan nama tab yang berisi data (misal: `STOCK`, `Data`, `Sheet1`)
+   - Nama tab bisa dilihat di bagian bawah file Google Sheets (tab strip)
+   - Kosongkan jika data ada di tab pertama (default)
+5. Klik **Simpan ID**
+6. Klik **Test Koneksi** untuk verifikasi — menampilkan jumlah material yang ditemukan
+
+---
+
+### Step 4 — Use Stock Excel on Dashboard
+
+1. Go to **Dashboard**
+2. Click the green **Fetch** button (next to Excel/PDF buttons)
+3. The **Stock Excel** column populates with values from the spreadsheet
+4. Matching: `materialName` (case-insensitive) vs column C of the spreadsheet
+
+---
+
+### How It Works
+
+| Detail | Value |
+|---|---|
+| Spreadsheet ID stored | In `spreadsheet_config` DB table |
+| Sheet/Tab name stored | In `spreadsheet_config.sheet_name` (nullable) |
+| Auth | Reuses Google Drive OAuth tokens (no re-login needed) |
+| Sheet range read | `SheetName!C9:J` jika nama tab diisi, atau `C9:J` untuk tab pertama |
+| Matching | `materialName.toLowerCase()` vs col C |
+| Fetch trigger | Manual — click **Fetch** button |
+| Display | Green badge, or `—` if no match |
+
+---
+
+### Spreadsheet Column Layout Expected
+
+| Column | Content |
+|---|---|
+| **C** | Nama / kode material (mulai baris 9) |
+| D–I | Diabaikan |
+| **J** | Nilai stok dari spreadsheet |
+
+Baris 1–8 diabaikan (header area). Data dimulai dari **baris 9**.
+
+---
+
+### Files Changed For This Feature
+
+- `artifacts/api-server/src/app.ts` — DB migration for `spreadsheet_config` table
+- `artifacts/api-server/src/lib/google-sheets.ts` — NEW: reads col C & J via Sheets API
+- `artifacts/api-server/src/routes/sheets.ts` — NEW: GET/POST config, GET /sheets/stock
+- `artifacts/api-server/src/routes/index.ts` — registered sheetsRouter
+- `artifacts/gudang/src/pages/master.tsx` — added Spreadsheet tab (4th tab) with SpreadsheetTab
+- `artifacts/gudang/src/pages/dashboard.tsx` — added Fetch button + Stock Excel column
