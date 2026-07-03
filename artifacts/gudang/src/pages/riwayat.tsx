@@ -250,7 +250,33 @@ export default function Riwayat() {
     return pages;
   };
 
-  const colSpan = isGuest ? 7 : (user?.role === "master" ? 9 : 8);
+  const colSpan = isGuest ? 6 : (user?.role === "master" ? 8 : 7);
+
+  const handlePrintSato = () => {
+    const targets = effectiveRecords;
+    if (targets.length === 0) {
+      toast({ title: "Tidak ada record", description: "Pilih atau filter record terlebih dahulu.", variant: "destructive" });
+      return;
+    }
+    const record = targets[0];
+    const isNonScan = record.source === "non-scan";
+    const isIn      = record.type === "in";
+    const qty       = isNonScan
+      ? `${record.count ?? 0} ${record.satuan ?? ""}`
+      : `${record.serialNumbers.length} item`;
+    const qrVal = isNonScan
+      ? (record.materialCode || record.materialName || "MATERIAL")
+      : (record.boxLabel || record.materialCode || "BOX");
+    setLabelPreview({
+      qrValue:      qrVal,
+      title:        qrVal,
+      materialName: record.materialName || record.materialCode || "-",
+      qty,
+      type: isIn ? (isNonScan ? "Mat. Masuk" : "Scan Masuk") : (isNonScan ? "Mat. Keluar" : "Scan Keluar"),
+      date:     format(new Date(record.createdAt), "dd MMM yyyy HH:mm"),
+      operator: record.userName,
+    });
+  };
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -275,8 +301,11 @@ export default function Riwayat() {
                 Batal pilih
               </Button>
             )}
-            <Button variant="outline" onClick={handlePrintQR} title={`Cetak QR (${selectionLabel})`}>
+            <Button variant="outline" onClick={handlePrintQR} title={`Cetak QR A4 (${selectionLabel})`}>
               <Printer className="w-4 h-4 mr-2" /> Cetak QR
+            </Button>
+            <Button variant="outline" onClick={handlePrintSato} title={`Cetak Label SATO 6×3cm (record pertama dari ${selectionLabel})`}>
+              <Tag className="w-4 h-4 mr-2" /> Label SATO
             </Button>
             <Button variant="outline" onClick={handleExportPDF} title={`Export PDF (${selectionLabel})`}>
               <FileDown className="w-4 h-4 mr-2" /> PDF
@@ -425,7 +454,6 @@ export default function Riwayat() {
                       <TableHead>Material</TableHead>
                       <TableHead className="text-center">Qty</TableHead>
                       <TableHead>Operator</TableHead>
-                      <TableHead className="text-center w-12">Cetak</TableHead>
                       {user?.role === "master" && <TableHead className="text-right pr-4">Aksi</TableHead>}
                     </TableRow>
                   </TableHeader>
@@ -488,31 +516,6 @@ export default function Riwayat() {
                             <TableCell className="font-mono">{record.materialCode || record.materialName || "-"}</TableCell>
                             <TableCell className="text-center font-bold font-mono">{qty}</TableCell>
                             <TableCell>{record.userName}</TableCell>
-                            <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
-                              <Button
-                                variant="ghost" size="icon"
-                                className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                                title="Cetak label QR"
-                                onClick={() => {
-                                  const barcodeVal = isNonScan
-                                    ? (record.materialCode || record.materialName || "MATERIAL")
-                                    : (record.boxLabel || record.materialCode || "BOX");
-                                  setLabelPreview({
-                                    qrValue: barcodeVal,
-                                    title: barcodeVal,
-                                    materialName: record.materialName || record.materialCode || "-",
-                                    qty: qty,
-                                    type: isIn
-                                      ? (isNonScan ? "Mat. Masuk" : "Scan Masuk")
-                                      : (isNonScan ? "Mat. Keluar" : "Scan Keluar"),
-                                    date: format(new Date(record.createdAt), "dd MMM yyyy HH:mm"),
-                                    operator: record.userName,
-                                  });
-                                }}
-                              >
-                                <Tag className="w-4 h-4" />
-                              </Button>
-                            </TableCell>
                             {user?.role === "master" && (
                               <TableCell className="text-right pr-4" onClick={(e) => e.stopPropagation()}>
                                 <Button
