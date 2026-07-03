@@ -35,7 +35,7 @@ export function Layout({ children }: LayoutProps) {
         { href: "/riwayat", label: "Riwayat", icon: History },
         ...(user?.role === "master" ? [
           { href: "/master", label: "Master", icon: Database },
-          { href: "/backup", label: "Backup & Restore", icon: DatabaseBackup },
+          { href: "/master?tab=backup", label: "Backup & Restore", icon: DatabaseBackup },
         ] : []),
       ];
 

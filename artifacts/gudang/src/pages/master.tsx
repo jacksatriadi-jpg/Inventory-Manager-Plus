@@ -17,6 +17,8 @@ import { useAuth } from "@/lib/auth";
 import { format } from "date-fns";
 
 export default function Master() {
+  const defaultTab = new URLSearchParams(window.location.search).get("tab") ?? "materials";
+
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div className="flex items-center gap-3">
@@ -27,7 +29,7 @@ export default function Master() {
         </div>
       </div>
 
-      <Tabs defaultValue="materials" className="w-full">
+      <Tabs defaultValue={defaultTab} className="w-full">
         <TabsList className="h-12 w-full max-w-2xl grid grid-cols-4">
           <TabsTrigger value="materials" className="text-base">
             <Package2 className="w-4 h-4 mr-2" /> Materials
@@ -902,7 +904,8 @@ function BackupTab() {
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || "Restore gagal");
       setRestoreResult(result.restored);
-      toast({ title: "Restore berhasil!", description: "Database telah dipulihkan dari backup." });
+      toast({ title: "Restore berhasil!", description: "Halaman akan dimuat ulang dalam 3 detik..." });
+      setTimeout(() => window.location.reload(), 3000);
     } catch (err: any) {
       toast({ title: "Restore gagal", description: err?.message, variant: "destructive" });
     } finally {
