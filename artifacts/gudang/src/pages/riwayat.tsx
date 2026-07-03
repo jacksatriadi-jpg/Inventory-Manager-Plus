@@ -492,13 +492,13 @@ export default function Riwayat() {
                               <Button
                                 variant="ghost" size="icon"
                                 className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                                title="Cetak label barcode"
+                                title="Cetak label QR"
                                 onClick={() => {
                                   const barcodeVal = isNonScan
                                     ? (record.materialCode || record.materialName || "MATERIAL")
                                     : (record.boxLabel || record.materialCode || "BOX");
                                   setLabelPreview({
-                                    barcode: barcodeVal,
+                                    qrValue: barcodeVal,
                                     title: barcodeVal,
                                     materialName: record.materialName || record.materialCode || "-",
                                     qty: qty,

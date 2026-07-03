@@ -368,7 +368,7 @@ export default function ScanInView() {
             onClick={() => {
               if (!activeSession) return;
               setLabelPreview({
-                barcode: activeSession.boxLabel,
+                qrValue: activeSession.boxLabel,
                 title: activeSession.boxLabel,
                 materialName: activeSession.materialName,
                 qty: `${scannedItems.length} item`,

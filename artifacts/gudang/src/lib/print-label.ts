@@ -1,12 +1,12 @@
 /**
- * Barcode label printing utility
+ * QR code label printing utility
  * Target: SATO CL4NX Plus — paper 60mm × 30mm
  */
 
 export interface LabelData {
-  /** Value to encode as Code-128 barcode (boxLabel or materialCode) */
-  barcode: string;
-  /** Human-readable title shown below barcode */
+  /** Value to encode as QR code (boxLabel, materialCode, or serial number) */
+  qrValue: string;
+  /** Human-readable title shown next to QR (e.g. box label or item code) */
   title: string;
   /** Material name */
   materialName: string;
@@ -22,10 +22,20 @@ export interface LabelData {
 
 /** Returns a full HTML document string ready for a print window or iframe srcdoc */
 export function generateLabelHtml(data: LabelData, forPreview = false): string {
-  // In preview mode we scale up so it's readable in the dialog
+  // Preview: scale up so it's readable in the dialog (3.5× original mm)
   const scale = forPreview ? 3.5 : 1;
   const w = 60 * scale;
   const h = 30 * scale;
+
+  // QR canvas always generated at high resolution for crisp thermal printing.
+  // CSS then constrains it to the correct physical size.
+  const QR_CANVAS_PX = 200;
+  // Physical size: 26mm in print, 26*scale px in preview
+  const qrDisplaySize = forPreview ? `${26 * scale}px` : "26mm";
+
+  // Text sizing
+  const fs = (mm: number) => forPreview ? `${mm * scale}px` : `${mm * 2.835}pt`; // 1mm ≈ 2.835pt
+  const gap = (mm: number) => forPreview ? `${mm * scale}px` : `${mm}mm`;
 
   return `<!DOCTYPE html>
 <html>
@@ -46,68 +56,84 @@ export function generateLabelHtml(data: LabelData, forPreview = false): string {
   .label {
     width: ${forPreview ? w + "px" : "60mm"};
     height: ${forPreview ? h + "px" : "30mm"};
-    padding: ${forPreview ? 3.5 * scale + "px " + 7 * scale + "px" : "1mm 2mm"};
+    padding: ${gap(0.8)};
     display: flex;
-    flex-direction: column;
-    justify-content: space-between;
+    flex-direction: row;
+    align-items: center;
+    gap: ${gap(1)};
     font-family: Arial, Helvetica, sans-serif;
   }
-  svg#bc {
-    width: 100%;
-    height: ${forPreview ? 13 * scale + "px" : "13mm"};
+  .qr-wrap {
+    flex-shrink: 0;
+    width: ${qrDisplaySize};
+    height: ${qrDisplaySize};
+  }
+  /* Scale high-res canvas down to physical display size */
+  .qr-wrap canvas, .qr-wrap img {
+    width: ${qrDisplaySize} !important;
+    height: ${qrDisplaySize} !important;
+    display: block;
+  }
+  .info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: ${gap(0.5)};
+    overflow: hidden;
+  }
+  .title {
+    font-size: ${fs(2.3)};
+    font-weight: bold;
+    color: #000;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .material {
-    font-size: ${forPreview ? 7 * scale + "px" : "7pt"};
+    font-size: ${fs(2.1)};
     font-weight: bold;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    line-height: 1.2;
-    margin-top: ${forPreview ? 2 * scale + "px" : "0.5mm"};
+    color: #111;
   }
-  .meta {
-    font-size: ${forPreview ? 5.5 * scale + "px" : "5.5pt"};
-    color: #333;
-    display: flex;
-    justify-content: space-between;
-    margin-top: ${forPreview ? 1.5 * scale + "px" : "0.4mm"};
+  .row {
+    font-size: ${fs(1.8)};
+    color: #444;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .meta span { white-space: nowrap; }
 </style>
 </head>
 <body>
 <div class="label">
-  <div>
-    <svg id="bc"></svg>
+  <div class="qr-wrap" id="qrwrap"></div>
+  <div class="info">
+    <div class="title">${escHtml(data.title)}</div>
     <div class="material">${escHtml(data.materialName)}</div>
-    <div class="meta">
-      <span>${escHtml(data.qty)}${data.type ? " · " + escHtml(data.type) : ""}</span>
-      <span>${escHtml(data.date)}</span>
-      ${data.operator ? `<span>${escHtml(data.operator)}</span>` : ""}
-    </div>
+    <div class="row">${escHtml(data.qty)}${data.type ? " &middot; " + escHtml(data.type) : ""}</div>
+    <div class="row">${escHtml(data.date)}${data.operator ? " &middot; " + escHtml(data.operator) : ""}</div>
   </div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/barcodes/JsBarcode.code128.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script>
   try {
-    JsBarcode("#bc", ${JSON.stringify(data.barcode)}, {
-      format: "CODE128",
-      width: ${forPreview ? 1.8 * scale : 1.8},
-      height: ${forPreview ? 13 * scale * 0.7 : 28},
-      displayValue: true,
-      text: ${JSON.stringify(data.title)},
-      fontSize: ${forPreview ? 5 * scale : 8},
-      margin: 0,
-      background: "#ffffff",
-      lineColor: "#000000",
+    new QRCode(document.getElementById("qrwrap"), {
+      text: ${JSON.stringify(data.qrValue)},
+      width: ${QR_CANVAS_PX},
+      height: ${QR_CANVAS_PX},
+      colorDark: "#000000",
+      colorLight: "#ffffff",
+      correctLevel: QRCode.CorrectLevel.M,
     });
   } catch(e) {
-    // fallback: show text if barcode fails
-    document.getElementById("bc").outerHTML =
-      '<div style="text-align:center;font-size:${forPreview ? 8 * scale : 10}px;font-weight:bold;padding:4px">' +
-      ${JSON.stringify(data.title)} + '</div>';
+    document.getElementById("qrwrap").innerHTML =
+      '<div style="font-size:8px;text-align:center;word-break:break-all">' +
+      ${JSON.stringify(data.qrValue)} + '</div>';
   }
-  ${forPreview ? "" : "window.onload = function(){ setTimeout(function(){ window.print(); window.close(); }, 400); };"}
+  ${forPreview ? "" : "window.onload = function(){ setTimeout(function(){ window.print(); window.close(); }, 600); };"}
 </script>
 </body>
 </html>`;
