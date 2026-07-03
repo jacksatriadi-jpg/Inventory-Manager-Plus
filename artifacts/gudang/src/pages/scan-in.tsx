@@ -361,7 +361,21 @@ export default function ScanInView() {
             Print QR code ini dan tempelkan ke dus fisik. Berisi semua serial number item yang discan.
           </p>
         </CardContent>
-        <CardFooter className="justify-center gap-3 pt-2 pb-6">
+        <CardFooter className="justify-center gap-3 pt-2 pb-6 flex-wrap">
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => {
+              const w = window.open("", "_blank");
+              if (w) {
+                w.document.write(`<!DOCTYPE html><html><head><title>Print QR</title><style>body{margin:0;display:flex;justify-content:center;align-items:center;min-height:100vh;background:#fff}img{max-width:100%;height:auto}@media print{body{margin:0}}</style></head><body><img src="${generatedQr}" onload="window.print();window.close()"/></body></html>`);
+                w.document.close();
+              }
+            }}
+          >
+            <QrCode className="w-4 h-4" />
+            Print QR
+          </Button>
           <Button
             variant="outline"
             className="gap-2"
