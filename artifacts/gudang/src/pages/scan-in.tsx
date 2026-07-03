@@ -6,7 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { QrCode, Trash2, Camera, Keyboard, CheckCircle2, Play, Square, Loader2, XCircle } from "lucide-react";
+import { QrCode, Trash2, Camera, Keyboard, CheckCircle2, Play, Square, Loader2, XCircle, Printer } from "lucide-react";
+import { LabelPreviewDialog } from "@/components/label-preview-dialog";
+import { type LabelData } from "@/lib/print-label";
+import { format } from "date-fns";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,6 +28,7 @@ export default function ScanInView() {
   const { user, token } = useAuth();
   // Per-user session key so multiple users on same browser don't share sessions
   const SESSION_KEY = user ? `active_scan_in_session_id_${user.id}` : "active_scan_in_session_id";
+  const [labelPreview, setLabelPreview] = useState<LabelData | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -335,6 +339,7 @@ export default function ScanInView() {
 
   if (generatedQr) {
     return (
+      <>
       <Card className="border-emerald-500/30 bg-emerald-50/10 shadow-lg">
         <CardHeader className="text-center pb-2">
           <div className="mx-auto bg-emerald-100 text-emerald-600 w-16 h-16 flex items-center justify-center rounded-full mb-4">
@@ -357,23 +362,35 @@ export default function ScanInView() {
           </p>
         </CardContent>
         <CardFooter className="justify-center gap-3 pt-2 pb-6">
-          <Button variant="outline" onClick={() => {
-            const w = window.open('', '_blank');
-            if (w) {
-              w.document.write(`<html><body style="display:flex;justify-content:center;align-items:center;padding:20px;font-family:monospace">
-                <div style="text-align:center;border:2px dashed #000;padding:24px;width:320px">
-                  <div style="font-size:22px;font-weight:bold;margin-bottom:8px">${activeSession?.boxLabel}</div>
-                  <div style="margin-bottom:12px">${scannedItems.length} items</div>
-                  <img src="${generatedQr}" style="width:250px;height:250px"/>
-                </div>
-              </body></html>`);
-              w.document.close();
-              w.onload = () => w.print();
-            }
-          }}>Print QR</Button>
+          <Button
+            variant="outline"
+            className="gap-2"
+            onClick={() => {
+              if (!activeSession) return;
+              setLabelPreview({
+                barcode: activeSession.boxLabel,
+                title: activeSession.boxLabel,
+                materialName: activeSession.materialName,
+                qty: `${scannedItems.length} item`,
+                type: "Scan Masuk",
+                date: format(new Date(), "dd MMM yyyy HH:mm"),
+                operator: user?.username,
+              });
+            }}
+          >
+            <Printer className="w-4 h-4" />
+            Cetak Label
+          </Button>
           <Button onClick={handleReset} size="lg" className="px-8">Sesi Baru</Button>
         </CardFooter>
       </Card>
+
+      <LabelPreviewDialog
+        open={labelPreview !== null}
+        onOpenChange={(open) => { if (!open) setLabelPreview(null); }}
+        data={labelPreview}
+      />
+      </>
     );
   }
 

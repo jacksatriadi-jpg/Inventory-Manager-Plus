@@ -7,7 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight, CalendarRange } from "lucide-react";
+import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight, CalendarRange, Tag } from "lucide-react";
+import { LabelPreviewDialog } from "@/components/label-preview-dialog";
+import { type LabelData } from "@/lib/print-label";
 import { Input } from "@/components/ui/input";
 import { format } from "date-fns";
 import * as XLSX from "xlsx";
@@ -34,6 +36,7 @@ export default function Riwayat() {
   const [selectedIds,  setSelectedIds]  = useState<Set<number>>(new Set());
   const [pageSize,     setPageSize]     = useState<number>(16);
   const [currentPage,  setCurrentPage]  = useState(1);
+  const [labelPreview, setLabelPreview] = useState<LabelData | null>(null);
 
   const hasDateFilter = filterFrom !== "" || filterTo !== "";
 
@@ -247,7 +250,7 @@ export default function Riwayat() {
     return pages;
   };
 
-  const colSpan = isGuest ? 6 : (user?.role === "master" ? 8 : 7);
+  const colSpan = isGuest ? 7 : (user?.role === "master" ? 9 : 8);
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -422,6 +425,7 @@ export default function Riwayat() {
                       <TableHead>Material</TableHead>
                       <TableHead className="text-center">Qty</TableHead>
                       <TableHead>Operator</TableHead>
+                      <TableHead className="text-center w-12">Cetak</TableHead>
                       {user?.role === "master" && <TableHead className="text-right pr-4">Aksi</TableHead>}
                     </TableRow>
                   </TableHeader>
@@ -484,6 +488,31 @@ export default function Riwayat() {
                             <TableCell className="font-mono">{record.materialCode || record.materialName || "-"}</TableCell>
                             <TableCell className="text-center font-bold font-mono">{qty}</TableCell>
                             <TableCell>{record.userName}</TableCell>
+                            <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
+                              <Button
+                                variant="ghost" size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                                title="Cetak label barcode"
+                                onClick={() => {
+                                  const barcodeVal = isNonScan
+                                    ? (record.materialCode || record.materialName || "MATERIAL")
+                                    : (record.boxLabel || record.materialCode || "BOX");
+                                  setLabelPreview({
+                                    barcode: barcodeVal,
+                                    title: barcodeVal,
+                                    materialName: record.materialName || record.materialCode || "-",
+                                    qty: qty,
+                                    type: isIn
+                                      ? (isNonScan ? "Mat. Masuk" : "Scan Masuk")
+                                      : (isNonScan ? "Mat. Keluar" : "Scan Keluar"),
+                                    date: format(new Date(record.createdAt), "dd MMM yyyy HH:mm"),
+                                    operator: record.userName,
+                                  });
+                                }}
+                              >
+                                <Tag className="w-4 h-4" />
+                              </Button>
+                            </TableCell>
                             {user?.role === "master" && (
                               <TableCell className="text-right pr-4" onClick={(e) => e.stopPropagation()}>
                                 <Button
@@ -551,6 +580,12 @@ export default function Riwayat() {
           )}
         </CardContent>
       </Card>
+
+      <LabelPreviewDialog
+        open={labelPreview !== null}
+        onOpenChange={(open) => { if (!open) setLabelPreview(null); }}
+        data={labelPreview}
+      />
     </div>
   );
 }
