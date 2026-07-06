@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight, CalendarRange, Tag } from "lucide-react";
 import { LabelPreviewDialog } from "@/components/label-preview-dialog";
-import { type LabelData } from "@/lib/print-label";
+import { type LabelData, printBulkLabels } from "@/lib/print-label";
 import { Input } from "@/components/ui/input";
 import { format } from "date-fns";
 import * as XLSX from "xlsx";
@@ -252,13 +252,8 @@ export default function Riwayat() {
 
   const colSpan = isGuest ? 7 : (user?.role === "master" ? 9 : 8);
 
-  const handlePrintSato = () => {
-    const targets = effectiveRecords;
-    if (targets.length === 0) {
-      toast({ title: "Tidak ada record", description: "Pilih atau filter record terlebih dahulu.", variant: "destructive" });
-      return;
-    }
-    const record = targets[0];
+  /** Convert one history record into LabelData for SATO printing */
+  const recordToLabelData = (record: typeof effectiveRecords[number]): LabelData => {
     const isNonScan = record.source === "non-scan";
     const isIn      = record.type === "in";
     const qty       = isNonScan
@@ -272,7 +267,7 @@ export default function Riwayat() {
     const qrTitle = isNonScan
       ? (record.materialCode || record.materialName || "MATERIAL")
       : (record.boxLabel || record.materialCode || "BOX");
-    setLabelPreview({
+    return {
       qrValue:      qrVal,
       title:        qrTitle,
       materialName: record.materialName || record.materialCode || "-",
@@ -280,7 +275,24 @@ export default function Riwayat() {
       type: isIn ? (isNonScan ? "Mat. Masuk" : "Scan Masuk") : (isNonScan ? "Mat. Keluar" : "Scan Keluar"),
       date:     format(new Date(record.createdAt), "dd MMM yyyy HH:mm"),
       operator: record.userName,
-    });
+    };
+  };
+
+  const handlePrintSato = () => {
+    const targets = effectiveRecords;
+    if (targets.length === 0) {
+      toast({ title: "Tidak ada record", description: "Pilih atau filter record terlebih dahulu.", variant: "destructive" });
+      return;
+    }
+    const labels = targets.map(recordToLabelData);
+    if (labels.length === 1) {
+      // Single record → show preview dialog first
+      setLabelPreview(labels[0]);
+    } else {
+      // Multiple records → print all pages directly
+      toast({ title: `Mencetak ${labels.length} label…`, description: "Jendela cetak akan terbuka sebentar lagi." });
+      printBulkLabels(labels);
+    }
   };
 
   return (
@@ -309,8 +321,9 @@ export default function Riwayat() {
             <Button variant="outline" onClick={handlePrintQR} title={`Cetak QR A4 (${selectionLabel})`}>
               <Printer className="w-4 h-4 mr-2" /> Cetak QR
             </Button>
-            <Button variant="outline" onClick={handlePrintSato} title={`Cetak Label SATO 6×3cm (record pertama dari ${selectionLabel})`}>
-              <Tag className="w-4 h-4 mr-2" /> Label SATO
+            <Button variant="outline" onClick={handlePrintSato} title={`Cetak Label SATO 6×3cm — ${effectiveRecords.length} halaman`}>
+              <Tag className="w-4 h-4 mr-2" />
+              Label SATO{effectiveRecords.length > 1 ? ` (${effectiveRecords.length})` : ""}
             </Button>
             <Button variant="outline" onClick={handleExportPDF} title={`Export PDF (${selectionLabel})`}>
               <FileDown className="w-4 h-4 mr-2" /> PDF
@@ -527,27 +540,7 @@ export default function Riwayat() {
                                 variant="ghost" size="icon"
                                 className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/50"
                                 title="Cetak label SATO 6×3cm"
-                                onClick={() => {
-                                  const qrVal = isNonScan
-                                    ? (record.materialCode || record.materialName || "MATERIAL")
-                                    : (record.serialNumbers?.length > 0
-                                        ? record.serialNumbers.join("\n")
-                                        : (record.boxLabel || record.materialCode || "BOX"));
-                                  const qrTitle = isNonScan
-                                    ? (record.materialCode || record.materialName || "MATERIAL")
-                                    : (record.boxLabel || record.materialCode || "BOX");
-                                  setLabelPreview({
-                                    qrValue:      qrVal,
-                                    title:        qrTitle,
-                                    materialName: record.materialName || record.materialCode || "-",
-                                    qty,
-                                    type: isIn
-                                      ? (isNonScan ? "Mat. Masuk" : "Scan Masuk")
-                                      : (isNonScan ? "Mat. Keluar" : "Scan Keluar"),
-                                    date:     format(new Date(record.createdAt), "dd MMM yyyy HH:mm"),
-                                    operator: record.userName,
-                                  });
-                                }}
+                                onClick={() => setLabelPreview(recordToLabelData(record))}
                               >
                                 <Tag className="w-4 h-4" />
                               </Button>
