@@ -382,7 +382,9 @@ export default function ScanInView() {
             onClick={() => {
               if (!activeSession) return;
               setLabelPreview({
-                qrValue: activeSession.boxLabel,
+                qrValue: scannedItems.length > 0
+                  ? scannedItems.map(i => i.serialNumber).join("\n")
+                  : activeSession.boxLabel,
                 title: activeSession.boxLabel,
                 materialName: activeSession.materialName,
                 qty: `${scannedItems.length} item`,
