@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useListHistory, useDeleteHistory } from "@workspace/api-client-react";
+import { useListHistory, useDeleteHistory, useGetMaterialStats } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight, CalendarRange, Tag } from "lucide-react";
+import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight, CalendarRange, Tag, Package } from "lucide-react";
 import { LabelPreviewDialog } from "@/components/label-preview-dialog";
 import { type LabelData, printBulkLabels } from "@/lib/print-label";
 import { Input } from "@/components/ui/input";
@@ -28,22 +28,31 @@ const PAGE_SIZE_OPTIONS = [
 export default function Riwayat() {
   const { user, isGuest } = useAuth();
   const { toast } = useToast();
-  const [filterType,   setFilterType]   = useState<"all" | "in" | "out">("all");
-  const [filterSource, setFilterSource] = useState<"all" | "scan" | "non-scan">("all");
-  const [filterFrom,   setFilterFrom]   = useState("");
-  const [filterTo,     setFilterTo]     = useState("");
-  const [searchQuery,  setSearchQuery]  = useState("");
-  const [selectedIds,  setSelectedIds]  = useState<Set<number>>(new Set());
-  const [pageSize,     setPageSize]     = useState<number>(16);
-  const [currentPage,  setCurrentPage]  = useState(1);
-  const [labelPreview, setLabelPreview] = useState<LabelData | null>(null);
+  const [filterType,       setFilterType]       = useState<"all" | "in" | "out">("all");
+  const [filterSource,     setFilterSource]     = useState<"all" | "scan" | "non-scan">("all");
+  const [filterMaterialId, setFilterMaterialId] = useState<string>("");
+  const [filterFrom,       setFilterFrom]       = useState("");
+  const [filterTo,         setFilterTo]         = useState("");
+  const [searchQuery,      setSearchQuery]       = useState("");
+  const [selectedIds,      setSelectedIds]       = useState<Set<number>>(new Set());
+  const [pageSize,         setPageSize]         = useState<number>(16);
+  const [currentPage,      setCurrentPage]      = useState(1);
+  const [labelPreview,     setLabelPreview]     = useState<LabelData | null>(null);
 
   const hasDateFilter = filterFrom !== "" || filterTo !== "";
 
+  // Material stats for "in-stock" filter dropdown
+  const { data: materialStats } = useGetMaterialStats();
+  const inStockMaterials = useMemo(
+    () => (materialStats ?? []).filter(m => m.currentStock > 0).sort((a, b) => a.materialName.localeCompare(b.materialName)),
+    [materialStats],
+  );
+
   const { data: history, isLoading, refetch } = useListHistory({
-    type: filterType === "all" ? undefined : filterType,
-    from: filterFrom || undefined,
-    to:   filterTo   ? filterTo + "T23:59:59" : undefined,
+    type:       filterType === "all" ? undefined : filterType,
+    materialId: filterMaterialId ? Number(filterMaterialId) : undefined,
+    from:       filterFrom || undefined,
+    to:         filterTo   ? filterTo + "T23:59:59" : undefined,
   });
 
   const deleteHistoryMutation = useDeleteHistory();
@@ -366,6 +375,32 @@ export default function Riwayat() {
                     <SelectItem value="all">Semua Sumber</SelectItem>
                     <SelectItem value="scan">Scan</SelectItem>
                     <SelectItem value="non-scan">Non-Scan</SelectItem>
+                  </SelectContent>
+                </Select>
+                {/* ── in-stock material filter ──────────────────────── */}
+                <Select
+                  value={filterMaterialId}
+                  onValueChange={(v) => { setFilterMaterialId(v); setSelectedIds(new Set()); resetPage(); }}
+                >
+                  <SelectTrigger className={`w-[190px] ${filterMaterialId ? "border-primary text-primary" : ""}`}>
+                    <Package className="w-3.5 h-3.5 mr-1.5 shrink-0" />
+                    <SelectValue placeholder="Material stok ada" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="">Semua Material</SelectItem>
+                    {inStockMaterials.length === 0 && (
+                      <SelectItem value="__empty__" disabled>— Tidak ada stok —</SelectItem>
+                    )}
+                    {inStockMaterials.map(m => (
+                      <SelectItem key={m.materialId} value={String(m.materialId)}>
+                        <span className="flex items-center gap-2 w-full">
+                          <span className="truncate">{m.materialName}</span>
+                          <Badge variant="secondary" className="ml-auto shrink-0 text-xs font-mono">
+                            {m.currentStock}
+                          </Badge>
+                        </span>
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <Select
