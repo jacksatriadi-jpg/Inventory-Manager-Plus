@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight, CalendarRange, Tag, Package, Layers } from "lucide-react";
+import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight, CalendarRange, Tag, Package, BarChart3 } from "lucide-react";
 import { LabelPreviewDialog } from "@/components/label-preview-dialog";
 import { type LabelData, printBulkLabels } from "@/lib/print-label";
 import { Input } from "@/components/ui/input";
@@ -37,21 +37,19 @@ export default function Riwayat() {
   const [selectedIds,      setSelectedIds]       = useState<Set<number>>(new Set());
   const [pageSize,         setPageSize]         = useState<number>(16);
   const [currentPage,      setCurrentPage]      = useState(1);
-  const [labelPreview,       setLabelPreview]       = useState<LabelData | null>(null);
-  const [filterActiveStock,  setFilterActiveStock]  = useState(false);
+  const [labelPreview,     setLabelPreview]     = useState<LabelData | null>(null);
 
   const hasDateFilter = filterFrom !== "" || filterTo !== "";
 
-  // Material stats for "in-stock" filter dropdown
+  // Material stats for stock summary panel + filter dropdown
   const { data: materialStats } = useGetMaterialStats();
-  const inStockMaterials = useMemo(
-    () => (materialStats ?? []).filter(m => m.currentStock > 0).sort((a, b) => a.materialName.localeCompare(b.materialName)),
+  const sortedMaterialStats = useMemo(
+    () => (materialStats ?? []).slice().sort((a, b) => b.currentStock - a.currentStock || a.materialName.localeCompare(b.materialName)),
     [materialStats],
   );
-  // Set of materialIds that currently have active stock
-  const activeStockIds = useMemo(
-    () => new Set(inStockMaterials.map(m => m.materialId)),
-    [inStockMaterials],
+  const inStockMaterials = useMemo(
+    () => sortedMaterialStats.filter(m => m.currentStock > 0),
+    [sortedMaterialStats],
   );
 
   const { data: history, isLoading, refetch } = useListHistory({
@@ -80,11 +78,8 @@ export default function Riwayat() {
         (h.userName     ?? "").toLowerCase().includes(q),
       );
     }
-    if (filterActiveStock) {
-      result = result.filter(h => h.materialId != null && activeStockIds.has(h.materialId));
-    }
     return result;
-  }, [filteredHistory, searchQuery, filterActiveStock, activeStockIds]);
+  }, [filteredHistory, searchQuery]);
 
   const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(searchedHistory.length / pageSize));
   const safePage   = Math.min(currentPage, totalPages);
@@ -356,6 +351,70 @@ export default function Riwayat() {
         )}
       </div>
 
+      {/* ── Sisa Stok Material Panel ─────────────────────────────────── */}
+      {sortedMaterialStats.length > 0 && (
+        <Card className="border-sidebar-border shadow-sm">
+          <CardHeader className="py-3 px-4 border-b border-border/50 bg-muted/20">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-muted-foreground shrink-0" />
+              <span className="text-sm font-semibold">Sisa Stok Material</span>
+              <Badge variant="outline" className="text-xs ml-1">
+                {inStockMaterials.length} aktif
+              </Badge>
+              {filterMaterialId !== "all" && (
+                <Button
+                  variant="ghost" size="sm"
+                  className="ml-auto h-7 px-2 text-xs text-muted-foreground"
+                  onClick={() => { setFilterMaterialId("all"); setSelectedIds(new Set()); resetPage(); }}
+                >
+                  <X className="w-3 h-3 mr-1" /> Reset
+                </Button>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="py-3 px-4">
+            <div className="flex flex-wrap gap-2">
+              {sortedMaterialStats.map(m => {
+                const isActive   = filterMaterialId === String(m.materialId);
+                const hasStock   = m.currentStock > 0;
+                return (
+                  <button
+                    key={m.materialId}
+                    onClick={() => {
+                      setFilterMaterialId(isActive ? "all" : String(m.materialId));
+                      setSelectedIds(new Set());
+                      resetPage();
+                    }}
+                    className={[
+                      "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                      isActive
+                        ? "bg-primary text-primary-foreground border-primary"
+                        : hasStock
+                        ? "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800"
+                        : "bg-muted/50 text-muted-foreground border-border/50 hover:bg-muted",
+                    ].join(" ")}
+                    title={`${m.materialName} — sisa stok: ${m.currentStock}`}
+                  >
+                    <span className="font-mono opacity-70">{m.materialCode}</span>
+                    <span className="max-w-[120px] truncate">{m.materialName}</span>
+                    <span className={[
+                      "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
+                      isActive
+                        ? "bg-primary-foreground/20 text-primary-foreground"
+                        : hasStock
+                        ? "bg-emerald-200 text-emerald-900 dark:bg-emerald-800 dark:text-emerald-100"
+                        : "bg-muted text-muted-foreground",
+                    ].join(" ")}>
+                      {m.currentStock}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="border-sidebar-border shadow-sm">
         <CardHeader className="py-4 border-b border-border/50 bg-muted/20">
           <div className="flex flex-col gap-3 w-full">
@@ -389,22 +448,6 @@ export default function Riwayat() {
                     <SelectItem value="non-scan">Non-Scan</SelectItem>
                   </SelectContent>
                 </Select>
-                {/* ── active stock toggle ───────────────────────────── */}
-                <Button
-                  variant={filterActiveStock ? "default" : "outline"}
-                  size="sm"
-                  className={`h-9 gap-1.5 shrink-0 ${filterActiveStock ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600" : "text-muted-foreground"}`}
-                  onClick={() => { setFilterActiveStock(v => !v); setSelectedIds(new Set()); resetPage(); }}
-                  title="Tampilkan hanya material yang masih berstok aktif"
-                >
-                  <Layers className="w-3.5 h-3.5" />
-                  Stok Aktif
-                  {filterActiveStock && activeStockIds.size > 0 && (
-                    <Badge variant="secondary" className="ml-0.5 bg-emerald-500/20 text-white text-xs px-1">
-                      {activeStockIds.size}
-                    </Badge>
-                  )}
-                </Button>
                 {/* ── in-stock material filter ──────────────────────── */}
                 <Select
                   value={filterMaterialId}
