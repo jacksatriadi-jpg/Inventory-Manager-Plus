@@ -394,6 +394,7 @@ export default function Riwayat() {
                     {inStockMaterials.map(m => (
                       <SelectItem key={m.materialId} value={String(m.materialId)}>
                         <span className="flex items-center gap-2 w-full">
+                          <span className="font-mono text-xs text-muted-foreground shrink-0">{m.materialCode}</span>
                           <span className="truncate">{m.materialName}</span>
                           <Badge variant="secondary" className="ml-auto shrink-0 text-xs font-mono">
                             {m.currentStock}
