@@ -30,7 +30,7 @@ export default function Riwayat() {
   const { toast } = useToast();
   const [filterType,       setFilterType]       = useState<"all" | "in" | "out">("all");
   const [filterSource,     setFilterSource]     = useState<"all" | "scan" | "non-scan">("all");
-  const [filterMaterialId, setFilterMaterialId] = useState<string>("");
+  const [filterMaterialId, setFilterMaterialId] = useState<string>("all");
   const [filterFrom,       setFilterFrom]       = useState("");
   const [filterTo,         setFilterTo]         = useState("");
   const [searchQuery,      setSearchQuery]       = useState("");
@@ -50,7 +50,7 @@ export default function Riwayat() {
 
   const { data: history, isLoading, refetch } = useListHistory({
     type:       filterType === "all" ? undefined : filterType,
-    materialId: filterMaterialId ? Number(filterMaterialId) : undefined,
+    materialId: filterMaterialId !== "all" ? Number(filterMaterialId) : undefined,
     from:       filterFrom || undefined,
     to:         filterTo   ? filterTo + "T23:59:59" : undefined,
   });
@@ -382,12 +382,12 @@ export default function Riwayat() {
                   value={filterMaterialId}
                   onValueChange={(v) => { setFilterMaterialId(v); setSelectedIds(new Set()); resetPage(); }}
                 >
-                  <SelectTrigger className={`w-[190px] ${filterMaterialId ? "border-primary text-primary" : ""}`}>
+                  <SelectTrigger className={`w-[190px] ${filterMaterialId !== "all" ? "border-primary text-primary" : ""}`}>
                     <Package className="w-3.5 h-3.5 mr-1.5 shrink-0" />
                     <SelectValue placeholder="Material stok ada" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Semua Material</SelectItem>
+                    <SelectItem value="all">Semua Material</SelectItem>
                     {inStockMaterials.length === 0 && (
                       <SelectItem value="__empty__" disabled>— Tidak ada stok —</SelectItem>
                     )}
