@@ -53,7 +53,7 @@ router.get("/backup", async (req, res): Promise<void> => {
       data: {
         users,
         materials,
-        scanIns: scanIns.map(({ qrCodeData: _qr, ...rest }) => rest),
+        scanIns,
         scanItems,
         scanOuts,
         nonScanMasuk,
@@ -119,8 +119,8 @@ router.post("/restore", async (req, res): Promise<void> => {
       if (scanIns.length > 0) {
         for (const s of scanIns) {
           await client.query(
-            `INSERT INTO scan_in (id, material_id, box_label, status, user_id, qr_code_data, created_at, completed_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-            [s.id, s.materialId ?? s.material_id, s.boxLabel ?? s.box_label, s.status ?? "completed", s.userId ?? s.user_id, null, toDate(s.createdAt) ?? toDate(s.created_at) ?? new Date(), toDate(s.completedAt) ?? toDate(s.completed_at) ?? null]
+            `INSERT INTO scan_in (id, material_id, box_label, status, user_id, created_at, completed_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+            [s.id, s.materialId ?? s.material_id, s.boxLabel ?? s.box_label, s.status ?? "completed", s.userId ?? s.user_id, toDate(s.createdAt) ?? toDate(s.created_at) ?? new Date(), toDate(s.completedAt) ?? toDate(s.completed_at) ?? null]
           );
         }
         insertedScanIns = scanIns.length;
