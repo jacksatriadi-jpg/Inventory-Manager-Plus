@@ -896,6 +896,10 @@ function BackupTab() {
     try {
       const text = await restoreFile.text();
       const backup = JSON.parse(text);
+      // Strip qrCodeData from old backups before sending — reduces payload from hundreds MB to a few MB
+      if (backup?.data?.scanIns) {
+        backup.data.scanIns = backup.data.scanIns.map(({ qrCodeData: _qr, qr_code_data: _qr2, ...rest }: any) => rest);
+      }
       const res = await fetch("/api/restore", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
