@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight, CalendarRange, Tag, Package, BarChart3 } from "lucide-react";
+import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight, CalendarRange, Tag, Package } from "lucide-react";
 import { LabelPreviewDialog } from "@/components/label-preview-dialog";
 import { type LabelData, printBulkLabels } from "@/lib/print-label";
 import { Input } from "@/components/ui/input";
@@ -351,70 +351,6 @@ export default function Riwayat() {
         )}
       </div>
 
-      {/* ── Sisa Stok Material Panel ─────────────────────────────────── */}
-      {sortedMaterialStats.length > 0 && (
-        <Card className="border-sidebar-border shadow-sm">
-          <CardHeader className="py-3 px-4 border-b border-border/50 bg-muted/20">
-            <div className="flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-muted-foreground shrink-0" />
-              <span className="text-sm font-semibold">Sisa Stok Material</span>
-              <Badge variant="outline" className="text-xs ml-1">
-                {inStockMaterials.length} aktif
-              </Badge>
-              {filterMaterialId !== "all" && (
-                <Button
-                  variant="ghost" size="sm"
-                  className="ml-auto h-7 px-2 text-xs text-muted-foreground"
-                  onClick={() => { setFilterMaterialId("all"); setSelectedIds(new Set()); resetPage(); }}
-                >
-                  <X className="w-3 h-3 mr-1" /> Reset
-                </Button>
-              )}
-            </div>
-          </CardHeader>
-          <CardContent className="py-3 px-4">
-            <div className="flex flex-wrap gap-2">
-              {sortedMaterialStats.map(m => {
-                const isActive   = filterMaterialId === String(m.materialId);
-                const hasStock   = m.currentStock > 0;
-                return (
-                  <button
-                    key={m.materialId}
-                    onClick={() => {
-                      setFilterMaterialId(isActive ? "all" : String(m.materialId));
-                      setSelectedIds(new Set());
-                      resetPage();
-                    }}
-                    className={[
-                      "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                      isActive
-                        ? "bg-primary text-primary-foreground border-primary"
-                        : hasStock
-                        ? "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-800"
-                        : "bg-muted/50 text-muted-foreground border-border/50 hover:bg-muted",
-                    ].join(" ")}
-                    title={`${m.materialName} — sisa stok: ${m.currentStock}`}
-                  >
-                    <span className="font-mono opacity-70">{m.materialCode}</span>
-                    <span className="max-w-[120px] truncate">{m.materialName}</span>
-                    <span className={[
-                      "rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
-                      isActive
-                        ? "bg-primary-foreground/20 text-primary-foreground"
-                        : hasStock
-                        ? "bg-emerald-200 text-emerald-900 dark:bg-emerald-800 dark:text-emerald-100"
-                        : "bg-muted text-muted-foreground",
-                    ].join(" ")}>
-                      {m.currentStock}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       <Card className="border-sidebar-border shadow-sm">
         <CardHeader className="py-4 border-b border-border/50 bg-muted/20">
           <div className="flex flex-col gap-3 w-full">
@@ -459,16 +395,33 @@ export default function Riwayat() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">Semua Material</SelectItem>
-                    {inStockMaterials.length === 0 && (
-                      <SelectItem value="__empty__" disabled>— Tidak ada stok —</SelectItem>
+                    {sortedMaterialStats.length === 0 && (
+                      <SelectItem value="__empty__" disabled>— Belum ada material —</SelectItem>
+                    )}
+                    {inStockMaterials.length > 0 && (
+                      <div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Stok Aktif</div>
                     )}
                     {inStockMaterials.map(m => (
                       <SelectItem key={m.materialId} value={String(m.materialId)}>
                         <span className="flex items-center gap-2 w-full">
                           <span className="font-mono text-xs text-muted-foreground shrink-0">{m.materialCode}</span>
                           <span className="truncate">{m.materialName}</span>
-                          <Badge variant="secondary" className="ml-auto shrink-0 text-xs font-mono">
+                          <Badge variant="secondary" className="ml-auto shrink-0 text-xs font-mono bg-emerald-100 text-emerald-800">
                             {m.currentStock}
+                          </Badge>
+                        </span>
+                      </SelectItem>
+                    ))}
+                    {sortedMaterialStats.some(m => m.currentStock === 0) && (
+                      <div className="px-2 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide border-t mt-1 pt-2">Stok Habis</div>
+                    )}
+                    {sortedMaterialStats.filter(m => m.currentStock === 0).map(m => (
+                      <SelectItem key={m.materialId} value={String(m.materialId)}>
+                        <span className="flex items-center gap-2 w-full">
+                          <span className="font-mono text-xs text-muted-foreground shrink-0">{m.materialCode}</span>
+                          <span className="truncate text-muted-foreground">{m.materialName}</span>
+                          <Badge variant="outline" className="ml-auto shrink-0 text-xs font-mono text-muted-foreground">
+                            0
                           </Badge>
                         </span>
                       </SelectItem>
