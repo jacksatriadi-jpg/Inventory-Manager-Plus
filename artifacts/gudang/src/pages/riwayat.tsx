@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight, CalendarRange, Tag, Package } from "lucide-react";
+import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight, CalendarRange, Tag, Package, Layers } from "lucide-react";
 import { LabelPreviewDialog } from "@/components/label-preview-dialog";
 import { type LabelData, printBulkLabels } from "@/lib/print-label";
 import { Input } from "@/components/ui/input";
@@ -37,7 +37,8 @@ export default function Riwayat() {
   const [selectedIds,      setSelectedIds]       = useState<Set<number>>(new Set());
   const [pageSize,         setPageSize]         = useState<number>(16);
   const [currentPage,      setCurrentPage]      = useState(1);
-  const [labelPreview,     setLabelPreview]     = useState<LabelData | null>(null);
+  const [labelPreview,       setLabelPreview]       = useState<LabelData | null>(null);
+  const [filterActiveStock,  setFilterActiveStock]  = useState(false);
 
   const hasDateFilter = filterFrom !== "" || filterTo !== "";
 
@@ -46,6 +47,11 @@ export default function Riwayat() {
   const inStockMaterials = useMemo(
     () => (materialStats ?? []).filter(m => m.currentStock > 0).sort((a, b) => a.materialName.localeCompare(b.materialName)),
     [materialStats],
+  );
+  // Set of materialIds that currently have active stock
+  const activeStockIds = useMemo(
+    () => new Set(inStockMaterials.map(m => m.materialId)),
+    [inStockMaterials],
   );
 
   const { data: history, isLoading, refetch } = useListHistory({
@@ -65,14 +71,20 @@ export default function Riwayat() {
 
   const searchedHistory = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return filteredHistory;
-    return filteredHistory.filter(h =>
-      (h.materialCode ?? "").toLowerCase().includes(q) ||
-      (h.materialName ?? "").toLowerCase().includes(q) ||
-      (h.boxLabel     ?? "").toLowerCase().includes(q) ||
-      (h.userName     ?? "").toLowerCase().includes(q),
-    );
-  }, [filteredHistory, searchQuery]);
+    let result = filteredHistory;
+    if (q) {
+      result = result.filter(h =>
+        (h.materialCode ?? "").toLowerCase().includes(q) ||
+        (h.materialName ?? "").toLowerCase().includes(q) ||
+        (h.boxLabel     ?? "").toLowerCase().includes(q) ||
+        (h.userName     ?? "").toLowerCase().includes(q),
+      );
+    }
+    if (filterActiveStock) {
+      result = result.filter(h => h.materialId != null && activeStockIds.has(h.materialId));
+    }
+    return result;
+  }, [filteredHistory, searchQuery, filterActiveStock, activeStockIds]);
 
   const totalPages = pageSize === 0 ? 1 : Math.max(1, Math.ceil(searchedHistory.length / pageSize));
   const safePage   = Math.min(currentPage, totalPages);
@@ -377,6 +389,22 @@ export default function Riwayat() {
                     <SelectItem value="non-scan">Non-Scan</SelectItem>
                   </SelectContent>
                 </Select>
+                {/* ── active stock toggle ───────────────────────────── */}
+                <Button
+                  variant={filterActiveStock ? "default" : "outline"}
+                  size="sm"
+                  className={`h-9 gap-1.5 shrink-0 ${filterActiveStock ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600" : "text-muted-foreground"}`}
+                  onClick={() => { setFilterActiveStock(v => !v); setSelectedIds(new Set()); resetPage(); }}
+                  title="Tampilkan hanya material yang masih berstok aktif"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  Stok Aktif
+                  {filterActiveStock && activeStockIds.size > 0 && (
+                    <Badge variant="secondary" className="ml-0.5 bg-emerald-500/20 text-white text-xs px-1">
+                      {activeStockIds.size}
+                    </Badge>
+                  )}
+                </Button>
                 {/* ── in-stock material filter ──────────────────────── */}
                 <Select
                   value={filterMaterialId}
