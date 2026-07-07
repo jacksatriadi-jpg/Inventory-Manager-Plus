@@ -275,6 +275,7 @@ materialId?: number;
 userId?: number;
 from?: string;
 to?: string;
+stockOnly?: boolean;
 };
 
 export type ListHistoryType = typeof ListHistoryType[keyof typeof ListHistoryType];

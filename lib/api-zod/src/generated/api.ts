@@ -406,7 +406,8 @@ export const ListHistoryQueryParams = zod.object({
   "materialId": zod.coerce.number().optional(),
   "userId": zod.coerce.number().optional(),
   "from": zod.coerce.string().optional(),
-  "to": zod.coerce.string().optional()
+  "to": zod.coerce.string().optional(),
+  "stockOnly": zod.coerce.boolean().optional()
 })
 
 export const ListHistoryResponseItem = zod.object({

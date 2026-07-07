@@ -38,6 +38,7 @@ export default function Riwayat() {
   const [pageSize,         setPageSize]         = useState<number>(16);
   const [currentPage,      setCurrentPage]      = useState(1);
   const [labelPreview,     setLabelPreview]     = useState<LabelData | null>(null);
+  const [filterStockOnly,  setFilterStockOnly]  = useState(false);
 
   const hasDateFilter = filterFrom !== "" || filterTo !== "";
 
@@ -57,6 +58,7 @@ export default function Riwayat() {
     materialId: filterMaterialId !== "all" ? Number(filterMaterialId) : undefined,
     from:       filterFrom || undefined,
     to:         filterTo   ? filterTo + "T23:59:59" : undefined,
+    stockOnly:  filterStockOnly || undefined,
   });
 
   const deleteHistoryMutation = useDeleteHistory();
@@ -387,7 +389,7 @@ export default function Riwayat() {
                 {/* ── in-stock material filter ──────────────────────── */}
                 <Select
                   value={filterMaterialId}
-                  onValueChange={(v) => { setFilterMaterialId(v); setSelectedIds(new Set()); resetPage(); }}
+                  onValueChange={(v) => { setFilterMaterialId(v); setFilterStockOnly(false); setSelectedIds(new Set()); resetPage(); }}
                 >
                   <SelectTrigger className={`w-[190px] ${filterMaterialId !== "all" ? "border-primary text-primary" : ""}`}>
                     <Package className="w-3.5 h-3.5 mr-1.5 shrink-0" />
@@ -428,6 +430,19 @@ export default function Riwayat() {
                     ))}
                   </SelectContent>
                 </Select>
+                {/* ── sisa stok toggle — only useful when a material is selected ── */}
+                {filterMaterialId !== "all" && (
+                  <Button
+                    variant={filterStockOnly ? "default" : "outline"}
+                    size="sm"
+                    className={`h-9 gap-1.5 shrink-0 ${filterStockOnly ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600" : "text-muted-foreground"}`}
+                    onClick={() => { setFilterStockOnly(v => !v); setSelectedIds(new Set()); resetPage(); }}
+                    title="Tampilkan hanya SN yang masih ada di gudang (belum keluar)"
+                  >
+                    <Package className="w-3.5 h-3.5" />
+                    {filterStockOnly ? "Sisa Stok" : "Sisa Stok"}
+                  </Button>
+                )}
                 <Select
                   value={String(pageSize)}
                   onValueChange={(v) => { setPageSize(Number(v)); resetPage(); }}

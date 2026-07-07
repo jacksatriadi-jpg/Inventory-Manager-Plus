@@ -17,6 +17,7 @@ router.get("/history", async (req, res): Promise<void> => {
   const filterUserId     = params.success && params.data.userId     ? Number(params.data.userId)     : null;
   const filterFrom       = params.success ? params.data.from : undefined;
   const filterTo         = params.success ? params.data.to   : undefined;
+  const filterStockOnly  = params.success ? params.data.stockOnly === true : false;
 
   // ─── build query fragments ────────────────────────────────────────────────
 
@@ -28,6 +29,11 @@ router.get("/history", async (req, res): Promise<void> => {
     if (filterFrom)       { args.push(filterFrom);       conds.push(`si.created_at >= $${args.length}::timestamptz`); }
     if (filterTo)         { args.push(filterTo);         conds.push(`si.created_at <= $${args.length}::timestamptz`); }
     const where = conds.join(" AND ");
+    // stockOnly: only join scan_items that have NOT been scanned out yet
+    const itemJoinCond = filterStockOnly
+      ? "items.scan_in_id = si.id AND items.scan_out_id IS NULL"
+      : "items.scan_in_id = si.id";
+    const having = filterStockOnly ? "HAVING COUNT(items.id) > 0" : "";
     return pool.query(
       `SELECT
          si.id, si.box_label, si.created_at,
@@ -37,9 +43,10 @@ router.get("/history", async (req, res): Promise<void> => {
        FROM scan_in si
        JOIN materials m ON m.id = si.material_id
        JOIN users     u ON u.id = si.user_id
-       LEFT JOIN scan_items items ON items.scan_in_id = si.id
+       LEFT JOIN scan_items items ON ${itemJoinCond}
        WHERE ${where}
-       GROUP BY si.id, si.box_label, si.created_at, si.material_id, m.code, m.name, si.user_id, u.username`,
+       GROUP BY si.id, si.box_label, si.created_at, si.material_id, m.code, m.name, si.user_id, u.username
+       ${having}`,
       args,
     );
   };
