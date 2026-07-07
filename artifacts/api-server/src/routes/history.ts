@@ -122,14 +122,18 @@ router.get("/history", async (req, res): Promise<void> => {
   };
 
   // ─── run queries in parallel based on type filter ────────────────────────
-  const doIn  = !filterType || filterType === "in";
-  const doOut = !filterType || filterType === "out";
+  // When stockOnly=true we only want scan-in records that still have remaining
+  // items in the warehouse.  Scan-out and non-scan records are irrelevant for
+  // a "remaining stock" view — including them would add already-gone SNs to
+  // the result (and to exports), inflating the count incorrectly.
+  const doIn  = (!filterType || filterType === "in");
+  const doOut = !filterStockOnly && (!filterType || filterType === "out");
 
   const [siResult, soResult, nsmResult, nskResult] = await Promise.all([
-    doIn  ? buildScanInQuery()       : Promise.resolve({ rows: [] }),
-    doOut ? buildScanOutQuery()      : Promise.resolve({ rows: [] }),
-    doIn  ? buildNonScanMasukQuery() : Promise.resolve({ rows: [] }),
-    doOut ? buildNonScanKeluarQuery(): Promise.resolve({ rows: [] }),
+    doIn  ? buildScanInQuery()                                           : Promise.resolve({ rows: [] }),
+    doOut ? buildScanOutQuery()                                          : Promise.resolve({ rows: [] }),
+    doIn  && !filterStockOnly ? buildNonScanMasukQuery()                 : Promise.resolve({ rows: [] }),
+    doOut && !filterStockOnly ? buildNonScanKeluarQuery()                : Promise.resolve({ rows: [] }),
   ]);
 
   const records: any[] = [];

@@ -436,7 +436,14 @@ export default function Riwayat() {
                     variant={filterStockOnly ? "default" : "outline"}
                     size="sm"
                     className={`h-9 gap-1.5 shrink-0 ${filterStockOnly ? "bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600" : "text-muted-foreground"}`}
-                    onClick={() => { setFilterStockOnly(v => !v); setSelectedIds(new Set()); resetPage(); }}
+                    onClick={() => {
+                      const next = !filterStockOnly;
+                      setFilterStockOnly(next);
+                      // Sisa stok = hanya barang masuk yang belum keluar; paksa filter tipe ke "Masuk"
+                      if (next) setFilterType("in");
+                      setSelectedIds(new Set());
+                      resetPage();
+                    }}
                     title="Tampilkan hanya SN yang masih ada di gudang (belum keluar)"
                   >
                     <Package className="w-3.5 h-3.5" />
