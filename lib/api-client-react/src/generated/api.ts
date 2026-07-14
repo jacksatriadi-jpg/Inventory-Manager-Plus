@@ -43,6 +43,8 @@ import type {
   ScanOut,
   ScanOutInput,
   ScanOutItemInput,
+  ScanOutItemsBulkInput,
+  ScanOutItemsBulkResult,
   User,
   UserInput,
   UserUpdate
@@ -1909,6 +1911,78 @@ export const useAddScanOutItem = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getAddScanOutItemMutationOptions(options));
+    }
+
+export const getAddScanOutItemsBulkUrl = (id: number,) => {
+
+
+
+
+  return `/api/scan-out/${id}/items/bulk`
+}
+
+/**
+ * @summary Mark a batch of serial numbers as scanned out in one call (e.g. bulk dispatch triggered from history). Unlike the single-item endpoint, unknown or already-dispatched serials are skipped and reported back instead of failing the whole batch.
+ */
+export const addScanOutItemsBulk = async (id: number,
+    scanOutItemsBulkInput: ScanOutItemsBulkInput, options?: RequestInit): Promise<ScanOutItemsBulkResult> => {
+
+  return customFetch<ScanOutItemsBulkResult>(getAddScanOutItemsBulkUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      scanOutItemsBulkInput,)
+  }
+);}
+
+
+
+
+export const getAddScanOutItemsBulkMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addScanOutItemsBulk>>, TError,{id: number;data: BodyType<ScanOutItemsBulkInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof addScanOutItemsBulk>>, TError,{id: number;data: BodyType<ScanOutItemsBulkInput>}, TContext> => {
+
+const mutationKey = ['addScanOutItemsBulk'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof addScanOutItemsBulk>>, {id: number;data: BodyType<ScanOutItemsBulkInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  addScanOutItemsBulk(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type AddScanOutItemsBulkMutationResult = NonNullable<Awaited<ReturnType<typeof addScanOutItemsBulk>>>
+    export type AddScanOutItemsBulkMutationBody = BodyType<ScanOutItemsBulkInput>
+    export type AddScanOutItemsBulkMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Mark a batch of serial numbers as scanned out in one call (e.g. bulk dispatch triggered from history). Unlike the single-item endpoint, unknown or already-dispatched serials are skipped and reported back instead of failing the whole batch.
+ */
+export const useAddScanOutItemsBulk = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof addScanOutItemsBulk>>, TError,{id: number;data: BodyType<ScanOutItemsBulkInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof addScanOutItemsBulk>>,
+        TError,
+        {id: number;data: BodyType<ScanOutItemsBulkInput>},
+        TContext
+      > => {
+      return useMutation(getAddScanOutItemsBulkMutationOptions(options));
     }
 
 export const getListHistoryUrl = (params?: ListHistoryParams,) => {

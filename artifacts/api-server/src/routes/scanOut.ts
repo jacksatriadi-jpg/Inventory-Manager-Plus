@@ -11,6 +11,8 @@ import {
   DeleteScanOutParams,
   AddScanOutItemParams,
   AddScanOutItemBody,
+  AddScanOutItemsBulkParams,
+  AddScanOutItemsBulkBody,
 } from "@workspace/api-zod";
 
 const router: IRouter = Router();
@@ -163,6 +165,60 @@ router.post("/scan-out/:id/items", async (req, res): Promise<void> => {
 
   // Return the first processed item (or all — API only returns one ScanItem per call)
   res.status(201).json(processedItems[0]);
+});
+
+// Bulk variant used by "Scan Keluar" triggered from the Riwayat page: the
+// caller selects a batch of history rows (potentially hundreds of serials
+// across many boxes). Unlike the single-item endpoint above, unknown or
+// already-dispatched serials are skipped and reported back rather than
+// aborting the whole batch — a stale/partial selection from history is
+// expected, not an error case. The whole batch is applied atomically.
+router.post("/scan-out/:id/items/bulk", async (req, res): Promise<void> => {
+  const params = AddScanOutItemsBulkParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const parsed = AddScanOutItemsBulkBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  const serialNumbers = [...new Set(parsed.data.serialNumbers.map((s) => s.trim()).filter((s) => s.length > 0))];
+  if (serialNumbers.length === 0) {
+    res.status(400).json({ error: "No serial numbers provided" });
+    return;
+  }
+
+  const [scanOut] = await db.select().from(scanOutTable).where(eq(scanOutTable.id, params.data.id));
+  if (!scanOut) {
+    res.status(404).json({ error: "ScanOut session not found" });
+    return;
+  }
+
+  const notFound: string[] = [];
+  const alreadyOut: string[] = [];
+  let scannedCount = 0;
+
+  await db.transaction(async (tx) => {
+    for (const sn of serialNumbers) {
+      const [item] = await tx.select().from(scanItemsTable).where(eq(scanItemsTable.serialNumber, sn));
+      if (!item) {
+        notFound.push(sn);
+        continue;
+      }
+      if (item.scanOutId != null) {
+        alreadyOut.push(sn);
+        continue;
+      }
+      await tx.update(scanItemsTable).set({ scanOutId: params.data.id }).where(eq(scanItemsTable.serialNumber, sn));
+      scannedCount++;
+    }
+  });
+
+  res.status(201).json({ scannedCount, alreadyOut, notFound });
 });
 
 export default router;

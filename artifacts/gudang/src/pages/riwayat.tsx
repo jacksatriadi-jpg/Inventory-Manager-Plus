@@ -1,5 +1,10 @@
 import { useState, useMemo } from "react";
-import { useListHistory, useDeleteHistory, useGetMaterialStats } from "@workspace/api-client-react";
+import {
+  useListHistory, useDeleteHistory, useGetMaterialStats,
+  useCreateScanOut, useAddScanOutItemsBulk,
+  getListHistoryQueryKey, getGetMaterialStatsQueryKey, getListScanOutQueryKey,
+} from "@workspace/api-client-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -7,7 +12,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight, CalendarRange, Tag, Package } from "lucide-react";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog";
+import { History, FileDown, Printer, Trash2, ArrowDownRight, ArrowUpRight, Loader2, PackagePlus, PackageMinus, Search, X, ChevronLeft, ChevronRight, CalendarRange, Tag, Package, LogOut } from "lucide-react";
 import { LabelPreviewDialog } from "@/components/label-preview-dialog";
 import { type LabelData, printBulkLabels } from "@/lib/print-label";
 import { Input } from "@/components/ui/input";
@@ -28,6 +37,7 @@ const PAGE_SIZE_OPTIONS = [
 export default function Riwayat() {
   const { user, isGuest } = useAuth();
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const [filterType,       setFilterType]       = useState<"all" | "in" | "out">("all");
   const [filterSource,     setFilterSource]     = useState<"all" | "scan" | "non-scan">("all");
   const [filterMaterialId, setFilterMaterialId] = useState<string>("all");
@@ -39,6 +49,11 @@ export default function Riwayat() {
   const [currentPage,      setCurrentPage]      = useState(1);
   const [labelPreview,     setLabelPreview]     = useState<LabelData | null>(null);
   const [filterStockOnly,  setFilterStockOnly]  = useState(false);
+  const [scanOutConfirmOpen, setScanOutConfirmOpen] = useState(false);
+  const [scanOutSubmitting,  setScanOutSubmitting]  = useState(false);
+
+  const createScanOutMutation = useCreateScanOut();
+  const addScanOutItemsBulkMutation = useAddScanOutItemsBulk();
 
   const hasDateFilter = filterFrom !== "" || filterTo !== "";
 
@@ -96,6 +111,27 @@ export default function Riwayat() {
     if (selectedIds.size === 0) return searchedHistory;
     return searchedHistory.filter(h => selectedIds.has(h.id));
   }, [searchedHistory, selectedIds]);
+
+  // Bulk "Scan Keluar" only applies to explicitly-selected scan-in records
+  // that still have serial numbers to dispatch. Non-scan rows and already
+  // scanned-out rows have nothing to dispatch, so they're excluded here —
+  // any selected-but-ineligible rows are simply ignored, not blocked.
+  const selectedRecords = useMemo(
+    () => searchedHistory.filter(h => selectedIds.has(h.id)),
+    [searchedHistory, selectedIds],
+  );
+  const scanOutEligibleRecords = useMemo(
+    () => selectedRecords.filter(h => h.type === "in" && h.source === "scan" && h.serialNumbers.length > 0),
+    [selectedRecords],
+  );
+  const scanOutSerialNumbers = useMemo(
+    () => [...new Set(scanOutEligibleRecords.flatMap(h => h.serialNumbers))],
+    [scanOutEligibleRecords],
+  );
+  const scanOutMaterialCount = useMemo(
+    () => new Set(scanOutEligibleRecords.map(h => h.materialId)).size,
+    [scanOutEligibleRecords],
+  );
 
   const allIds      = useMemo(() => searchedHistory.map(h => h.id), [searchedHistory]);
   const allSelected = allIds.length > 0 && allIds.every(id => selectedIds.has(id));
@@ -298,6 +334,36 @@ export default function Riwayat() {
     };
   };
 
+  const handleConfirmScanOut = async () => {
+    if (!user || scanOutSerialNumbers.length === 0) return;
+    setScanOutSubmitting(true);
+    try {
+      const session = await createScanOutMutation.mutateAsync({ data: { userId: user.id } });
+      const result = await addScanOutItemsBulkMutation.mutateAsync({
+        id: session.id,
+        data: { serialNumbers: scanOutSerialNumbers },
+      });
+      queryClient.invalidateQueries({ queryKey: getListHistoryQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetMaterialStatsQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getListScanOutQueryKey() });
+      setSelectedIds(new Set());
+      setScanOutConfirmOpen(false);
+      const skipped = result.alreadyOut.length + result.notFound.length;
+      toast({
+        title: `${result.scannedCount} item berhasil discan keluar`,
+        description: skipped > 0
+          ? `${skipped} item dilewati (${result.alreadyOut.length} sudah keluar sebelumnya, ${result.notFound.length} tidak ditemukan).`
+          : "Semua item berhasil ditandai keluar gudang.",
+        variant: skipped > 0 && result.scannedCount === 0 ? "destructive" : "default",
+      });
+      refetch();
+    } catch (error: any) {
+      toast({ title: "Gagal scan keluar", description: error?.message, variant: "destructive" });
+    } finally {
+      setScanOutSubmitting(false);
+    }
+  };
+
   const handlePrintSato = () => {
     const targets = effectiveRecords;
     if (targets.length === 0) {
@@ -336,6 +402,17 @@ export default function Riwayat() {
             {selectedIds.size > 0 && (
               <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())} className="text-muted-foreground text-xs">
                 Batal pilih
+              </Button>
+            )}
+            {scanOutSerialNumbers.length > 0 && (
+              <Button
+                variant="outline"
+                onClick={() => setScanOutConfirmOpen(true)}
+                className="border-amber-500/50 text-amber-700 hover:bg-amber-50 hover:text-amber-800 dark:text-amber-500 dark:hover:bg-amber-950/30"
+                title={`Scan keluar ${scanOutSerialNumbers.length} item dari record terpilih`}
+              >
+                <LogOut className="w-4 h-4 mr-2" />
+                Scan Keluar ({scanOutSerialNumbers.length})
               </Button>
             )}
             <Button variant="outline" onClick={handlePrintQR} title={`Cetak QR A4 (${selectionLabel})`}>
@@ -702,6 +779,38 @@ export default function Riwayat() {
         onOpenChange={(open) => { if (!open) setLabelPreview(null); }}
         data={labelPreview}
       />
+
+      <AlertDialog open={scanOutConfirmOpen} onOpenChange={(open) => { if (!scanOutSubmitting) setScanOutConfirmOpen(open); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <LogOut className="w-5 h-5 text-amber-600" />
+              Konfirmasi Scan Keluar
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  <span className="font-semibold text-foreground">{scanOutSerialNumbers.length} item</span> dari{" "}
+                  <span className="font-semibold text-foreground">{scanOutEligibleRecords.length} record</span>
+                  {" "}({scanOutMaterialCount} material) akan ditandai <span className="font-semibold text-amber-700 dark:text-amber-500">keluar gudang</span>.
+                </p>
+                <p>Tindakan ini membuat sesi dispatch baru dan tidak bisa dibatalkan otomatis — item yang sudah keluar sebelumnya atau tidak ditemukan akan otomatis dilewati.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={scanOutSubmitting}>Batal</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); handleConfirmScanOut(); }}
+              disabled={scanOutSubmitting}
+              className="bg-amber-600 hover:bg-amber-700 text-white"
+            >
+              {scanOutSubmitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <LogOut className="w-4 h-4 mr-2" />}
+              Ya, Scan Keluar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

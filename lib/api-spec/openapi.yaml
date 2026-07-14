@@ -502,6 +502,31 @@ paths:
         "409":
           description: Already scanned out
 
+  /scan-out/{id}/items/bulk:
+    post:
+      operationId: addScanOutItemsBulk
+      tags: [scan-out]
+      summary: Mark a batch of serial numbers as scanned out in one call (e.g. bulk dispatch triggered from history). Unlike the single-item endpoint, unknown or already-dispatched serials are skipped and reported back instead of failing the whole batch.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanOutItemsBulkInput"
+      responses:
+        "201":
+          description: Batch processed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanOutItemsBulkResult"
+
   /history:
     get:
       operationId: listHistory
@@ -534,6 +559,12 @@ paths:
           required: false
           schema:
             type: string
+        - name: stockOnly
+          in: query
+          required: false
+          description: When true, only include scan-in records that still have serial numbers not yet scanned out (excludes scan-out and non-scan rows).
+          schema:
+            type: boolean
       responses:
         "200":
           description: History records
@@ -827,6 +858,30 @@ components:
           type: string
           minLength: 28
           maxLength: 28
+
+    ScanOutItemsBulkInput:
+      type: object
+      required: [serialNumbers]
+      properties:
+        serialNumbers:
+          type: array
+          items:
+            type: string
+
+    ScanOutItemsBulkResult:
+      type: object
+      required: [scannedCount, alreadyOut, notFound]
+      properties:
+        scannedCount:
+          type: integer
+        alreadyOut:
+          type: array
+          items:
+            type: string
+        notFound:
+          type: array
+          items:
+            type: string
 
     HistoryRecord:
       type: object

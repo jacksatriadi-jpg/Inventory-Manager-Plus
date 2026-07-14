@@ -399,6 +399,18 @@ export const AddScanOutItemBody = zod.object({
 
 
 /**
+ * @summary Mark a batch of serial numbers as scanned out in one call (e.g. bulk dispatch triggered from history). Unlike the single-item endpoint, unknown or already-dispatched serials are skipped and reported back instead of failing the whole batch.
+ */
+export const AddScanOutItemsBulkParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const AddScanOutItemsBulkBody = zod.object({
+  "serialNumbers": zod.array(zod.string())
+})
+
+
+/**
  * @summary List all scan history (in and out)
  */
 export const ListHistoryQueryParams = zod.object({
@@ -407,7 +419,7 @@ export const ListHistoryQueryParams = zod.object({
   "userId": zod.coerce.number().optional(),
   "from": zod.coerce.string().optional(),
   "to": zod.coerce.string().optional(),
-  "stockOnly": zod.coerce.boolean().optional()
+  "stockOnly": zod.coerce.boolean().optional().describe('When true, only include scan-in records that still have serial numbers not yet scanned out (excludes scan-out and non-scan rows).')
 })
 
 export const ListHistoryResponseItem = zod.object({
@@ -415,7 +427,7 @@ export const ListHistoryResponseItem = zod.object({
   "type": zod.enum(['in', 'out']),
   "source": zod.enum(['scan', 'non-scan']),
   "materialId": zod.number().nullable(),
-  "materialCode": zod.string().nullable(),
+  "materialCode": zod.string().nullish(),
   "materialName": zod.string().nullable(),
   "boxLabel": zod.string().nullable(),
   "userId": zod.number(),

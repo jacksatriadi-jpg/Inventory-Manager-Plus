@@ -188,6 +188,16 @@ export interface ScanItemInput {
   serialNumber: string;
 }
 
+export interface ScanOutItemsBulkInput {
+  serialNumbers: string[];
+}
+
+export interface ScanOutItemsBulkResult {
+  scannedCount: number;
+  alreadyOut: string[];
+  notFound: string[];
+}
+
 export type HistoryRecordType = typeof HistoryRecordType[keyof typeof HistoryRecordType];
 
 
@@ -275,6 +285,9 @@ materialId?: number;
 userId?: number;
 from?: string;
 to?: string;
+/**
+ * When true, only include scan-in records that still have serial numbers not yet scanned out (excludes scan-out and non-scan rows).
+ */
 stockOnly?: boolean;
 };
 

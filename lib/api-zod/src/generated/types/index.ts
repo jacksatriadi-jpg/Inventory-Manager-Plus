@@ -38,6 +38,8 @@ export * from './scanItemInput';
 export * from './scanOut';
 export * from './scanOutInput';
 export * from './scanOutItemInput';
+export * from './scanOutItemsBulkInput';
+export * from './scanOutItemsBulkResult';
 export * from './user';
 export * from './userInput';
 export * from './userInputRole';
