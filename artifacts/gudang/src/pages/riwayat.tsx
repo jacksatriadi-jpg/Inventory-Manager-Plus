@@ -232,7 +232,9 @@ export default function Riwayat() {
     let html = `<html><head><title>Cetak QR Box Labels</title><style>* { box-sizing: border-box; margin: 0; padding: 0; } body { font-family: monospace; background: #fff; } .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4mm; padding: 0; } .card { border: 1px dashed #555; padding: 3mm; text-align: center; break-inside: avoid; page-break-inside: avoid; } .box-label { font-size: 8pt; font-weight: bold; margin-bottom: 1.5mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .meta { font-size: 6pt; color: #444; margin-bottom: 2mm; line-height: 1.4; } .qr img { width: 100%; height: auto; display: block; } @media print { @page { size: A4 portrait; margin: 8mm; } body { margin: 0; } } @media screen { body { padding: 10mm; } }</style></head><body><div class="grid">`;
     for (const record of inRecords) {
       const qrText  = record.serialNumbers.join("\n");
-      const dataUrl = await QRCode.toDataURL(qrText, { margin: 1, width: 180 });
+      // margin: 4 gives a proper quiet zone around the code so it stays
+      // reliably re-scannable after printing (was margin: 1, too tight).
+      const dataUrl = await QRCode.toDataURL(qrText, { errorCorrectionLevel: "M", margin: 4, width: 240 });
       html += `<div class="card"><div class="box-label">${record.boxLabel || "-"}</div><div class="meta">${record.materialCode || record.materialName || "-"}<br/>${record.serialNumbers.length} item &bull; ${format(new Date(record.createdAt), "dd/MM/yy")}<br/>${record.userName}</div><div class="qr"><img src="${dataUrl}" /></div></div>`;
     }
     html += `</div></body></html>`;
@@ -309,7 +311,7 @@ export default function Riwayat() {
     } else {
       // Multiple records → print all pages directly
       toast({ title: `Mencetak ${labels.length} label…`, description: "Jendela cetak akan terbuka sebentar lagi." });
-      printBulkLabels(labels);
+      void printBulkLabels(labels);
     }
   };
 

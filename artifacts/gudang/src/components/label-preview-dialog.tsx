@@ -17,12 +17,18 @@ export function LabelPreviewDialog({ open, onOpenChange, data }: LabelPreviewDia
   useEffect(() => {
     if (!open || !data || !iframeRef.current) return;
     setLoading(true);
-    const html = generateLabelHtml(data, true);
     const iframe = iframeRef.current;
-    iframe.srcdoc = html;
+    let cancelled = false;
     const onLoad = () => setLoading(false);
-    iframe.addEventListener("load", onLoad);
-    return () => iframe.removeEventListener("load", onLoad);
+    generateLabelHtml(data, true).then((html) => {
+      if (cancelled || !iframeRef.current) return;
+      iframeRef.current.srcdoc = html;
+      iframeRef.current.addEventListener("load", onLoad);
+    });
+    return () => {
+      cancelled = true;
+      iframe.removeEventListener("load", onLoad);
+    };
   }, [open, data]);
 
   // reset loading state when dialog closes
@@ -78,7 +84,7 @@ export function LabelPreviewDialog({ open, onOpenChange, data }: LabelPreviewDia
           </Button>
           <Button
             onClick={() => {
-              if (data) printLabel(data);
+              if (data) void printLabel(data);
               onOpenChange(false);
             }}
             className="gap-2"
