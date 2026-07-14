@@ -3,6 +3,7 @@ import {
   useListHistory, useDeleteHistory, useGetMaterialStats,
   useCreateScanOut, useAddScanOutItemsBulk,
   getListHistoryQueryKey, getGetMaterialStatsQueryKey, getListScanOutQueryKey,
+  getGetDashboardSummaryQueryKey, getGetRecentActivityQueryKey,
 } from "@workspace/api-client-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
@@ -346,6 +347,8 @@ export default function Riwayat() {
       queryClient.invalidateQueries({ queryKey: getListHistoryQueryKey() });
       queryClient.invalidateQueries({ queryKey: getGetMaterialStatsQueryKey() });
       queryClient.invalidateQueries({ queryKey: getListScanOutQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetDashboardSummaryQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getGetRecentActivityQueryKey() });
       setSelectedIds(new Set());
       setScanOutConfirmOpen(false);
       const skipped = result.alreadyOut.length + result.notFound.length;
