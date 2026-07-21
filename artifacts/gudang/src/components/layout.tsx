@@ -1,6 +1,6 @@
 import { useAuth } from "@/lib/auth";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, ScanLine, History, Database, LogOut, UserCircle, DatabaseBackup, RefreshCw, PackagePlus, PackageMinus, Eye } from "lucide-react";
+import { LayoutDashboard, ScanLine, History, Database, LogOut, UserCircle, DatabaseBackup, RefreshCw, PackagePlus, PackageMinus, Eye, QrCode } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +33,7 @@ export function Layout({ children }: LayoutProps) {
         { href: "/material-masuk", label: "Material Masuk", icon: PackagePlus },
         { href: "/material-keluar", label: "Material Keluar", icon: PackageMinus },
         { href: "/riwayat", label: "Riwayat", icon: History },
+        { href: "/barcode-tools", label: "Barcode Tools", icon: QrCode },
         ...(user?.role === "master" ? [
           { href: "/master", label: "Master", icon: Database },
           { href: "/master?tab=backup", label: "Backup & Restore", icon: DatabaseBackup },
