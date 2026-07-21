@@ -405,15 +405,6 @@ async function printLabelA4(
 
   </div>
 
-  ${barcodes.length > 0 ? `
-  <!-- SN List -->
-  <div class="sn-section">
-    <div class="sn-title">Daftar No Material / Serial Number (${barcodes.length} item)</div>
-    <table class="sn-table">
-      <thead><tr><th style="width:24pt">#</th><th>No Material / SN</th></tr></thead>
-      <tbody>${snRows}</tbody>
-    </table>
-  </div>` : ""}
 
   <!-- Footer -->
   <div class="footer">
