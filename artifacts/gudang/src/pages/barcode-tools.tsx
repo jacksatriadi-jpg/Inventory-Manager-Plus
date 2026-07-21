@@ -228,6 +228,208 @@ function esc(s: string) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+/** Cetak 1 halaman A4 — QR Code + Data Inspeksi lengkap (printer biasa) */
+async function printLabelA4(
+  form: InspectionForm,
+  barcodes: string[],
+): Promise<void> {
+  const payload = barcodes.join("\n");
+
+  const qrDataUrl = await QRCode.toDataURL(payload, {
+    errorCorrectionLevel: "M", margin: 4, width: 600,
+  });
+
+  const snRows = barcodes
+    .map((b, i) => `<tr><td class="sn-no">${i + 1}</td><td class="sn-val">${esc(b)}</td></tr>`)
+    .join("");
+
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"/>
+<title>Label Inspeksi A4</title>
+<style>
+  @page { size: A4 portrait; margin: 15mm 18mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, Helvetica, sans-serif; background: #fff; color: #000; font-size: 10pt; }
+
+  .wrapper {
+    width: 100%;
+    border: 1.5pt solid #333;
+    border-radius: 4pt;
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  .header {
+    background: #1e3a5f;
+    color: #fff;
+    padding: 8pt 12pt;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .header-title { font-size: 13pt; font-weight: bold; letter-spacing: .5pt; }
+  .header-sub   { font-size: 8pt; opacity: .8; margin-top: 2pt; }
+  .header-badge {
+    background: rgba(255,255,255,.15);
+    border: 1pt solid rgba(255,255,255,.3);
+    border-radius: 3pt;
+    padding: 3pt 8pt;
+    font-size: 7.5pt;
+    text-align: center;
+    white-space: nowrap;
+  }
+
+  /* ── Body: QR kiri, info kanan ── */
+  .body {
+    display: flex;
+    align-items: stretch;
+    border-top: 1.5pt solid #333;
+  }
+  .qr-col {
+    flex-shrink: 0;
+    width: 110pt;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 10pt 8pt;
+    border-right: 1pt solid #ccc;
+    background: #fafafa;
+    gap: 4pt;
+  }
+  .qr-col img { width: 94pt; height: 94pt; image-rendering: pixelated; display: block; }
+  .qr-caption { font-size: 6.5pt; color: #666; text-align: center; }
+
+  /* ── Info column ── */
+  .info-col {
+    flex: 1;
+    padding: 10pt 12pt;
+    display: flex;
+    flex-direction: column;
+    gap: 5pt;
+  }
+  .field { display: flex; flex-direction: column; gap: 1.5pt; }
+  .field-label { font-size: 7pt; color: #888; text-transform: uppercase; letter-spacing: .4pt; font-weight: bold; }
+  .field-value { font-size: 10.5pt; font-weight: bold; color: #111; line-height: 1.25; }
+  .field-value.mono { font-family: "Courier New", monospace; font-size: 9pt; }
+  .field-value.normal { font-weight: normal; font-size: 9.5pt; }
+
+  .divider { border-top: .5pt solid #ddd; margin: 2pt 0; }
+
+  .row2 { display: flex; gap: 12pt; }
+  .row2 .field { flex: 1; }
+
+  /* ── SN Table ── */
+  .sn-section {
+    border-top: 1pt solid #ccc;
+    padding: 8pt 12pt 10pt;
+    background: #fafafa;
+  }
+  .sn-title {
+    font-size: 7.5pt; font-weight: bold; color: #555;
+    text-transform: uppercase; letter-spacing: .4pt;
+    margin-bottom: 5pt;
+  }
+  .sn-table { width: 100%; border-collapse: collapse; font-size: 8pt; }
+  .sn-table thead tr { background: #e8eef5; }
+  .sn-table th { text-align: left; padding: 3pt 6pt; font-size: 7pt; color: #555;
+                  text-transform: uppercase; letter-spacing: .3pt; }
+  .sn-table td { padding: 2.5pt 6pt; border-bottom: .4pt solid #e5e5e5; }
+  .sn-no  { color: #999; width: 24pt; text-align: center; }
+  .sn-val { font-family: "Courier New", monospace; }
+  .sn-table tr:nth-child(even) td { background: #f7f7f7; }
+
+  /* ── Footer ── */
+  .footer {
+    border-top: 1pt solid #ccc;
+    padding: 5pt 12pt;
+    display: flex;
+    justify-content: space-between;
+    font-size: 7pt;
+    color: #999;
+    background: #fff;
+  }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <div class="header-title">Lembar Inspeksi Material</div>
+      <div class="header-sub">Manajemen Inventori Gudang</div>
+    </div>
+    <div class="header-badge">
+      ${esc(form.nomorInspeksi || "—")}<br/>
+      <span style="font-size:6.5pt;opacity:.8">No Inspeksi</span>
+    </div>
+  </div>
+
+  <!-- Body -->
+  <div class="body">
+
+    <!-- QR Code -->
+    <div class="qr-col">
+      <img src="${qrDataUrl}" alt="QR Code"/>
+      <div class="qr-caption">${barcodes.length} SN di-encode</div>
+    </div>
+
+    <!-- Info -->
+    <div class="info-col">
+      <div class="field">
+        <span class="field-label">No Inspeksi</span>
+        <span class="field-value">${esc(form.nomorInspeksi || "—")}</span>
+      </div>
+      <div class="divider"></div>
+      <div class="field">
+        <span class="field-label">No Material</span>
+        <span class="field-value mono">${esc(form.noMaterial || "—")}</span>
+      </div>
+      <div class="field">
+        <span class="field-label">Nama Material</span>
+        <span class="field-value normal">${esc(form.namaMaterial || "—")}</span>
+      </div>
+      <div class="divider"></div>
+      <div class="row2">
+        <div class="field">
+          <span class="field-label">Tgl Inspeksi</span>
+          <span class="field-value normal">${esc(form.tanggalInspeksi || "—")}</span>
+        </div>
+        <div class="field">
+          <span class="field-label">QTY</span>
+          <span class="field-value normal">${esc(form.qty || "—")}</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  ${barcodes.length > 0 ? `
+  <!-- SN List -->
+  <div class="sn-section">
+    <div class="sn-title">Daftar No Material / Serial Number (${barcodes.length} item)</div>
+    <table class="sn-table">
+      <thead><tr><th style="width:24pt">#</th><th>No Material / SN</th></tr></thead>
+      <tbody>${snRows}</tbody>
+    </table>
+  </div>` : ""}
+
+  <!-- Footer -->
+  <div class="footer">
+    <span>Sistem Gudang Pemaron</span>
+    <span>Dicetak: ${new Date().toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" })} ${new Date().toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" })}</span>
+  </div>
+
+</div>
+<script>window.onload=function(){setTimeout(function(){window.print();window.close();},300);};</script>
+</body></html>`;
+
+  const w = window.open("", "_blank", "width=800,height=600,menubar=no,toolbar=no");
+  if (w) { w.document.open(); w.document.write(html); w.document.close(); }
+  else toast.error("Popup diblokir browser. Izinkan popup lalu coba lagi.");
+}
+
 async function printLabel(
   form: InspectionForm,
   barcodes: string[],
@@ -309,6 +511,7 @@ export default function BarcodeTools() {
   const [isPdfProcessing, setIsPdfProcessing] = useState(false);
   const [pdfProgress, setPdfProgress] = useState<{ cur: number; tot: number } | null>(null);
   const [isPrinting, setIsPrinting] = useState(false);
+  const [isPrintingA4, setIsPrintingA4] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
   const [qrPreviewUrl, setQrPreviewUrl] = useState("");
 
@@ -416,6 +619,14 @@ export default function BarcodeTools() {
     try { await printLabel(form, barcodes); }
     catch (err: any) { toast.error("Gagal mencetak: " + (err?.message ?? "")); }
     finally { setIsPrinting(false); }
+  };
+
+  const handlePrintA4 = async () => {
+    if (!canPrint) return;
+    setIsPrintingA4(true);
+    try { await printLabelA4(form, barcodes); }
+    catch (err: any) { toast.error("Gagal mencetak A4: " + (err?.message ?? "")); }
+    finally { setIsPrintingA4(false); }
   };
 
   // ── Template download ─────────────────────────────────────────────────────
@@ -725,10 +936,23 @@ export default function BarcodeTools() {
                 {isPrinting
                   ? <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                   : <Printer className="w-5 h-5 mr-2" />}
-                Cetak QR Code (SATO CL4NX Plus)
+                Cetak Label SATO (7 × 3 cm)
               </Button>
+
+              <Button
+                className="w-full" size="lg"
+                variant="outline"
+                disabled={!canPrint || isPrintingA4}
+                onClick={handlePrintA4}
+              >
+                {isPrintingA4
+                  ? <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                  : <Printer className="w-5 h-5 mr-2" />}
+                Cetak Lembar A4 (Printer Biasa)
+              </Button>
+
               <p className="text-xs text-muted-foreground text-center">
-                QR Code dicetak dengan quiet-zone margin 4 — dapat di-scan ulang dengan scanner apapun.
+                Label SATO: 2 halaman (QR + data). &nbsp;·&nbsp; Lembar A4: 1 halaman data inspeksi lengkap.
               </p>
             </div>
           </div>
