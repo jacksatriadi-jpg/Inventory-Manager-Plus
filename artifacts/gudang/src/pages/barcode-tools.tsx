@@ -22,6 +22,8 @@ interface InspectionForm {
   nomorInspeksi: string;
   tanggalInspeksi: string;
   qty: string;
+  noMaterial: string;
+  namaMaterial: string;
 }
 
 // ─── PDF.js initialisation ─────────────────────────────────────────────────
@@ -243,23 +245,24 @@ async function printLabel(
   @page{size:70mm 30mm;margin:0}
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:70mm;height:30mm;background:#fff;overflow:hidden}
-  .label{width:70mm;height:30mm;padding:1.5mm;display:flex;flex-direction:row;align-items:center;gap:1.5mm;font-family:Arial,Helvetica,sans-serif}
-  .qr{flex-shrink:0;width:26mm;height:26mm}
-  .qr img{width:26mm;height:26mm;display:block;image-rendering:pixelated}
-  .info{flex:1;display:flex;flex-direction:column;justify-content:center;gap:0.9mm;overflow:hidden}
-  .t1{font-size:6.5pt;font-weight:bold;color:#000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .t2{font-size:5.5pt;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .t3{font-size:4.8pt;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .hr{border-top:.3mm solid #ddd;margin:.4mm 0}
+  .label{width:70mm;height:30mm;padding:1mm;display:flex;flex-direction:row;align-items:center;gap:1mm;font-family:Arial,Helvetica,sans-serif}
+  .qr{flex-shrink:0;width:28mm;height:28mm}
+  .qr img{width:28mm;height:28mm;display:block;image-rendering:pixelated}
+  .info{flex:1;display:flex;flex-direction:column;justify-content:center;gap:0.7mm;overflow:hidden}
+  .tb{font-size:5pt;font-weight:bold;color:#000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ts{font-size:4.2pt;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tx{font-size:3.8pt;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hr{border-top:.25mm solid #ddd;margin:.3mm 0}
 </style></head><body>
 <div class="label">
   <div class="qr"><img src="${qrDataUrl}" alt="QR"/></div>
   <div class="info">
-    <div class="t1">${esc(form.nomorInspeksi || "—")}</div>
-    <div class="t2">Tgl: ${esc(form.tanggalInspeksi || "—")}</div>
-    <div class="t2">Qty: ${esc(form.qty || "—")}</div>
+    <div class="tb">${esc(form.nomorInspeksi || "—")}</div>
+    <div class="ts">No Mat: ${esc(form.noMaterial || "—")}</div>
+    <div class="ts">${esc(form.namaMaterial || "—")}</div>
     <div class="hr"></div>
-    <div class="t3">${barcodes.length} barcode embedded</div>
+    <div class="tx">Tgl: ${esc(form.tanggalInspeksi || "—")}</div>
+    <div class="tx">Qty: ${esc(form.qty || "—")} &nbsp;·&nbsp; ${barcodes.length} SN</div>
   </div>
 </div>
 <script>window.onload=function(){setTimeout(function(){window.print();window.close();},300);};</script>
@@ -274,7 +277,7 @@ async function printLabel(
 
 export default function BarcodeTools() {
   const [form, setForm] = useState<InspectionForm>({
-    nomorInspeksi: "", tanggalInspeksi: "", qty: "",
+    nomorInspeksi: "", tanggalInspeksi: "", qty: "", noMaterial: "", namaMaterial: "",
   });
   const [barcodes, setBarcodes] = useState<string[]>([]);
   const [newBarcode, setNewBarcode] = useState("");
@@ -354,6 +357,8 @@ export default function BarcodeTools() {
         nomorInspeksi:   first.inspeksi || "",
         tanggalInspeksi: first.tgl      || "",
         qty:             first.qty      || String(rows.length),
+        noMaterial:      first.material || "",
+        namaMaterial:    first.nama     || "",
       });
 
       // Extract No Material column as barcode list (deduplicated)
@@ -452,6 +457,26 @@ export default function BarcodeTools() {
                 placeholder="1"
                 value={form.qty}
                 onChange={(e) => setField("qty", e.target.value)}
+                className="h-8 text-sm"
+              />
+            </div>
+            <div className="space-y-1.5 sm:col-span-1">
+              <Label htmlFor="noMaterial" className="text-xs">No Material</Label>
+              <Input
+                id="noMaterial"
+                placeholder="00000000000002090032"
+                value={form.noMaterial}
+                onChange={(e) => setField("noMaterial", e.target.value)}
+                className="h-8 text-sm font-mono"
+              />
+            </div>
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label htmlFor="namaMaterial" className="text-xs">Nama Material</Label>
+              <Input
+                id="namaMaterial"
+                placeholder="LA;20-24kV;K;10kA;POLYMER;;"
+                value={form.namaMaterial}
+                onChange={(e) => setField("namaMaterial", e.target.value)}
                 className="h-8 text-sm"
               />
             </div>
@@ -600,36 +625,36 @@ export default function BarcodeTools() {
                 title="Preview 3× — cetak sebenarnya 70mm × 30mm"
               >
                 <div
-                  className="flex flex-row items-center h-full gap-[4.5px]"
-                  style={{ padding: "4.5px", fontFamily: "Arial,Helvetica,sans-serif" }}
+                  className="flex flex-row items-center h-full gap-[3px]"
+                  style={{ padding: "3px", fontFamily: "Arial,Helvetica,sans-serif" }}
                 >
-                  {/* QR */}
+                  {/* QR — maximised: 28mm×28mm → 84px×84px at 3× */}
                   <div
                     className="flex-shrink-0 flex items-center justify-center bg-gray-50"
-                    style={{ width: 78, height: 78 }}
+                    style={{ width: 84, height: 84 }}
                   >
                     {qrPreviewUrl
-                      ? <img src={qrPreviewUrl} alt="QR" style={{ width: 78, height: 78, imageRendering: "pixelated" }} />
-                      : <QrCode className="w-8 h-8 text-muted-foreground/20" />}
+                      ? <img src={qrPreviewUrl} alt="QR" style={{ width: 84, height: 84, imageRendering: "pixelated" }} />
+                      : <QrCode className="w-10 h-10 text-muted-foreground/20" />}
                   </div>
-                  {/* Info */}
-                  <div className="flex-1 flex flex-col justify-center gap-[2.5px] overflow-hidden min-w-0">
-                    <div className="font-bold text-black truncate" style={{ fontSize: 7 }}>
+                  {/* Info — 5 baris kecil */}
+                  <div className="flex-1 flex flex-col justify-center gap-[2px] overflow-hidden min-w-0">
+                    <div className="font-bold text-black truncate" style={{ fontSize: 6 }}>
                       {form.nomorInspeksi || <span className="text-gray-300">No Inspeksi</span>}
                     </div>
-                    <div className="text-gray-600 truncate" style={{ fontSize: 5.8 }}>
-                      Tgl: {form.tanggalInspeksi || "—"}
+                    <div className="text-gray-700 truncate font-mono" style={{ fontSize: 5 }}>
+                      {form.noMaterial ? `No Mat: ${form.noMaterial}` : <span className="text-gray-300">No Material</span>}
                     </div>
-                    <div className="text-gray-600 truncate" style={{ fontSize: 5.8 }}>
-                      Qty: {form.qty || "—"}
+                    <div className="text-gray-700 truncate" style={{ fontSize: 5 }}>
+                      {form.namaMaterial || <span className="text-gray-300">Nama Material</span>}
                     </div>
-                    <div
-                      className="border-t border-gray-200 mt-[1.5px] pt-[1px] text-gray-400 truncate"
-                      style={{ fontSize: 5 }}
-                    >
-                      {barcodes.length > 0
-                        ? `${barcodes.length} SN embedded`
-                        : <span className="text-gray-200">— belum ada barcode —</span>}
+                    <div className="border-t border-gray-200 mt-[1px] pt-[1px] flex flex-col gap-[1.5px]">
+                      <div className="text-gray-500 truncate" style={{ fontSize: 4.5 }}>
+                        Tgl: {form.tanggalInspeksi || "—"}
+                      </div>
+                      <div className="text-gray-500 truncate" style={{ fontSize: 4.5 }}>
+                        Qty: {form.qty || "—"} · {barcodes.length} SN
+                      </div>
                     </div>
                   </div>
                 </div>
