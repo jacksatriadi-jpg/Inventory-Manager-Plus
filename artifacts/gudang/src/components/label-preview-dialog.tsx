@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Printer, Loader2 } from "lucide-react";
+import { Printer, Loader2, QrCode, ClipboardList } from "lucide-react";
 import { type LabelData, generateLabelHtml, printLabel } from "@/lib/print-label";
 
 interface LabelPreviewDialogProps {
@@ -10,6 +10,12 @@ interface LabelPreviewDialogProps {
   data: LabelData | null;
 }
 
+// Each label page is 60mm × 30mm; we scale 3.5× for the dialog.
+const SCALE  = 3.5;
+const PAGE_W = Math.round(60 * SCALE); // 210 px
+const PAGE_H = Math.round(30 * SCALE); // 105 px
+const GAP    = 8;                       // px gap between page 1 and page 2
+
 export function LabelPreviewDialog({ open, onOpenChange, data }: LabelPreviewDialogProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [loading, setLoading] = useState(true);
@@ -17,26 +23,27 @@ export function LabelPreviewDialog({ open, onOpenChange, data }: LabelPreviewDia
   useEffect(() => {
     if (!open || !data || !iframeRef.current) return;
     setLoading(true);
-    const iframe = iframeRef.current;
     let cancelled = false;
-    const onLoad = () => setLoading(false);
+    const iframe = iframeRef.current;
+    const onLoad = () => { if (!cancelled) setLoading(false); };
+
     generateLabelHtml(data, true).then((html) => {
       if (cancelled || !iframeRef.current) return;
+      iframeRef.current.addEventListener("load", onLoad, { once: true });
       iframeRef.current.srcdoc = html;
-      iframeRef.current.addEventListener("load", onLoad);
     });
+
     return () => {
       cancelled = true;
       iframe.removeEventListener("load", onLoad);
     };
   }, [open, data]);
 
-  // reset loading state when dialog closes
-  useEffect(() => {
-    if (!open) setLoading(true);
-  }, [open]);
+  useEffect(() => { if (!open) setLoading(true); }, [open]);
 
   if (!data) return null;
+
+  const totalH = PAGE_H * 2 + GAP;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -44,15 +51,26 @@ export function LabelPreviewDialog({ open, onOpenChange, data }: LabelPreviewDia
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Printer className="w-4 h-4" />
-            Preview Label (6cm × 3cm)
+            Preview Label SATO (6cm × 3cm)
           </DialogTitle>
         </DialogHeader>
 
-        {/* Label preview — exact ratio 60:30 = 2:1 */}
+        {/* Two-page preview */}
         <div className="flex flex-col items-center gap-3">
+          {/* Page labels */}
+          <div className="flex w-full justify-between px-1">
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <QrCode className="w-3 h-3" /> Halaman 1 — QR Code
+            </span>
+            <span className="flex items-center gap-1 text-xs text-muted-foreground">
+              <ClipboardList className="w-3 h-3" /> Halaman 2 — Data Inspeksi
+            </span>
+          </div>
+
+          {/* Iframe container — tall enough for 2 label pages */}
           <div
             className="relative border-2 border-dashed border-border rounded overflow-hidden bg-white shadow-sm"
-            style={{ width: 210, height: 105 }}
+            style={{ width: PAGE_W, height: totalH }}
           >
             {loading && (
               <div className="absolute inset-0 flex items-center justify-center bg-white z-10">
@@ -64,17 +82,19 @@ export function LabelPreviewDialog({ open, onOpenChange, data }: LabelPreviewDia
               title="Label Preview"
               scrolling="no"
               style={{
-                width: 210,
-                height: 105,
+                width:  PAGE_W,
+                height: totalH,
                 border: "none",
                 display: "block",
                 pointerEvents: "none",
               }}
             />
           </div>
+
           <p className="text-xs text-muted-foreground text-center">
-            Preview di atas ditampilkan dalam skala diperbesar.<br />
-            Hasil cetak akan sesuai ukuran kertas 6cm × 3cm.
+            Cetak menghasilkan <strong>2 label</strong> per record —
+            QR code &amp; data inspeksi terpisah.<br />
+            Skala diperbesar untuk preview; hasil cetak 6cm × 3cm.
           </p>
         </div>
 
@@ -90,7 +110,7 @@ export function LabelPreviewDialog({ open, onOpenChange, data }: LabelPreviewDia
             className="gap-2"
           >
             <Printer className="w-4 h-4" />
-            Cetak
+            Cetak 2 Halaman
           </Button>
         </DialogFooter>
       </DialogContent>
