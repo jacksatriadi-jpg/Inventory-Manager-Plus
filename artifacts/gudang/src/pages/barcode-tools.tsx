@@ -239,32 +239,56 @@ async function printLabel(
     errorCorrectionLevel: "M", margin: 4, width: 400,
   });
 
+  // Halaman 1: QR penuh — square 30mm×30mm, dipusatkan di kertas 70×30mm, tanpa margin ekstra
+  // Halaman 2: Data inspeksi teks, font semaksimal mungkin
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>
 <style>
   @page{size:70mm 30mm;margin:0}
   *{box-sizing:border-box;margin:0;padding:0}
-  html,body{width:70mm;height:30mm;background:#fff;overflow:hidden}
-  .label{width:70mm;height:30mm;padding:1mm;display:flex;flex-direction:row;align-items:center;gap:1mm;font-family:Arial,Helvetica,sans-serif}
-  .qr{flex-shrink:0;width:28mm;height:28mm}
-  .qr img{width:28mm;height:28mm;display:block;image-rendering:pixelated}
-  .info{flex:1;display:flex;flex-direction:column;justify-content:center;gap:0.7mm;overflow:hidden}
-  .tb{font-size:5pt;font-weight:bold;color:#000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .ts{font-size:4.2pt;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .tx{font-size:3.8pt;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .hr{border-top:.25mm solid #ddd;margin:.3mm 0}
+  html,body{background:#fff;font-family:Arial,Helvetica,sans-serif}
+
+  /* ── Halaman 1: QR Code ── */
+  .pg-qr{
+    width:70mm;height:30mm;
+    display:flex;align-items:center;justify-content:center;
+    page-break-after:always;
+  }
+  .pg-qr img{
+    /* QR square, tinggi penuh kertas */
+    height:30mm;width:30mm;
+    display:block;
+    image-rendering:pixelated;
+  }
+
+  /* ── Halaman 2: Data Inspeksi ── */
+  .pg-info{
+    width:70mm;height:30mm;
+    padding:1.5mm 2mm;
+    display:flex;flex-direction:column;justify-content:center;gap:1.2mm;
+    overflow:hidden;
+  }
+  .r1{font-size:8pt;font-weight:bold;color:#000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .r2{font-size:6.5pt;color:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .r3{font-size:5.5pt;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hr{border-top:.3mm solid #bbb;margin:.3mm 0}
 </style></head><body>
-<div class="label">
-  <div class="qr"><img src="${qrDataUrl}" alt="QR"/></div>
-  <div class="info">
-    <div class="tb">${esc(form.nomorInspeksi || "—")}</div>
-    <div class="ts">No Mat: ${esc(form.noMaterial || "—")}</div>
-    <div class="ts">${esc(form.namaMaterial || "—")}</div>
-    <div class="hr"></div>
-    <div class="tx">Tgl: ${esc(form.tanggalInspeksi || "—")}</div>
-    <div class="tx">Qty: ${esc(form.qty || "—")} &nbsp;·&nbsp; ${barcodes.length} SN</div>
-  </div>
+
+<!-- Halaman 1: QR Code penuh -->
+<div class="pg-qr">
+  <img src="${qrDataUrl}" alt="QR"/>
 </div>
+
+<!-- Halaman 2: Data Inspeksi -->
+<div class="pg-info">
+  <div class="r1">${esc(form.nomorInspeksi || "—")}</div>
+  <div class="r2">No Material: ${esc(form.noMaterial || "—")}</div>
+  <div class="r2">${esc(form.namaMaterial || "—")}</div>
+  <div class="hr"></div>
+  <div class="r3">Tgl Inspeksi : ${esc(form.tanggalInspeksi || "—")}</div>
+  <div class="r3">QTY : ${esc(form.qty || "—")} &nbsp;|&nbsp; ${barcodes.length} SN encoded</div>
+</div>
+
 <script>window.onload=function(){setTimeout(function(){window.print();window.close();},300);};</script>
 </body></html>`;
 
