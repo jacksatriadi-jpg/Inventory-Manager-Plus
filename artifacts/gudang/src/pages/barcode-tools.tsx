@@ -1,26 +1,26 @@
 /**
  * Barcode Tools — konversi banyak barcode dari PDF / Excel menjadi satu QR Code inspeksi
  * Printer target: SATO CL4NX Plus, ukuran kertas 7cm × 3cm (70mm × 30mm)
+ * QR payload: hanya daftar SN/barcode, satu per baris, tanpa teks tambahan
  */
 import { useState, useRef, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   QrCode, Printer, X, CheckCircle2, AlertTriangle, Loader2,
-  FileSpreadsheet, UploadCloud, RefreshCw, Plus, Download,
+  FileSpreadsheet, UploadCloud, Download, Plus,
 } from "lucide-react";
 import QRCode from "qrcode";
 import { toast } from "sonner";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
-export interface InspectionItem {
+interface InspectionForm {
   nomorInspeksi: string;
-  tglInspeksi: string;   // DD-MM-YYYY displayed, stored as-is
-  noMaterial: string;    // barcode / material number
-  namaMaterial: string;
+  tanggalInspeksi: string;
   qty: string;
 }
 
@@ -81,26 +81,23 @@ async function extractBarcodesFromPdf(
 }
 
 // ─── Excel template ─────────────────────────────────────────────────────────
+// Format 5 kolom sesuai contoh gambar
 
-const EXAMPLE_ROWS: InspectionItem[] = [
-  { nomorInspeksi: "55UTR2607210026", tglInspeksi: "21-07-2026", noMaterial: "00000000000002090032", namaMaterial: "LA;20-24kV;K;10kA;POLYMER;;",              qty: "1" },
-  { nomorInspeksi: "55UTR2607210024", tglInspeksi: "21-07-2026", noMaterial: "00000000000001030077", namaMaterial: "TRF DIS;D3;20kV/400V;3P;250kVA;DYN5;OD",  qty: "1" },
-  { nomorInspeksi: "55UTR2607210021", tglInspeksi: "21-07-2026", noMaterial: "00000000000003250026", namaMaterial: "MCB;380/440V;3P;300A;50Hz;MCCB",            qty: "1" },
-  { nomorInspeksi: "55UTR2607210019", tglInspeksi: "21-07-2026", noMaterial: "00000000000003280469", namaMaterial: "CONN;20KV;LLC;AL;70-240MM2;BOLT;PERMANEN", qty: "3" },
-  { nomorInspeksi: "55UTR2607210018", tglInspeksi: "21-07-2026", noMaterial: "00000000000003030006", namaMaterial: "POLE;CONCRETE;20kV;CIRCL;13m;350daN;;",   qty: "1" },
+const EXAMPLE_ROWS = [
+  ["55UTR2607210026", "21-07-2026", "00000000000002090032", "LA;20-24kV;K;10kA;POLYMER;;",              1],
+  ["55UTR2607210024", "21-07-2026", "00000000000001030077", "TRF DIS;D3;20kV/400V;3P;250kVA;DYN5;OD",  1],
+  ["55UTR2607210021", "21-07-2026", "00000000000003250026", "MCB;380/440V;3P;300A;50Hz;MCCB",            1],
+  ["55UTR2607210019", "21-07-2026", "00000000000003280469", "CONN;20KV;LLC;AL;70-240MM2;BOLT;PERMANEN", 3],
+  ["55UTR2607210018", "21-07-2026", "00000000000003030006", "POLE;CONCRETE;20kV;CIRCL;13m;350daN;;",    1],
 ];
 
 async function downloadTemplate() {
   const XLSX = await import("xlsx");
   const wb = XLSX.utils.book_new();
 
-  // ── Sheet: Form Inspeksi ────────────────────────────────────────────────
+  // ── Sheet: Form Inspeksi ──────────────────────────────────────────────
   const header = ["No Inspeksi", "Tgl Inspeksi", "No Material", "Nama Material", "QTY"];
-  const dataRows = EXAMPLE_ROWS.map((r) => [
-    r.nomorInspeksi, r.tglInspeksi, r.noMaterial, r.namaMaterial, Number(r.qty),
-  ]);
-
-  const ws = XLSX.utils.aoa_to_sheet([header, ...dataRows]);
+  const ws = XLSX.utils.aoa_to_sheet([header, ...EXAMPLE_ROWS]);
   ws["!cols"] = [
     { wch: 22 }, // No Inspeksi
     { wch: 16 }, // Tgl Inspeksi
@@ -109,34 +106,35 @@ async function downloadTemplate() {
     { wch:  8 }, // QTY
   ];
 
-  // Keep date column as text so Excel doesn't auto-convert
-  for (let r = 1; r <= dataRows.length; r++) {
-    const cell = ws[XLSX.utils.encode_cell({ r, c: 1 })];
-    if (cell) cell.t = "s";
-    const qtyCell = ws[XLSX.utils.encode_cell({ r, c: 4 })];
-    if (qtyCell) qtyCell.t = "n";
+  // Force date & material columns as text so Excel doesn't auto-convert
+  for (let r = 1; r <= EXAMPLE_ROWS.length; r++) {
+    const dateCell = ws[XLSX.utils.encode_cell({ r, c: 1 })];
+    if (dateCell) { dateCell.t = "s"; delete dateCell.z; }
+    const matCell = ws[XLSX.utils.encode_cell({ r, c: 2 })];
+    if (matCell) { matCell.t = "s"; delete matCell.z; }
   }
 
   XLSX.utils.book_append_sheet(wb, ws, "Form Inspeksi");
 
-  // ── Sheet: Petunjuk ─────────────────────────────────────────────────────
+  // ── Sheet: Petunjuk ───────────────────────────────────────────────────
   const wsPetunjuk = XLSX.utils.aoa_to_sheet([
     ["PETUNJUK PENGISIAN TEMPLATE"],
-    [""],
-    ["Kolom",         "Format",       "Contoh",               "Keterangan"],
-    ["No Inspeksi",   "Teks",         "55UTR2607210026",      "Nomor inspeksi unik per item"],
-    ["Tgl Inspeksi",  "DD-MM-YYYY",   "21-07-2026",           "Tanggal inspeksi"],
-    ["No Material",   "Teks/Angka",   "00000000000002090032", "Nomor material / nilai barcode"],
-    ["Nama Material", "Teks",         "LA;20-24kV;K;10kA",    "Nama atau deskripsi material"],
-    ["QTY",           "Angka",        "1",                    "Jumlah item"],
-    [""],
+    [],
+    ["Kolom",         "Format",      "Contoh",               "Keterangan"],
+    ["No Inspeksi",   "Teks",        "55UTR2607210026",      "Nomor inspeksi unik per item"],
+    ["Tgl Inspeksi",  "DD-MM-YYYY",  "21-07-2026",           "Tanggal inspeksi (teks, bukan tanggal Excel)"],
+    ["No Material",   "Teks/Angka",  "00000000000002090032", "Nomor material / nilai barcode (SN)"],
+    ["Nama Material", "Teks",        "LA;20-24kV;K;10kA",    "Nama atau deskripsi material"],
+    ["QTY",           "Angka",       "1",                    "Jumlah item"],
+    [],
     ["Catatan:"],
     ["• Hapus baris contoh dan isi dengan data aktual mulai baris 2."],
-    ["• Kolom header (baris 1) jangan diubah."],
+    ["• Header (baris 1) jangan diubah."],
     ["• Boleh menambah baris sebanyak yang diperlukan."],
+    ["• Kolom No Material (SN) yang akan di-encode ke dalam QR Code."],
     ["• Simpan dalam format .xlsx sebelum diimport."],
   ]);
-  wsPetunjuk["!cols"] = [{ wch: 18 }, { wch: 14 }, { wch: 26 }, { wch: 50 }];
+  wsPetunjuk["!cols"] = [{ wch: 18 }, { wch: 16 }, { wch: 26 }, { wch: 52 }];
   XLSX.utils.book_append_sheet(wb, wsPetunjuk, "Petunjuk");
 
   const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
@@ -150,25 +148,27 @@ async function downloadTemplate() {
 
 // ─── Excel / CSV import ─────────────────────────────────────────────────────
 
-const COL_MAP: Record<string, keyof InspectionItem> = {
-  "no inspeksi":    "nomorInspeksi",
-  "noinspeksi":     "nomorInspeksi",
-  "nomor inspeksi": "nomorInspeksi",
-  "nomorinspeksi":  "nomorInspeksi",
-  "tgl inspeksi":   "tglInspeksi",
-  "tglinspeksi":    "tglInspeksi",
-  "tanggal":        "tglInspeksi",
-  "no material":    "noMaterial",
-  "nomaterial":     "noMaterial",
-  "nomor material": "noMaterial",
-  "nama material":  "namaMaterial",
-  "namamaterial":   "namaMaterial",
-  "nama":           "namaMaterial",
-  "qty":            "qty",
-  "jumlah":         "qty",
+const COL_ALIASES: Record<string, string> = {
+  "no inspeksi":    "inspeksi",
+  "noinspeksi":     "inspeksi",
+  "nomor inspeksi": "inspeksi",
+  "tgl inspeksi":   "tgl",
+  "tglinspeksi":    "tgl",
+  "tanggal":        "tgl",
+  "no material":    "material",
+  "nomaterial":     "material",
+  "nomor material": "material",
 };
 
-async function parseInspectionFile(file: File): Promise<InspectionItem[] | null> {
+interface ImportedRow {
+  inspeksi: string;
+  tgl: string;
+  material: string;
+  nama: string;
+  qty: string;
+}
+
+async function parseInspectionFile(file: File): Promise<ImportedRow[] | null> {
   const XLSX = await import("xlsx");
   let wb: any;
   try {
@@ -183,7 +183,7 @@ async function parseInspectionFile(file: File): Promise<InspectionItem[] | null>
   const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
   if (rows.length < 2) return null;
 
-  // Locate header row
+  // Find header row
   let hdrIdx = -1;
   for (let i = 0; i < Math.min(rows.length, 5); i++) {
     const cells = rows[i].map((c: any) => String(c).toLowerCase().replace(/\s+/g, " ").trim());
@@ -197,61 +197,45 @@ async function parseInspectionFile(file: File): Promise<InspectionItem[] | null>
     String(c).toLowerCase().replace(/\s+/g, " ").trim(),
   );
 
-  // Map header index → field key
-  const colIdx: Partial<Record<keyof InspectionItem, number>> = {};
+  const idx: Record<string, number> = {};
   headers.forEach((h: string, i: number) => {
-    const key = COL_MAP[h] ?? COL_MAP[h.replace(/\s/g, "")];
-    if (key) colIdx[key] = i;
+    const key = COL_ALIASES[h] ?? COL_ALIASES[h.replace(/\s/g, "")];
+    if (key) idx[key] = i;
+    else if (h.startsWith("nama")) idx["nama"] = i;
+    else if (h === "qty" || h === "jumlah") idx["qty"] = i;
   });
 
-  const items: InspectionItem[] = [];
+  const result: ImportedRow[] = [];
   for (let r = hdrIdx + 1; r < rows.length; r++) {
     const row = rows[r].map((c: any) => String(c).trim());
-    if (row.every((c: string) => c === "")) continue; // skip blank rows
-
-    const get = (k: keyof InspectionItem) =>
-      colIdx[k] !== undefined ? (row[colIdx[k]!] ?? "") : "";
-
-    items.push({
-      nomorInspeksi: get("nomorInspeksi"),
-      tglInspeksi:   get("tglInspeksi"),
-      noMaterial:    get("noMaterial"),
-      namaMaterial:  get("namaMaterial"),
-      qty:           get("qty"),
+    if (row.every((c: string) => c === "")) continue;
+    result.push({
+      inspeksi: idx["inspeksi"] !== undefined ? row[idx["inspeksi"]] ?? "" : "",
+      tgl:      idx["tgl"]      !== undefined ? row[idx["tgl"]]      ?? "" : "",
+      material: idx["material"] !== undefined ? row[idx["material"]] ?? "" : "",
+      nama:     idx["nama"]     !== undefined ? row[idx["nama"]]     ?? "" : "",
+      qty:      idx["qty"]      !== undefined ? row[idx["qty"]]      ?? "" : "",
     });
   }
-
-  return items.length > 0 ? items : null;
+  return result.length > 0 ? result : null;
 }
 
-// ─── QR payload & print ────────────────────────────────────────────────────
-
-function buildPayload(items: InspectionItem[]): string {
-  return JSON.stringify({
-    items: items.map((it) => ({
-      no:  it.nomorInspeksi,
-      tgl: it.tglInspeksi,
-      mat: it.noMaterial,
-      nm:  it.namaMaterial,
-      qty: it.qty,
-    })),
-  });
-}
+// ─── Print ─────────────────────────────────────────────────────────────────
 
 function esc(s: string) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
-async function printLabel(items: InspectionItem[]): Promise<void> {
-  const payload = buildPayload(items);
+async function printLabel(
+  form: InspectionForm,
+  barcodes: string[],
+): Promise<void> {
+  // QR payload = hanya SN per baris, tanpa teks tambahan
+  const payload = barcodes.join("\n");
+
   const qrDataUrl = await QRCode.toDataURL(payload, {
     errorCorrectionLevel: "M", margin: 4, width: 400,
   });
-
-  // Summary line for the label text area
-  const firstNo = items[0]?.nomorInspeksi ?? "—";
-  const firstTgl = items[0]?.tglInspeksi ?? "—";
-  const totalQty = items.reduce((s, it) => s + (Number(it.qty) || 0), 0);
 
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"/>
@@ -262,20 +246,20 @@ async function printLabel(items: InspectionItem[]): Promise<void> {
   .label{width:70mm;height:30mm;padding:1.5mm;display:flex;flex-direction:row;align-items:center;gap:1.5mm;font-family:Arial,Helvetica,sans-serif}
   .qr{flex-shrink:0;width:26mm;height:26mm}
   .qr img{width:26mm;height:26mm;display:block;image-rendering:pixelated}
-  .info{flex:1;display:flex;flex-direction:column;justify-content:center;gap:0.8mm;overflow:hidden}
+  .info{flex:1;display:flex;flex-direction:column;justify-content:center;gap:0.9mm;overflow:hidden}
   .t1{font-size:6.5pt;font-weight:bold;color:#000;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .t2{font-size:5.5pt;color:#222;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .t3{font-size:4.8pt;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .hr{border-top:.3mm solid #ccc;margin:.5mm 0}
+  .t2{font-size:5.5pt;color:#333;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .t3{font-size:4.8pt;color:#666;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .hr{border-top:.3mm solid #ddd;margin:.4mm 0}
 </style></head><body>
 <div class="label">
   <div class="qr"><img src="${qrDataUrl}" alt="QR"/></div>
   <div class="info">
-    <div class="t1">${esc(firstNo)}</div>
-    <div class="t2">Tgl: ${esc(firstTgl)}</div>
-    <div class="t2">Qty Total: ${totalQty}</div>
+    <div class="t1">${esc(form.nomorInspeksi || "—")}</div>
+    <div class="t2">Tgl: ${esc(form.tanggalInspeksi || "—")}</div>
+    <div class="t2">Qty: ${esc(form.qty || "—")}</div>
     <div class="hr"></div>
-    <div class="t3">${items.length} item${items.length !== 1 ? "s" : ""} embedded</div>
+    <div class="t3">${barcodes.length} barcode embedded</div>
   </div>
 </div>
 <script>window.onload=function(){setTimeout(function(){window.print();window.close();},300);};</script>
@@ -286,47 +270,40 @@ async function printLabel(items: InspectionItem[]): Promise<void> {
   else toast.error("Popup diblokir browser. Izinkan popup lalu coba lagi.");
 }
 
-// ─── Empty row factory ─────────────────────────────────────────────────────
-
-const emptyItem = (): InspectionItem => ({
-  nomorInspeksi: "", tglInspeksi: "", noMaterial: "", namaMaterial: "", qty: "1",
-});
-
 // ─── Component ─────────────────────────────────────────────────────────────
 
 export default function BarcodeTools() {
-  const [items, setItems] = useState<InspectionItem[]>([emptyItem()]);
+  const [form, setForm] = useState<InspectionForm>({
+    nomorInspeksi: "", tanggalInspeksi: "", qty: "",
+  });
+  const [barcodes, setBarcodes] = useState<string[]>([]);
+  const [newBarcode, setNewBarcode] = useState("");
+
   const [isPdfProcessing, setIsPdfProcessing] = useState(false);
   const [pdfProgress, setPdfProgress] = useState<{ cur: number; tot: number } | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [qrPreviewUrl, setQrPreviewUrl] = useState("");
   const [isPrinting, setIsPrinting] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [qrPreviewUrl, setQrPreviewUrl] = useState("");
 
   const pdfInputRef = useRef<HTMLInputElement>(null);
   const xlsxInputRef = useRef<HTMLInputElement>(null);
 
-  const validItems = items.filter((it) => it.nomorInspeksi.trim() && it.noMaterial.trim());
-  const canPrint = validItems.length > 0;
+  const canPrint = barcodes.length > 0;
 
-  // Regenerate QR preview whenever items change
+  // ── QR preview ────────────────────────────────────────────────────────────
+
   useEffect(() => {
-    if (validItems.length === 0) { setQrPreviewUrl(""); return; }
-    QRCode.toDataURL(buildPayload(validItems), { errorCorrectionLevel: "M", margin: 4, width: 260 })
-      .then(setQrPreviewUrl).catch(() => setQrPreviewUrl(""));
-  }, [items]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (barcodes.length === 0) { setQrPreviewUrl(""); return; }
+    const payload = barcodes.join("\n");
+    QRCode.toDataURL(payload, { errorCorrectionLevel: "M", margin: 4, width: 260 })
+      .then(setQrPreviewUrl)
+      .catch(() => setQrPreviewUrl(""));
+  }, [barcodes]);
 
-  // ── Item editing ──────────────────────────────────────────────────────────
+  // ── Form helpers ──────────────────────────────────────────────────────────
 
-  const updateItem = (idx: number, field: keyof InspectionItem, value: string) => {
-    setItems((prev) => prev.map((it, i) => i === idx ? { ...it, [field]: value } : it));
-  };
-
-  const addRow = () => setItems((prev) => [...prev, emptyItem()]);
-
-  const removeRow = (idx: number) => {
-    setItems((prev) => prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev);
-  };
+  const setField = (field: keyof InspectionForm, value: string) =>
+    setForm((prev) => ({ ...prev, [field]: value }));
 
   // ── PDF scanning ──────────────────────────────────────────────────────────
 
@@ -335,26 +312,19 @@ export default function BarcodeTools() {
     setIsPdfProcessing(true);
     setPdfProgress({ cur: 0, tot: 1 });
     try {
-      const barcodes = await extractBarcodesFromPdf(file, (cur, tot) => setPdfProgress({ cur, tot }));
-      if (barcodes.length === 0) {
+      const found = await extractBarcodesFromPdf(
+        file,
+        (cur, tot) => setPdfProgress({ cur, tot }),
+      );
+      if (found.length === 0) {
         toast.warning("Tidak ada barcode yang terdeteksi di PDF ini");
       } else {
-        // Fill noMaterial into existing empty rows, then append extras
-        setItems((prev) => {
-          const next = [...prev];
-          let bIdx = 0;
-          for (let i = 0; i < next.length && bIdx < barcodes.length; i++) {
-            if (!next[i].noMaterial.trim()) {
-              next[i] = { ...next[i], noMaterial: barcodes[bIdx++] };
-            }
-          }
-          // Append remaining barcodes as new rows
-          while (bIdx < barcodes.length) {
-            next.push({ ...emptyItem(), noMaterial: barcodes[bIdx++] });
-          }
-          return next;
+        setBarcodes((prev) => {
+          const existing = new Set(prev);
+          const added = found.filter((b) => !existing.has(b));
+          return [...prev, ...added];
         });
-        toast.success(`${barcodes.length} barcode berhasil dideteksi dari PDF`);
+        toast.success(`${found.length} barcode berhasil dideteksi dari PDF`);
       }
     } catch (err: any) {
       toast.error("Gagal memproses PDF: " + (err?.message ?? "Unknown error"));
@@ -372,23 +342,50 @@ export default function BarcodeTools() {
   const handleXlsxImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]; if (!file) return; e.target.value = "";
     try {
-      const parsed = await parseInspectionFile(file);
-      if (parsed) {
-        setItems(parsed);
-        toast.success(`${parsed.length} baris berhasil diimport dari ${file.name}`);
-      } else {
+      const rows = await parseInspectionFile(file);
+      if (!rows || rows.length === 0) {
         toast.error("Format file tidak valid. Gunakan template yang tersedia.");
+        return;
+      }
+
+      // Fill form from first row
+      const first = rows[0];
+      setForm({
+        nomorInspeksi:   first.inspeksi || "",
+        tanggalInspeksi: first.tgl      || "",
+        qty:             first.qty      || String(rows.length),
+      });
+
+      // Extract No Material column as barcode list (deduplicated)
+      const sns = [...new Set(rows.map((r) => r.material).filter(Boolean))];
+      if (sns.length > 0) {
+        setBarcodes(sns);
+        toast.success(`${sns.length} No Material diimport sebagai barcode dari ${file.name}`);
+      } else {
+        toast.warning("Kolom No Material kosong — barcode tidak diimport.");
       }
     } catch { toast.error("Gagal membaca file."); }
   }, []);
+
+  // ── Barcode list management ───────────────────────────────────────────────
+
+  const addManual = () => {
+    const v = newBarcode.trim();
+    if (!v) return;
+    setBarcodes((prev) => prev.includes(v) ? prev : [...prev, v]);
+    setNewBarcode("");
+  };
+
+  const removeBarcode = (idx: number) =>
+    setBarcodes((prev) => prev.filter((_, i) => i !== idx));
 
   // ── Print ─────────────────────────────────────────────────────────────────
 
   const handlePrint = async () => {
     if (!canPrint) return;
     setIsPrinting(true);
-    try { await printLabel(validItems); }
-    catch (err: any) { toast.error("Gagal mencetak: " + (err?.message ?? "Unknown error")); }
+    try { await printLabel(form, barcodes); }
+    catch (err: any) { toast.error("Gagal mencetak: " + (err?.message ?? "")); }
     finally { setIsPrinting(false); }
   };
 
@@ -412,20 +409,74 @@ export default function BarcodeTools() {
           Barcode Tools
         </h1>
         <p className="text-muted-foreground mt-1 text-sm">
-          Gabungkan banyak barcode dari PDF / Excel menjadi satu QR Code inspeksi
-          untuk dicetak di label <span className="font-medium">7 × 3 cm</span> (SATO CL4NX Plus).
+          Gabungkan banyak barcode menjadi satu QR Code inspeksi untuk dicetak di label{" "}
+          <span className="font-medium">7 × 3 cm</span> (SATO CL4NX Plus).
         </p>
       </div>
 
-      {/* ── Import row ── */}
+      {/* ── Step 1: Data Inspeksi ─────────────────────────────────────────── */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-semibold">Import Data</CardTitle>
+          <CardTitle className="text-sm font-semibold">1 · Data Inspeksi</CardTitle>
           <CardDescription className="text-xs">
-            Download template Excel, isi datanya, lalu import. Atau scan barcode dari PDF untuk mengisi kolom No Material secara otomatis.
+            Isi informasi inspeksi — ditampilkan sebagai teks pada label cetak.
           </CardDescription>
         </CardHeader>
         <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="space-y-1.5">
+              <Label htmlFor="nomorInspeksi" className="text-xs">No Inspeksi</Label>
+              <Input
+                id="nomorInspeksi"
+                placeholder="55UTR2607210026"
+                value={form.nomorInspeksi}
+                onChange={(e) => setField("nomorInspeksi", e.target.value)}
+                className="h-8 text-sm"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="tanggalInspeksi" className="text-xs">Tgl Inspeksi</Label>
+              <Input
+                id="tanggalInspeksi"
+                placeholder="21-07-2026"
+                value={form.tanggalInspeksi}
+                onChange={(e) => setField("tanggalInspeksi", e.target.value)}
+                className="h-8 text-sm"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="qty" className="text-xs">QTY</Label>
+              <Input
+                id="qty"
+                type="number" min="0"
+                placeholder="1"
+                value={form.qty}
+                onChange={(e) => setField("qty", e.target.value)}
+                className="h-8 text-sm"
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ── Step 2: Import Barcode ────────────────────────────────────────── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-sm font-semibold">2 · Daftar Barcode / SN</CardTitle>
+              <CardDescription className="text-xs mt-0.5">
+                Import dari PDF atau Excel. Kolom <span className="font-medium">No Material</span> pada
+                template akan dijadikan daftar SN di dalam QR Code.
+              </CardDescription>
+            </div>
+            {barcodes.length > 0 && (
+              <Badge variant="secondary">{barcodes.length} SN</Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Import actions */}
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline" size="sm"
@@ -463,121 +514,79 @@ export default function BarcodeTools() {
             <input
               ref={pdfInputRef} type="file" accept=".pdf"
               className="hidden" onChange={handlePdfInput}
-              onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-              onDragLeave={() => setIsDragging(false)}
             />
           </div>
-        </CardContent>
-      </Card>
 
-      {/* ── Editable table ── */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-sm font-semibold">Data Inspeksi</CardTitle>
-              <CardDescription className="text-xs mt-0.5">
-                Edit langsung di tabel. Baris dengan <span className="font-medium">No Inspeksi</span> dan{" "}
-                <span className="font-medium">No Material</span> yang terisi akan disertakan dalam QR Code.
-              </CardDescription>
-            </div>
-            <Badge variant="secondary">{items.length} baris</Badge>
+          {/* Manual add */}
+          <div className="flex gap-2">
+            <Input
+              placeholder="Tambah SN manual…"
+              value={newBarcode}
+              onChange={(e) => setNewBarcode(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") addManual(); }}
+              className="h-8 text-sm flex-1"
+            />
+            <Button variant="outline" size="sm" onClick={addManual} className="h-8">
+              <Plus className="w-4 h-4" />
+            </Button>
           </div>
-        </CardHeader>
-        <CardContent className="p-0">
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b bg-muted/60">
-                  <th className="text-left px-3 py-2.5 font-semibold whitespace-nowrap w-[18%]">No Inspeksi</th>
-                  <th className="text-left px-3 py-2.5 font-semibold whitespace-nowrap w-[13%]">Tgl Inspeksi</th>
-                  <th className="text-left px-3 py-2.5 font-semibold whitespace-nowrap w-[18%]">No Material</th>
-                  <th className="text-left px-3 py-2.5 font-semibold w-[40%]">Nama Material</th>
-                  <th className="text-center px-3 py-2.5 font-semibold whitespace-nowrap w-[7%]">QTY</th>
-                  <th className="w-[4%]"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {items.map((item, idx) => {
-                  const isValid = item.nomorInspeksi.trim() && item.noMaterial.trim();
-                  return (
-                    <tr
-                      key={idx}
-                      className={`group transition-colors ${isValid ? "bg-background" : "bg-muted/20"}`}
-                    >
-                      <td className="px-2 py-1.5">
-                        <Input
-                          value={item.nomorInspeksi}
-                          onChange={(e) => updateItem(idx, "nomorInspeksi", e.target.value)}
-                          placeholder="No Inspeksi"
-                          className="h-7 text-xs border-0 bg-transparent focus-visible:ring-1 px-1"
-                        />
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <Input
-                          value={item.tglInspeksi}
-                          onChange={(e) => updateItem(idx, "tglInspeksi", e.target.value)}
-                          placeholder="DD-MM-YYYY"
-                          className="h-7 text-xs border-0 bg-transparent focus-visible:ring-1 px-1"
-                        />
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <Input
-                          value={item.noMaterial}
-                          onChange={(e) => updateItem(idx, "noMaterial", e.target.value)}
-                          placeholder="No Material / Barcode"
-                          className={`h-7 text-xs border-0 bg-transparent focus-visible:ring-1 px-1 font-mono ${
-                            item.noMaterial && !isValid ? "text-amber-600" : ""
-                          }`}
-                        />
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <Input
-                          value={item.namaMaterial}
-                          onChange={(e) => updateItem(idx, "namaMaterial", e.target.value)}
-                          placeholder="Nama Material"
-                          className="h-7 text-xs border-0 bg-transparent focus-visible:ring-1 px-1"
-                        />
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <Input
-                          type="number" min="0"
-                          value={item.qty}
-                          onChange={(e) => updateItem(idx, "qty", e.target.value)}
-                          className="h-7 text-xs border-0 bg-transparent focus-visible:ring-1 px-1 text-center"
-                        />
-                      </td>
-                      <td className="pr-2 py-1.5">
+
+          {/* Barcode list */}
+          {barcodes.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+              <QrCode className="w-8 h-8 mb-2 opacity-25" />
+              <p className="text-xs">Belum ada barcode — import dari PDF atau Excel</p>
+            </div>
+          ) : (
+            <div className="border rounded-md overflow-hidden">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-muted/60 border-b">
+                    <th className="text-left px-3 py-2 font-semibold text-muted-foreground w-10">#</th>
+                    <th className="text-left px-3 py-2 font-semibold">No Material / SN</th>
+                    <th className="w-10"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {barcodes.map((bc, idx) => (
+                    <tr key={idx} className="group hover:bg-muted/30">
+                      <td className="px-3 py-2 text-muted-foreground tabular-nums">{idx + 1}</td>
+                      <td className="px-3 py-2 font-mono">{bc}</td>
+                      <td className="px-2 py-2">
                         <button
-                          onClick={() => removeRow(idx)}
+                          onClick={() => removeBarcode(idx)}
                           className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                          title="Hapus baris"
+                          title="Hapus"
                         >
                           <X className="w-3.5 h-3.5" />
                         </button>
                       </td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
-          <div className="px-4 py-3 border-t">
-            <Button variant="outline" size="sm" onClick={addRow} className="h-7 text-xs">
-              <Plus className="w-3.5 h-3.5 mr-1.5" />
-              Tambah Baris
+          {barcodes.length > 0 && (
+            <Button
+              variant="ghost" size="sm"
+              className="text-xs text-destructive hover:text-destructive h-7"
+              onClick={() => { setBarcodes([]); toast.info("Daftar barcode dikosongkan"); }}
+            >
+              Hapus semua barcode
             </Button>
-          </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* ── Preview & Print ── */}
+      {/* ── Step 3: Preview & Print ───────────────────────────────────────── */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-sm font-semibold">Preview & Cetak QR Code</CardTitle>
+          <CardTitle className="text-sm font-semibold">3 · Preview & Cetak QR Code</CardTitle>
           <CardDescription className="text-xs">
-            Preview label <span className="font-medium">7 × 3 cm</span> sebelum dicetak ke SATO CL4NX Plus.
+            QR Code berisi daftar SN saja, satu per baris — tanpa teks tambahan.
+            Scan ulang akan menampilkan daftar SN langsung.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -590,9 +599,15 @@ export default function BarcodeTools() {
                 style={{ width: 210, height: 90 }}
                 title="Preview 3× — cetak sebenarnya 70mm × 30mm"
               >
-                <div className="flex flex-row items-center gap-[4.5px] h-full" style={{ padding: "4.5px", fontFamily: "Arial,Helvetica,sans-serif" }}>
+                <div
+                  className="flex flex-row items-center h-full gap-[4.5px]"
+                  style={{ padding: "4.5px", fontFamily: "Arial,Helvetica,sans-serif" }}
+                >
                   {/* QR */}
-                  <div className="flex-shrink-0 flex items-center justify-center bg-gray-50" style={{ width: 78, height: 78 }}>
+                  <div
+                    className="flex-shrink-0 flex items-center justify-center bg-gray-50"
+                    style={{ width: 78, height: 78 }}
+                  >
                     {qrPreviewUrl
                       ? <img src={qrPreviewUrl} alt="QR" style={{ width: 78, height: 78, imageRendering: "pixelated" }} />
                       : <QrCode className="w-8 h-8 text-muted-foreground/20" />}
@@ -600,68 +615,71 @@ export default function BarcodeTools() {
                   {/* Info */}
                   <div className="flex-1 flex flex-col justify-center gap-[2.5px] overflow-hidden min-w-0">
                     <div className="font-bold text-black truncate" style={{ fontSize: 7 }}>
-                      {validItems[0]?.nomorInspeksi || <span className="text-gray-300">No Inspeksi</span>}
+                      {form.nomorInspeksi || <span className="text-gray-300">No Inspeksi</span>}
                     </div>
                     <div className="text-gray-600 truncate" style={{ fontSize: 5.8 }}>
-                      Tgl: {validItems[0]?.tglInspeksi || "—"}
+                      Tgl: {form.tanggalInspeksi || "—"}
                     </div>
                     <div className="text-gray-600 truncate" style={{ fontSize: 5.8 }}>
-                      Qty Total: {validItems.reduce((s, it) => s + (Number(it.qty) || 0), 0) || "—"}
+                      Qty: {form.qty || "—"}
                     </div>
-                    <div className="border-t border-gray-200 mt-[1.5px] pt-[1px] text-gray-400 truncate" style={{ fontSize: 5 }}>
-                      {validItems.length > 0 ? `${validItems.length} item${validItems.length !== 1 ? "s" : ""} embedded` : "—"}
+                    <div
+                      className="border-t border-gray-200 mt-[1.5px] pt-[1px] text-gray-400 truncate"
+                      style={{ fontSize: 5 }}
+                    >
+                      {barcodes.length > 0
+                        ? `${barcodes.length} SN embedded`
+                        : <span className="text-gray-200">— belum ada barcode —</span>}
                     </div>
                   </div>
                 </div>
               </div>
-              <p className="text-center text-xs text-muted-foreground mt-1.5">Preview 3× · Cetak: 70 × 30 mm</p>
+              <p className="text-center text-xs text-muted-foreground mt-1.5">
+                Preview 3× · Cetak: 70 × 30 mm
+              </p>
             </div>
 
             {/* Status + print */}
             <div className="flex-1 space-y-3">
               {/* Validation */}
-              {validItems.length === 0 && (
+              {barcodes.length === 0 && (
                 <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
                   <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                  Belum ada baris valid. Isi minimal <strong>No Inspeksi</strong> dan <strong>No Material</strong>.
+                  Belum ada barcode. Import dari PDF atau Excel terlebih dahulu.
                 </div>
               )}
-              {validItems.length > 0 && validItems.length < items.length && (
-                <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-                  {items.length - validItems.length} baris belum lengkap (kosong/tidak diikutsertakan).
-                </div>
-              )}
-              {validItems.length > 0 && (
+              {barcodes.length > 0 && (
                 <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2">
                   <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
-                  Siap dicetak — <strong>{validItems.length} item</strong> akan di-encode ke QR Code.
+                  Siap dicetak —{" "}
+                  <strong>{barcodes.length} SN</strong> akan di-encode ke QR Code.
                 </div>
               )}
 
               {/* QR payload preview */}
-              {qrPreviewUrl && (
+              {barcodes.length > 0 && (
                 <div className="bg-muted/40 rounded-md p-3 space-y-1">
-                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Isi QR Code</p>
-                  <pre className="text-xs text-foreground/80 whitespace-pre-wrap break-all leading-relaxed max-h-28 overflow-y-auto">
-                    {JSON.stringify({
-                      items: validItems.map((it) => ({
-                        no: it.nomorInspeksi, tgl: it.tglInspeksi,
-                        mat: it.noMaterial,   nm: it.namaMaterial, qty: it.qty,
-                      })),
-                    }, null, 2)}
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                    Isi QR Code (plain text · satu SN per baris)
+                  </p>
+                  <pre className="text-xs text-foreground/80 whitespace-pre font-mono leading-relaxed max-h-28 overflow-y-auto">
+                    {barcodes.join("\n")}
                   </pre>
                 </div>
               )}
 
-              <Button className="w-full" size="lg" disabled={!canPrint || isPrinting} onClick={handlePrint}>
+              <Button
+                className="w-full" size="lg"
+                disabled={!canPrint || isPrinting}
+                onClick={handlePrint}
+              >
                 {isPrinting
                   ? <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                   : <Printer className="w-5 h-5 mr-2" />}
                 Cetak QR Code (SATO CL4NX Plus)
               </Button>
               <p className="text-xs text-muted-foreground text-center">
-                QR Code dicetak dengan quiet-zone margin 4 modul — dapat di-scan ulang dengan scanner apapun.
+                QR Code dicetak dengan quiet-zone margin 4 — dapat di-scan ulang dengan scanner apapun.
               </p>
             </div>
           </div>
