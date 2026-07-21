@@ -109,37 +109,117 @@ async function extractBarcodesFromPdf(
   return results;
 }
 
-// ─── CSV template helpers ──────────────────────────────────────────────────
+// ─── Excel template helpers ────────────────────────────────────────────────
 
-const CSV_TEMPLATE = "nomor_inspeksi,tanggal_inspeksi,qty\nINS-001,2026-07-21,100\n";
+async function downloadTemplate() {
+  const XLSX = await import("xlsx");
 
-function downloadTemplate() {
-  const blob = new Blob(["\uFEFF" + CSV_TEMPLATE], { type: "text/csv;charset=utf-8;" });
+  const wb = XLSX.utils.book_new();
+
+  // ── Sheet 1: Form Inspeksi ──────────────────────────────────────────────
+  const wsData: any[][] = [
+    // Row 1: title row (merged visually via wide column + bold)
+    ["FORM DATA INSPEKSI", "", ""],
+    ["Isi baris data mulai dari baris 4. Jangan ubah baris header (baris 3).", "", ""],
+    // Row 3: column headers
+    ["Nomor Inspeksi", "Tanggal Inspeksi", "Qty"],
+    // Row 4: example data
+    ["INS-001", "2026-07-21", 100],
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+  // Column widths
+  ws["!cols"] = [
+    { wch: 28 }, // Nomor Inspeksi
+    { wch: 22 }, // Tanggal Inspeksi
+    { wch: 14 }, // Qty
+  ];
+
+  // Cell styles (xlsx supports styles via SheetJS Pro; with the free version
+  // we set cell types and number formats for the date column)
+  // Mark B4 as text so Excel doesn't auto-convert date format
+  if (ws["B4"]) {
+    ws["B4"].t = "s"; // string type — keeps YYYY-MM-DD intact
+  }
+  if (ws["C4"]) {
+    ws["C4"].t = "n"; // number type for qty
+  }
+
+  XLSX.utils.book_append_sheet(wb, ws, "Form Inspeksi");
+
+  // ── Sheet 2: Petunjuk ───────────────────────────────────────────────────
+  const wsPetunjuk = XLSX.utils.aoa_to_sheet([
+    ["PETUNJUK PENGISIAN"],
+    [""],
+    ["Kolom", "Format", "Contoh", "Keterangan"],
+    ["Nomor Inspeksi", "Teks bebas", "INS-001", "Nomor unik untuk inspeksi ini"],
+    ["Tanggal Inspeksi", "YYYY-MM-DD", "2026-07-21", "Format tahun-bulan-tanggal (ISO 8601)"],
+    ["Qty", "Angka", "100", "Jumlah item yang diinspeksi"],
+    [""],
+    ["Catatan:"],
+    ["• Isi hanya SATU baris data (baris 4 di sheet Form Inspeksi)."],
+    ["• Simpan file dalam format .xlsx sebelum diimport."],
+    ["• Kolom Tanggal harus dalam format YYYY-MM-DD (gunakan format Teks di Excel)."],
+  ]);
+  wsPetunjuk["!cols"] = [{ wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 48 }];
+  XLSX.utils.book_append_sheet(wb, wsPetunjuk, "Petunjuk");
+
+  // Export
+  const wbOut = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  const blob = new Blob([wbOut], {
+    type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "template_inspeksi.csv";
+  a.download = "template_inspeksi.xlsx";
   a.click();
   URL.revokeObjectURL(url);
 }
 
-function parseCsvInspection(text: string): InspectionData | null {
-  // Strip BOM
-  const cleaned = text.replace(/^\uFEFF/, "").trim();
-  const lines = cleaned.split(/\r?\n/).filter((l) => l.trim() !== "");
-  if (lines.length < 2) return null;
+async function parseInspectionFile(file: File): Promise<InspectionData | null> {
+  const XLSX = await import("xlsx");
 
-  const headers = lines[0].split(",").map((h) => h.trim().toLowerCase().replace(/\s+/g, "_"));
-  const values = lines[1].split(",").map((v) => v.trim().replace(/^"|"$/g, ""));
+  const arrayBuffer = await file.arrayBuffer();
+  let wb: any;
+
+  try {
+    wb = XLSX.read(arrayBuffer, { type: "array", cellText: true, cellDates: false });
+  } catch {
+    return null;
+  }
+
+  // Use first sheet
+  const sheetName = wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  if (!ws) return null;
+
+  // Convert to rows
+  const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+
+  // Find the header row (contains "nomor" and "tanggal")
+  let headerRowIdx = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i].map((c: any) => String(c).toLowerCase());
+    if (row.some((c: string) => c.includes("nomor")) && row.some((c: string) => c.includes("tanggal"))) {
+      headerRowIdx = i;
+      break;
+    }
+  }
+  if (headerRowIdx === -1 || headerRowIdx + 1 >= rows.length) return null;
+
+  const headers = rows[headerRowIdx].map((c: any) => String(c).toLowerCase().replace(/\s+/g, "_"));
+  const values  = rows[headerRowIdx + 1].map((c: any) => String(c).trim());
 
   const get = (key: string) => {
-    const idx = headers.findIndex((h) => h.includes(key));
+    const idx = headers.findIndex((h: string) => h.includes(key));
     return idx >= 0 ? (values[idx] ?? "") : "";
   };
 
-  const nomor = get("nomor");
+  const nomor   = get("nomor");
   const tanggal = get("tanggal");
-  const qty = get("qty");
+  const qty     = get("qty");
 
   if (!nomor && !tanggal && !qty) return null;
   return { nomorInspeksi: nomor, tanggalInspeksi: tanggal, qty };
@@ -312,25 +392,24 @@ export default function BarcodeTools() {
     if (file) processPdf(file);
   };
 
-  // ── CSV import ────────────────────────────────────────────────────────────
+  // ── Excel / CSV import ───────────────────────────────────────────────────
 
-  const handleCsvImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileImport = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string;
-      const data = parseCsvInspection(text);
+    e.target.value = "";
+    try {
+      const data = await parseInspectionFile(file);
       if (data) {
         setInspection(data);
         toast.success("Data inspeksi berhasil diimport");
       } else {
-        toast.error("Format CSV tidak valid. Download template dan isi sesuai format.");
+        toast.error("Format file tidak valid. Gunakan template yang tersedia (.xlsx).");
       }
-    };
-    reader.readAsText(file, "utf-8");
-    e.target.value = "";
-  };
+    } catch {
+      toast.error("Gagal membaca file. Pastikan file tidak rusak.");
+    }
+  }, []);
 
   // ── Barcode list controls ─────────────────────────────────────────────────
 
@@ -533,14 +612,14 @@ export default function BarcodeTools() {
                   onClick={() => csvInputRef.current?.click()}
                 >
                   <FileSpreadsheet className="w-4 h-4 mr-2" />
-                  Import CSV
+                  Import Excel / CSV
                 </Button>
                 <input
                   ref={csvInputRef}
                   type="file"
-                  accept=".csv"
+                  accept=".xlsx,.xls,.csv"
                   className="hidden"
-                  onChange={handleCsvImport}
+                  onChange={handleFileImport}
                 />
               </div>
 
