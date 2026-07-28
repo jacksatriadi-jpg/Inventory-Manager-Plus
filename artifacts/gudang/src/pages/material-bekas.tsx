@@ -87,11 +87,11 @@ export default function MaterialBekas() {
   const [scanError, setScanError] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
-    const [autoClassification, setAutoClassification] = useState<ClassificationPreview | null>(null);
-    const submittedSNRef = useRef<string>("");
-    const clearingInputRef = useRef(false);
-    const videoRef = useRef<HTMLVideoElement>(null);
-    const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
+  const [autoClassification, setAutoClassification] = useState<ClassificationPreview | null>(null);
+  const submittedSNRef = useRef<string>("");
+  const clearingInputRef = useRef(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
 
   // Garansi & Usul Hapus state
   const [garansiRecords, setGaransiRecords] = useState<GaransiRecord[]>([]);
