@@ -2,20 +2,8 @@ import { Router } from "express";
 import type { IRouter } from "express";
 import { db, materialBekasGaransiTable, materialBekasUsulHapusTable, usersTable } from "@workspace/db";
 import { eq, desc, ilike, and } from "drizzle-orm";
-import { sql } from "drizzle-orm";
 
 const router: IRouter = Router();
-
-// TEMP: migrate endpoint - hapus setelah kolom merk ditambahkan
-router.get("/material-bekas/migrate", async (req, res): Promise<void> => {
-  try {
-    await db.execute(sql`ALTER TABLE material_bekas_garansi ADD COLUMN IF NOT EXISTS merk TEXT`);
-    await db.execute(sql`ALTER TABLE material_bekas_usul_hapus ADD COLUMN IF NOT EXISTS merk TEXT`);
-    res.json({ success: true, message: "Kolom merk ditambahkan" });
-  } catch (e: any) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
 function parseSN(sn: string) {
   const match = sn.match(/(\d{4})\d[A-Za-z]/);
