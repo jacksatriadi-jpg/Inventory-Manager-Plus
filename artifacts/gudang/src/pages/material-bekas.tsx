@@ -5,7 +5,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2, ScanLine, PackageOpen, Trash2, FileSpreadsheet, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
@@ -32,6 +31,39 @@ interface UsulHapusRecord {
   createdAt: string;
 }
 
+interface ClassificationPreview {
+  target: "garansi" | "usul_hapus";
+  tahun: number;
+  bulan: number;
+  message: string;
+}
+
+function parseSN(sn: string): { tahun: number; bulan: number } | null {
+  const match = sn.match(/(\d{4})\d[A-Za-z]/);
+  if (!match) return null;
+
+  const dateStr = match[1];
+  const month = parseInt(dateStr.slice(0, 2));
+  const yearShort = parseInt(dateStr.slice(2, 4));
+
+  if (month < 1 || month > 12) return null;
+
+  const year = yearShort < 50 ? 2000 + yearShort : 1900 + yearShort;
+
+  return { tahun: year, bulan: month };
+}
+
+function classifySN(sn: string): { valid: boolean; reason?: string; target?: "garansi" | "usul_hapus"; tahun?: number; bulan?: number } {
+  const parsed = parseSN(sn);
+  if (!parsed) return { valid: false, reason: "Format SN tidak dikenali" };
+
+  if (parsed.tahun > 2021) {
+    return { valid: true, target: "garansi", tahun: parsed.tahun, bulan: parsed.bulan };
+  }
+
+  return { valid: true, target: "usul_hapus", tahun: parsed.tahun, bulan: parsed.bulan };
+}
+
 export default function MaterialBekas() {
   const { user } = useAuth();
   const { data: materials } = useListMaterials();
@@ -41,7 +73,7 @@ export default function MaterialBekas() {
     (m) => m.name.toLowerCase().includes("mcb") || m.code.toLowerCase().includes("mcb")
   ) ?? [];
 
-  // Tabs: scan (Layak Pakai), garansi, usul_hapus
+  // Tabs
   const [activeTab, setActiveTab] = useState<"scan" | "garansi" | "usul_hapus">("scan");
 
   // Scan tab state
@@ -51,6 +83,7 @@ export default function MaterialBekas() {
   const [scanError, setScanError] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
+  const [autoClassification, setAutoClassification] = useState<ClassificationPreview | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
 
@@ -87,6 +120,29 @@ export default function MaterialBekas() {
     fetchUsulHapus();
   }, [fetchGaransi, fetchUsulHapus]);
 
+  // Auto-classify preview when SN reaches 28 characters
+  useEffect(() => {
+    const sn = manualSN.trim();
+    if (sn.length === 28) {
+      const result = classifySN(sn);
+      if (result.valid && result.target) {
+        const message = result.target === "garansi"
+          ? `Tahun ${result.tahun} > 2021 → Material Garansi`
+          : `Tahun ${result.tahun} ≤ 2021 → Material Usul Hapus`;
+        setAutoClassification({
+          target: result.target,
+          tahun: result.tahun!,
+          bulan: result.bulan!,
+          message,
+        });
+      } else {
+        setAutoClassification(null);
+      }
+    } else {
+      setAutoClassification(null);
+    }
+  }, [manualSN]);
+
   // QR Scanner
   const startScanner = async () => {
     if (!videoRef.current) return;
@@ -97,15 +153,6 @@ export default function MaterialBekas() {
     try {
       const reader = new BrowserMultiFormatReader();
       codeReaderRef.current = reader;
-
-      const formats = [
-        "QR_CODE",
-        "CODE_128",
-        "CODE_39",
-        "EAN_13",
-        "EAN_8",
-        "CODE_BAR",
-      ];
 
       await reader.decodeFromVideoDevice(
         null,
@@ -193,9 +240,9 @@ export default function MaterialBekas() {
         fetchUsulHapus();
       }
 
-      // Reset form
+      // Reset SN only, keep selected material
       setManualSN("");
-      setSelectedMaterialId("");
+      setAutoClassification(null);
     } catch (err) {
       console.error(err);
       setScanError("Terjadi kesalahan saat memproses scan.");
@@ -363,12 +410,42 @@ export default function MaterialBekas() {
                   onChange={(e) => setManualSN(e.target.value)}
                   placeholder="Contoh: PLN0325000005402510222Z00630"
                 />
+                <p className="text-xs text-muted-foreground">
+                  Panjang SN: {manualSN.length}/28 karakter
+                </p>
               </div>
+
+              {/* Auto classification preview */}
+              {autoClassification && (
+                <div
+                  className={`p-4 rounded-lg border ${
+                    autoClassification.target === "garansi"
+                      ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                      : "bg-red-50 border-red-200 text-red-800"
+                  }`}
+                >
+                  <div className="flex items-start gap-3">
+                    {autoClassification.target === "garansi" ? (
+                      <CheckCircle2 className="w-5 h-5 mt-0.5 shrink-0" />
+                    ) : (
+                      <AlertCircle className="w-5 h-5 mt-0.5 shrink-0" />
+                    )}
+                    <div>
+                      <p className="font-semibold">
+                        {autoClassification.message}
+                      </p>
+                      <p className="text-sm opacity-80 mt-1">
+                        Bulan {String(autoClassification.bulan).padStart(2, "0")} {autoClassification.tahun}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Submit button */}
               <Button
                 onClick={submitScan}
-                disabled={isSubmitting || !selectedMaterialId || !manualSN.trim()}
+                disabled={isSubmitting || !selectedMaterialId || !manualSN.trim() || manualSN.trim().length !== 28}
                 className="w-full"
               >
                 {isSubmitting ? (
@@ -428,7 +505,7 @@ export default function MaterialBekas() {
                 Material Garansi
               </h3>
               <p className="text-sm text-muted-foreground">
-                Material dengan tahun produksi 2021 ke atas
+                Material dengan tahun produksi di atas 2021
               </p>
             </div>
             <div className="flex gap-2">
@@ -508,7 +585,7 @@ export default function MaterialBekas() {
                 Material Usul Hapus
               </h3>
               <p className="text-sm text-muted-foreground">
-                Material dengan tahun produksi di bawah 2021
+                Material dengan tahun produksi 2021 ke bawah
               </p>
             </div>
             <div className="flex gap-2">

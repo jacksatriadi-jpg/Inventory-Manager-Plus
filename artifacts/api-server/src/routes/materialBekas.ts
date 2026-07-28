@@ -28,11 +28,11 @@ function classifySN(sn: string) {
   const parsed = parseSN(sn);
   if (!parsed) return { valid: false, reason: "Format SN tidak dikenali" };
 
-  if (parsed.tahun < 2021) {
-    return { valid: true, target: "usul_hapus", serialNumber: sn, tahun: parsed.tahun, bulan: parsed.bulan };
+  if (parsed.tahun > 2021) {
+    return { valid: true, target: "garansi", serialNumber: sn, tahun: parsed.tahun, bulan: parsed.bulan };
   }
 
-  return { valid: true, target: "garansi", serialNumber: sn, tahun: parsed.tahun, bulan: parsed.bulan };
+  return { valid: true, target: "usul_hapus", serialNumber: sn, tahun: parsed.tahun, bulan: parsed.bulan };
 }
 
 function garansiToJson(g: any, userName?: string) {
@@ -100,7 +100,23 @@ router.post("/material-bekas/scan", async (req, res): Promise<void> => {
     return;
   }
 
-  const classification = classifySN(serialNumber.trim());
+  const sn = serialNumber.trim();
+
+  // Cek duplikat SN di kedua tabel
+  const [existingGaransi] = await db.select().from(materialBekasGaransiTable).where(eq(materialBekasGaransiTable.serialNumber, sn));
+  const [existingUsul] = await db.select().from(materialBekasUsulHapusTable).where(eq(materialBekasUsulHapusTable.serialNumber, sn));
+
+  if (existingGaransi) {
+    res.status(409).json({ error: "SN sudah ada di Material Garansi" });
+    return;
+  }
+
+  if (existingUsul) {
+    res.status(409).json({ error: "SN sudah ada di Material Usul Hapus" });
+    return;
+  }
+
+  const classification = classifySN(sn);
 
   if (!classification.valid) {
     res.status(400).json({ error: classification.reason });
@@ -119,7 +135,7 @@ router.post("/material-bekas/scan", async (req, res): Promise<void> => {
     }).returning();
     res.status(201).json({
       target: "garansi",
-      message: `Material masuk ke Material Garansi (Tahun ${classification.tahun})`,
+      message: `Material masuk ke Material Garansi (Tahun ${classification.tahun} > 2021)`,
       record: garansiToJson(record),
     });
   } else {
@@ -132,7 +148,7 @@ router.post("/material-bekas/scan", async (req, res): Promise<void> => {
     }).returning();
     res.status(201).json({
       target: "usul_hapus",
-      message: `Material masuk ke Material Usul Hapus (Tahun ${classification.tahun} < 2021)`,
+      message: `Material masuk ke Material Usul Hapus (Tahun ${classification.tahun} ≤ 2021)`,
       record: usulHapusToJson(record),
     });
   }
