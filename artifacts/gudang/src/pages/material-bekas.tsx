@@ -41,7 +41,9 @@ interface ClassificationPreview {
 }
 
 function parseSN(sn: string): { tahun: number; bulan: number } | null {
-  const match = sn.match(/(\d{4})\d[A-Za-z]/);
+  // Pola: MMYY + 2 karakter (bisa huruf atau angka)
+  // Contoh: PLN0325000004806110246E11146 → "1024" + "6E" → Bulan 10, Tahun 2024
+  const match = sn.match(/(\d{4})\d./);
   if (!match) return null;
 
   const dateStr = match[1];
@@ -141,6 +143,14 @@ export default function MaterialBekas() {
   // Auto-classify preview when SN reaches 28 characters
   useEffect(() => {
     const sn = manualSN.trim();
+    
+    // Clear input if user starts editing after valid classification (length drops below 28)
+    if (autoClassification && sn.length > 0 && sn.length < 28) {
+      setManualSN("");
+      setAutoClassification(null);
+      return;
+    }
+    
     if (sn.length === 28) {
       const result = classifySN(sn);
       if (result.valid && result.target) {
@@ -199,6 +209,7 @@ export default function MaterialBekas() {
         if (!response.ok) {
           setScanError(data.error || "Gagal memproses scan.");
           submittedSNRef.current = "";
+          setManualSN(""); // Clear input on error/duplicate
           return;
         }
 
