@@ -41,9 +41,10 @@ interface ClassificationPreview {
 }
 
 function parseSN(sn: string): { tahun: number; bulan: number } | null {
-  // Pola: MMYY + 2 karakter (bisa huruf atau angka)
-  // Contoh: PLN0325000004806110246E11146 → "1024" + "6E" → Bulan 10, Tahun 2024
-  const match = sn.match(/(\d{4})\d./);
+  // Pola: skip 18 karakter prefix, ambil 4 digit berikutnya (MMYY)
+  // Contoh: PLN0325000004806110230513231 → "1023" → Bulan 10, Tahun 2023
+  // Contoh: PLN0325000004806110246E11146 → "1024" → Bulan 10, Tahun 2024
+  const match = sn.match(/.{18}(\d{4})/);
   if (!match) return null;
 
   const dateStr = match[1];
@@ -86,10 +87,11 @@ export default function MaterialBekas() {
   const [scanError, setScanError] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
-  const [autoClassification, setAutoClassification] = useState<ClassificationPreview | null>(null);
-  const submittedSNRef = useRef<string>("");
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
+    const [autoClassification, setAutoClassification] = useState<ClassificationPreview | null>(null);
+    const submittedSNRef = useRef<string>("");
+    const clearingInputRef = useRef(false);
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
 
   // Garansi & Usul Hapus state
   const [garansiRecords, setGaransiRecords] = useState<GaransiRecord[]>([]);
@@ -145,9 +147,12 @@ export default function MaterialBekas() {
     const sn = manualSN.trim();
     
     // Clear input if user starts editing after valid classification (length drops below 28)
-    if (autoClassification && sn.length > 0 && sn.length < 28) {
+    // Use clearingInputRef to prevent infinite loop when we clear the input
+    if (autoClassification && sn.length > 0 && sn.length < 28 && !clearingInputRef.current) {
+      clearingInputRef.current = true;
       setManualSN("");
       setAutoClassification(null);
+      clearingInputRef.current = false;
       return;
     }
     
@@ -208,9 +213,9 @@ export default function MaterialBekas() {
 
         if (!response.ok) {
           setScanError(data.error || "Gagal memproses scan.");
-          submittedSNRef.current = "";
           setManualSN(""); // Clear input on error/duplicate
-          return;
+          setAutoClassification(null);
+          return; // Jangan reset submittedSNRef — biarkan SN gagal ini tidak di-trigger ulang
         }
 
         setScanResult(data);
@@ -226,7 +231,8 @@ export default function MaterialBekas() {
       } catch (err) {
         console.error(err);
         setScanError("Terjadi kesalahan saat memproses scan.");
-        submittedSNRef.current = "";
+        setManualSN(""); // Clear input on error
+        setAutoClassification(null);
       } finally {
         setIsSubmitting(false);
       }
