@@ -81,13 +81,11 @@ async function setupDatabase() {
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
 
-      CREATE TABLE IF NOT EXISTS non_scan_keluar (
-        id SERIAL PRIMARY KEY,
-        material_id INTEGER NOT NULL REFERENCES materials(id),
-        jumlah INTEGER NOT NULL,
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-      );
+      CREATE TABLE IF NOT EXISTS non_scan_keluar (\n        id SERIAL PRIMARY KEY,\n        material_id INTEGER NOT NULL REFERENCES materials(id),\n        jumlah INTEGER NOT NULL,\n        user_id INTEGER NOT NULL REFERENCES users(id),\n        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n      );
+
+      CREATE TABLE IF NOT EXISTS material_bekas_garansi (\n        id SERIAL PRIMARY KEY,\n        serial_number TEXT NOT NULL,\n        material_name TEXT NOT NULL,\n        tahun INTEGER NOT NULL,\n        bulan INTEGER NOT NULL,\n        user_id INTEGER NOT NULL REFERENCES users(id),\n        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n      );
+
+      CREATE TABLE IF NOT EXISTS material_bekas_usul_hapus (\n        id SERIAL PRIMARY KEY,\n        serial_number TEXT NOT NULL,\n        material_name TEXT NOT NULL,\n        tahun INTEGER NOT NULL,\n        bulan INTEGER NOT NULL,\n        user_id INTEGER NOT NULL REFERENCES users(id),\n        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n      );
     `);
 
     // Migrate: tambah kolom baru jika belum ada (aman untuk database lama)

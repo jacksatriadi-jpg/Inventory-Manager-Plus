@@ -11,6 +11,7 @@ import backupRouter from "./backup";
 import materialMasukRouter from "./materialMasuk";
 import materialKeluarRouter from "./materialKeluar";
 import sheetsRouter from "./sheets";
+import materialBekasRouter from "./materialBekas";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(backupRouter);
 router.use(materialMasukRouter);
 router.use(materialKeluarRouter);
 router.use(sheetsRouter);
+router.use(materialBekasRouter);
 
 export default router;
