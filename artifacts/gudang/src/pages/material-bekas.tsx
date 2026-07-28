@@ -85,7 +85,7 @@ export default function MaterialBekas() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [autoClassification, setAutoClassification] = useState<ClassificationPreview | null>(null);
-  const [autoSubmitted, setAutoSubmitted] = useState(false);
+  const submittedSNRef = useRef<string>("");
   const videoRef = useRef<HTMLVideoElement>(null);
   const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
 
@@ -163,17 +163,17 @@ export default function MaterialBekas() {
 
   // Auto-submit when SN reaches 28 chars and has valid classification
   useEffect(() => {
-    if (autoClassification && autoSubmitted) return;
     if (!autoClassification) return;
 
     const sn = manualSN.trim();
     if (sn.length !== 28) return;
+    if (submittedSNRef.current === sn) return;
 
     const timer = setTimeout(async () => {
       if (!selectedMaterialId) return;
       if (!user) return;
 
-      setAutoSubmitted(true);
+      submittedSNRef.current = sn;
 
       const material = mcbMaterials.find((m) => m.id.toString() === selectedMaterialId);
       if (!material) return;
@@ -198,7 +198,7 @@ export default function MaterialBekas() {
 
         if (!response.ok) {
           setScanError(data.error || "Gagal memproses scan.");
-          setAutoSubmitted(false);
+          submittedSNRef.current = "";
           return;
         }
 
@@ -212,18 +212,17 @@ export default function MaterialBekas() {
 
         setManualSN("");
         setAutoClassification(null);
-        setAutoSubmitted(false);
       } catch (err) {
         console.error(err);
         setScanError("Terjadi kesalahan saat memproses scan.");
-        setAutoSubmitted(false);
+        submittedSNRef.current = "";
       } finally {
         setIsSubmitting(false);
       }
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [autoClassification, manualSN, selectedMaterialId, user, mcbMaterials, merkInput, fetchGaransi, fetchUsulHapus, autoSubmitted]);
+  }, [autoClassification, manualSN, selectedMaterialId, user, mcbMaterials, merkInput, fetchGaransi, fetchUsulHapus]);
 
   const startScanner = async () => {
     if (!videoRef.current) return;
