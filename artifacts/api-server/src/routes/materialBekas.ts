@@ -1,15 +1,23 @@
 import { Router } from "express";
 import type { IRouter } from "express";
 import { db, materialBekasGaransiTable, materialBekasUsulHapusTable, usersTable } from "@workspace/db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, ilike, and } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 
 const router: IRouter = Router();
 
+// TEMP: migrate endpoint - hapus setelah kolom merk ditambahkan
+router.get("/material-bekas/migrate", async (req, res): Promise<void> => {
+  try {
+    await db.execute(sql`ALTER TABLE material_bekas_garansi ADD COLUMN IF NOT EXISTS merk TEXT`);
+    await db.execute(sql`ALTER TABLE material_bekas_usul_hapus ADD COLUMN IF NOT EXISTS merk TEXT`);
+    res.json({ success: true, message: "Kolom merk ditambahkan" });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 function parseSN(sn: string) {
-  // Ambil 4 digit sebelum digit terakhir sebelum huruf
-  // 2 digit pertama = bulan, 2 digit kedua = tahun
-  // Contoh: PLN0325000005402510222Z00630 -> 1022 -> bulan 10, tahun 22 -> 2022
-  // Contoh: PLN0325000004806110246E11146 -> 1024 -> bulan 10, tahun 24 -> 2024
   const match = sn.match(/(\d{4})\d[A-Za-z]/);
   if (!match) return null;
 
@@ -20,7 +28,6 @@ function parseSN(sn: string) {
   if (month < 1 || month > 12) return null;
 
   const year = yearShort < 50 ? 2000 + yearShort : 1900 + yearShort;
-
   return { tahun: year, bulan: month };
 }
 
@@ -40,6 +47,7 @@ function garansiToJson(g: any, userName?: string) {
     id: g.id,
     serialNumber: g.serialNumber,
     materialName: g.materialName,
+    merk: g.merk,
     tahun: g.tahun,
     bulan: g.bulan,
     userId: g.userId,
@@ -53,6 +61,7 @@ function usulHapusToJson(u: any, userName?: string) {
     id: u.id,
     serialNumber: u.serialNumber,
     materialName: u.materialName,
+    merk: u.merk,
     tahun: u.tahun,
     bulan: u.bulan,
     userId: u.userId,
@@ -61,9 +70,34 @@ function usulHapusToJson(u: any, userName?: string) {
   };
 }
 
-// GET all garansi records
+// GET garansi records with optional filters
 router.get("/material-bekas/garansi", async (req, res): Promise<void> => {
-  const rows = await db.select().from(materialBekasGaransiTable).orderBy(desc(materialBekasGaransiTable.createdAt));
+  const { search, from, to } = req.query as { search?: string; from?: string; to?: string };
+  
+  let conditions = [];
+  if (search) {
+    conditions.push(
+      and(
+        ilike(materialBekasGaransiTable.serialNumber, `%${search}%`),
+        ilike(materialBekasGaransiTable.materialName, `%${search}%`),
+        ilike(materialBekasGaransiTable.merk, `%${search}%`),
+      ),
+    );
+  }
+  if (from) {
+    conditions.push(eq(materialBekasGaransiTable.createdAt, new Date(from)));
+  }
+  if (to) {
+    conditions.push(eq(materialBekasGaransiTable.createdAt, new Date(to)));
+  }
+
+  let rows;
+  if (conditions.length > 0) {
+    rows = await db.select().from(materialBekasGaransiTable).where(and(...conditions)).orderBy(desc(materialBekasGaransiTable.createdAt));
+  } else {
+    rows = await db.select().from(materialBekasGaransiTable).orderBy(desc(materialBekasGaransiTable.createdAt));
+  }
+
   const results = await Promise.all(rows.map(async (r) => {
     const [usr] = await db.select().from(usersTable).where(eq(usersTable.id, r.userId));
     return garansiToJson(r, usr?.username);
@@ -71,9 +105,34 @@ router.get("/material-bekas/garansi", async (req, res): Promise<void> => {
   res.json(results);
 });
 
-// GET all usul hapus records
+// GET usul hapus records with optional filters
 router.get("/material-bekas/usul-hapus", async (req, res): Promise<void> => {
-  const rows = await db.select().from(materialBekasUsulHapusTable).orderBy(desc(materialBekasUsulHapusTable.createdAt));
+  const { search, from, to } = req.query as { search?: string; from?: string; to?: string };
+  
+  let conditions = [];
+  if (search) {
+    conditions.push(
+      and(
+        ilike(materialBekasUsulHapusTable.serialNumber, `%${search}%`),
+        ilike(materialBekasUsulHapusTable.materialName, `%${search}%`),
+        ilike(materialBekasUsulHapusTable.merk, `%${search}%`),
+      ),
+    );
+  }
+  if (from) {
+    conditions.push(eq(materialBekasUsulHapusTable.createdAt, new Date(from)));
+  }
+  if (to) {
+    conditions.push(eq(materialBekasUsulHapusTable.createdAt, new Date(to)));
+  }
+
+  let rows;
+  if (conditions.length > 0) {
+    rows = await db.select().from(materialBekasUsulHapusTable).where(and(...conditions)).orderBy(desc(materialBekasUsulHapusTable.createdAt));
+  } else {
+    rows = await db.select().from(materialBekasUsulHapusTable).orderBy(desc(materialBekasUsulHapusTable.createdAt));
+  }
+
   const results = await Promise.all(rows.map(async (r) => {
     const [usr] = await db.select().from(usersTable).where(eq(usersTable.id, r.userId));
     return usulHapusToJson(r, usr?.username);
@@ -83,7 +142,7 @@ router.get("/material-bekas/usul-hapus", async (req, res): Promise<void> => {
 
 // POST scan SN and classify
 router.post("/material-bekas/scan", async (req, res): Promise<void> => {
-  const { serialNumber, materialName, userId } = req.body ?? {};
+  const { serialNumber, materialName, merk, userId } = req.body ?? {};
 
   if (!serialNumber || typeof serialNumber !== "string" || serialNumber.trim() === "") {
     res.status(400).json({ error: "Serial number harus diisi" });
@@ -102,7 +161,6 @@ router.post("/material-bekas/scan", async (req, res): Promise<void> => {
 
   const sn = serialNumber.trim();
 
-  // Cek duplikat SN di kedua tabel
   const [existingGaransi] = await db.select().from(materialBekasGaransiTable).where(eq(materialBekasGaransiTable.serialNumber, sn));
   const [existingUsul] = await db.select().from(materialBekasUsulHapusTable).where(eq(materialBekasUsulHapusTable.serialNumber, sn));
 
@@ -129,6 +187,7 @@ router.post("/material-bekas/scan", async (req, res): Promise<void> => {
     [record] = await db.insert(materialBekasGaransiTable).values({
       serialNumber: classification.serialNumber,
       materialName: materialName.trim(),
+      merk: (merk?.trim() || "").trim(),
       tahun: classification.tahun,
       bulan: classification.bulan,
       userId,
@@ -142,6 +201,7 @@ router.post("/material-bekas/scan", async (req, res): Promise<void> => {
     [record] = await db.insert(materialBekasUsulHapusTable).values({
       serialNumber: classification.serialNumber,
       materialName: materialName.trim(),
+      merk: (merk?.trim() || "").trim(),
       tahun: classification.tahun,
       bulan: classification.bulan,
       userId,
@@ -154,7 +214,6 @@ router.post("/material-bekas/scan", async (req, res): Promise<void> => {
   }
 });
 
-// DELETE garansi record
 router.delete("/material-bekas/garansi/:id", async (req, res): Promise<void> => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
@@ -163,7 +222,6 @@ router.delete("/material-bekas/garansi/:id", async (req, res): Promise<void> => 
   res.sendStatus(204);
 });
 
-// DELETE usul hapus record
 router.delete("/material-bekas/usul-hapus/:id", async (req, res): Promise<void> => {
   const id = parseInt(req.params.id);
   if (isNaN(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }

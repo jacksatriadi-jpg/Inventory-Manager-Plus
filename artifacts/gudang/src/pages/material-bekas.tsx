@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, ScanLine, PackageOpen, Trash2, FileSpreadsheet, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
+import { Loader2, ScanLine, PackageOpen, Trash2, FileSpreadsheet, CheckCircle2, AlertCircle, RefreshCw, Search, CalendarRange } from "lucide-react";
 import { BrowserMultiFormatReader } from "@zxing/library";
 import * as XLSX from "xlsx";
 
@@ -15,6 +15,7 @@ interface GaransiRecord {
   id: number;
   serialNumber: string;
   materialName: string;
+  merk: string | null;
   tahun: number;
   bulan: number;
   userName: string | null;
@@ -25,6 +26,7 @@ interface UsulHapusRecord {
   id: number;
   serialNumber: string;
   materialName: string;
+  merk: string | null;
   tahun: number;
   bulan: number;
   userName: string | null;
@@ -68,22 +70,22 @@ export default function MaterialBekas() {
   const { user } = useAuth();
   const { data: materials } = useListMaterials();
 
-  // Filter only MCB materials
   const mcbMaterials = materials?.filter(
     (m) => m.name.toLowerCase().includes("mcb") || m.code.toLowerCase().includes("mcb")
   ) ?? [];
 
-  // Tabs
   const [activeTab, setActiveTab] = useState<"scan" | "garansi" | "usul_hapus">("scan");
 
   // Scan tab state
   const [selectedMaterialId, setSelectedMaterialId] = useState<string>("");
+  const [merkInput, setMerkInput] = useState<string>("");
   const [manualSN, setManualSN] = useState<string>("");
   const [scanResult, setScanResult] = useState<{ target: string; message: string; record: any } | null>(null);
   const [scanError, setScanError] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [autoClassification, setAutoClassification] = useState<ClassificationPreview | null>(null);
+  const [autoSubmitted, setAutoSubmitted] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
 
@@ -93,27 +95,43 @@ export default function MaterialBekas() {
   const [loadingGaransi, setLoadingGaransi] = useState(true);
   const [loadingUsulHapus, setLoadingUsulHapus] = useState(true);
 
+  // Filters
+  const [garansiSearch, setGaransiSearch] = useState("");
+  const [garansiFrom, setGaransiFrom] = useState("");
+  const [garansiTo, setGaransiTo] = useState("");
+  const [usulSearch, setUsulSearch] = useState("");
+  const [usulFrom, setUsulFrom] = useState("");
+  const [usulTo, setUsulTo] = useState("");
+
   const fetchGaransi = useCallback(async () => {
     try {
-      const data = await customFetch<GaransiRecord[]>("/api/material-bekas/garansi");
+      const params = new URLSearchParams();
+      if (garansiSearch) params.set("search", garansiSearch);
+      if (garansiFrom) params.set("from", garansiFrom);
+      if (garansiTo) params.set("to", garansiTo);
+      const data = await customFetch<GaransiRecord[]>(`/api/material-bekas/garansi?${params.toString()}`);
       setGaransiRecords(data);
     } catch {
       setGaransiRecords([]);
     } finally {
       setLoadingGaransi(false);
     }
-  }, []);
+  }, [garansiSearch, garansiFrom, garansiTo]);
 
   const fetchUsulHapus = useCallback(async () => {
     try {
-      const data = await customFetch<UsulHapusRecord[]>("/api/material-bekas/usul-hapus");
+      const params = new URLSearchParams();
+      if (usulSearch) params.set("search", usulSearch);
+      if (usulFrom) params.set("from", usulFrom);
+      if (usulTo) params.set("to", usulTo);
+      const data = await customFetch<UsulHapusRecord[]>(`/api/material-bekas/usul-hapus?${params.toString()}`);
       setUsulHapusRecords(data);
     } catch {
       setUsulHapusRecords([]);
     } finally {
       setLoadingUsulHapus(false);
     }
-  }, []);
+  }, [usulSearch, usulFrom, usulTo]);
 
   useEffect(() => {
     fetchGaransi();
@@ -143,7 +161,70 @@ export default function MaterialBekas() {
     }
   }, [manualSN]);
 
-  // QR Scanner
+  // Auto-submit when SN reaches 28 chars and has valid classification
+  useEffect(() => {
+    if (autoClassification && autoSubmitted) return;
+    if (!autoClassification) return;
+
+    const sn = manualSN.trim();
+    if (sn.length !== 28) return;
+
+    const timer = setTimeout(async () => {
+      if (!selectedMaterialId) return;
+      if (!user) return;
+
+      setAutoSubmitted(true);
+
+      const material = mcbMaterials.find((m) => m.id.toString() === selectedMaterialId);
+      if (!material) return;
+
+      setIsSubmitting(true);
+      setScanError("");
+      setScanResult(null);
+
+      try {
+        const response = await fetch("/api/material-bekas/scan", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            serialNumber: sn,
+            materialName: material.name,
+            merk: merkInput.trim(),
+            userId: user.id,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          setScanError(data.error || "Gagal memproses scan.");
+          setAutoSubmitted(false);
+          return;
+        }
+
+        setScanResult(data);
+
+        if (data.target === "garansi") {
+          fetchGaransi();
+        } else {
+          fetchUsulHapus();
+        }
+
+        setManualSN("");
+        setAutoClassification(null);
+        setAutoSubmitted(false);
+      } catch (err) {
+        console.error(err);
+        setScanError("Terjadi kesalahan saat memproses scan.");
+        setAutoSubmitted(false);
+      } finally {
+        setIsSubmitting(false);
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [autoClassification, manualSN, selectedMaterialId, user, mcbMaterials, merkInput, fetchGaransi, fetchUsulHapus, autoSubmitted]);
+
   const startScanner = async () => {
     if (!videoRef.current) return;
     setIsScanning(true);
@@ -220,6 +301,7 @@ export default function MaterialBekas() {
         body: JSON.stringify({
           serialNumber: sn,
           materialName: material.name,
+          merk: merkInput.trim(),
           userId: user.id,
         }),
       });
@@ -233,14 +315,12 @@ export default function MaterialBekas() {
 
       setScanResult(data);
 
-      // Refresh lists
       if (data.target === "garansi") {
         fetchGaransi();
       } else {
         fetchUsulHapus();
       }
 
-      // Reset SN only, keep selected material
       setManualSN("");
       setAutoClassification(null);
     } catch (err) {
@@ -251,11 +331,11 @@ export default function MaterialBekas() {
     }
   };
 
-  // Export functions
   const exportGaransi = () => {
     const wsData = garansiRecords.map((r) => ({
       "Serial Number": r.serialNumber,
       "Material": r.materialName,
+      "Merk": r.merk || "-",
       "Tahun": r.tahun,
       "Bulan": r.bulan,
       "Diinput oleh": r.userName || "-",
@@ -272,6 +352,7 @@ export default function MaterialBekas() {
     const wsData = usulHapusRecords.map((r) => ({
       "Serial Number": r.serialNumber,
       "Material": r.materialName,
+      "Merk": r.merk || "-",
       "Tahun": r.tahun,
       "Bulan": r.bulan,
       "Diinput oleh": r.userName || "-",
@@ -284,7 +365,6 @@ export default function MaterialBekas() {
     XLSX.writeFile(wb, `Material_Usul_Hapus_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
-  // Delete functions
   const deleteGaransi = async (id: number) => {
     if (!confirm("Hapus data ini dari Material Garansi?")) return;
     try {
@@ -337,7 +417,7 @@ export default function MaterialBekas() {
           </TabsTrigger>
         </TabsList>
 
-        {/* TAB 1: Scan Material (Layak Pakai) */}
+        {/* TAB 1: Scan Material */}
         <TabsContent value="scan" className="mt-0 space-y-6">
           <Card>
             <CardHeader>
@@ -346,7 +426,7 @@ export default function MaterialBekas() {
                 Scan Material Bekas
               </CardTitle>
               <CardDescription>
-                Pilih material MCB, lalu scan QR code atau masukkan serial number secara manual
+                Pilih material MCB, masukkan merk, lalu scan atau ketik serial number — akan langsung terklasifikasi saat 28 karakter
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -365,6 +445,16 @@ export default function MaterialBekas() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+
+              {/* Merk input */}
+              <div className="space-y-2">
+                <Label>Merk Material</Label>
+                <Input
+                  value={merkInput}
+                  onChange={(e) => setMerkInput(e.target.value)}
+                  placeholder="Contoh: Schneider, ABB, Siemens"
+                />
               </div>
 
               {/* QR Scanner */}
@@ -436,6 +526,9 @@ export default function MaterialBekas() {
                       </p>
                       <p className="text-sm opacity-80 mt-1">
                         Bulan {String(autoClassification.bulan).padStart(2, "0")} {autoClassification.tahun}
+                      </p>
+                      <p className="text-xs opacity-70 mt-1">
+                        Otomatis akan terklasifikasi dalam 0.5 detik...
                       </p>
                     </div>
                   </div>
@@ -520,6 +613,35 @@ export default function MaterialBekas() {
             </div>
           </div>
 
+          {/* Filters */}
+          <div className="flex flex-col md:flex-row gap-2 items-stretch">
+            <div className="flex-1 flex items-center gap-2">
+              <Search className="w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Cari SN, material, merk..."
+                value={garansiSearch}
+                onChange={(e) => setGaransiSearch(e.target.value)}
+                className="flex-1"
+              />
+            </div>
+            <div className="flex gap-2 items-center">
+              <CalendarRange className="w-4 h-4 text-muted-foreground" />
+              <Input
+                type="date"
+                value={garansiFrom}
+                onChange={(e) => setGaransiFrom(e.target.value)}
+                className="w-36"
+              />
+              <span className="text-muted-foreground">-</span>
+              <Input
+                type="date"
+                value={garansiTo}
+                onChange={(e) => setGaransiTo(e.target.value)}
+                className="w-36"
+              />
+            </div>
+          </div>
+
           <Card>
             <CardContent className="p-0">
               {loadingGaransi ? (
@@ -538,6 +660,7 @@ export default function MaterialBekas() {
                       <tr>
                         <th className="text-left p-3 font-semibold">Serial Number</th>
                         <th className="text-left p-3 font-semibold">Material</th>
+                        <th className="text-left p-3 font-semibold">Merk</th>
                         <th className="text-center p-3 font-semibold">Tahun</th>
                         <th className="text-center p-3 font-semibold">Bulan</th>
                         <th className="text-left p-3 font-semibold">Diinput oleh</th>
@@ -550,6 +673,7 @@ export default function MaterialBekas() {
                         <tr key={r.id} className="border-t hover:bg-muted/20">
                           <td className="p-3 font-mono text-xs">{r.serialNumber}</td>
                           <td className="p-3">{r.materialName}</td>
+                          <td className="p-3">{r.merk || "-"}</td>
                           <td className="p-3 text-center">{r.tahun}</td>
                           <td className="p-3 text-center">{String(r.bulan).padStart(2, "0")}</td>
                           <td className="p-3">{r.userName || "-"}</td>
@@ -600,6 +724,35 @@ export default function MaterialBekas() {
             </div>
           </div>
 
+          {/* Filters */}
+          <div className="flex flex-col md:flex-row gap-2 items-stretch">
+            <div className="flex-1 flex items-center gap-2">
+              <Search className="w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Cari SN, material, merk..."
+                value={usulSearch}
+                onChange={(e) => setUsulSearch(e.target.value)}
+                className="flex-1"
+              />
+            </div>
+            <div className="flex gap-2 items-center">
+              <CalendarRange className="w-4 h-4 text-muted-foreground" />
+              <Input
+                type="date"
+                value={usulFrom}
+                onChange={(e) => setUsulFrom(e.target.value)}
+                className="w-36"
+              />
+              <span className="text-muted-foreground">-</span>
+              <Input
+                type="date"
+                value={usulTo}
+                onChange={(e) => setUsulTo(e.target.value)}
+                className="w-36"
+              />
+            </div>
+          </div>
+
           <Card>
             <CardContent className="p-0">
               {loadingUsulHapus ? (
@@ -618,6 +771,7 @@ export default function MaterialBekas() {
                       <tr>
                         <th className="text-left p-3 font-semibold">Serial Number</th>
                         <th className="text-left p-3 font-semibold">Material</th>
+                        <th className="text-left p-3 font-semibold">Merk</th>
                         <th className="text-center p-3 font-semibold">Tahun</th>
                         <th className="text-center p-3 font-semibold">Bulan</th>
                         <th className="text-left p-3 font-semibold">Diinput oleh</th>
@@ -630,6 +784,7 @@ export default function MaterialBekas() {
                         <tr key={r.id} className="border-t hover:bg-muted/20">
                           <td className="p-3 font-mono text-xs">{r.serialNumber}</td>
                           <td className="p-3">{r.materialName}</td>
+                          <td className="p-3">{r.merk || "-"}</td>
                           <td className="p-3 text-center">{r.tahun}</td>
                           <td className="p-3 text-center">{String(r.bulan).padStart(2, "0")}</td>
                           <td className="p-3">{r.userName || "-"}</td>
