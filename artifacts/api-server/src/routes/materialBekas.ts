@@ -6,15 +6,16 @@ import { eq, desc } from "drizzle-orm";
 const router: IRouter = Router();
 
 function parseSN(sn: string) {
-  // Cari huruf di SN, ambil 4 digit sebelum huruf tersebut
+  // Ambil 4 digit sebelum digit terakhir sebelum huruf
   // 2 digit pertama = bulan, 2 digit kedua = tahun
-  // Contoh: PLN0325000004806110246E11146 -> sebelum E: 1102 -> bulan 11, tahun 02 -> 2002
-  // Contoh: PLN0325000005402510222Z00630 -> sebelum Z: 1022 -> bulan 10, tahun 22 -> 2022
-  const match = sn.match(/(\d{2})(\d{2})[A-Za-z]/);
+  // Contoh: PLN0325000005402510222Z00630 -> 1022 -> bulan 10, tahun 22 -> 2022
+  // Contoh: PLN0325000004806110246E11146 -> 1024 -> bulan 10, tahun 24 -> 2024
+  const match = sn.match(/(\d{4})\d[A-Za-z]/);
   if (!match) return null;
 
-  const month = parseInt(match[1]);
-  const yearShort = parseInt(match[2]);
+  const dateStr = match[1];
+  const month = parseInt(dateStr.slice(0, 2));
+  const yearShort = parseInt(dateStr.slice(2, 4));
 
   if (month < 1 || month > 12) return null;
 
