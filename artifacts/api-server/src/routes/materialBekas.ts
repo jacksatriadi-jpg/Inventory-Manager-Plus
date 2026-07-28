@@ -6,10 +6,10 @@ import { eq, desc, ilike, and } from "drizzle-orm";
 const router: IRouter = Router();
 
 function parseSN(sn: string) {
-  // Pola: skip 18 karakter prefix, ambil 4 digit berikutnya (MMYY)
+  // Pola: skip 17 karakter prefix, ambil 4 digit berikutnya (MMYY)
   // Contoh: PLN0325000004806110230513231 → "1023" → Bulan 10, Tahun 2023
   // Contoh: PLN0325000004806110246E11146 → "1024" → Bulan 10, Tahun 2024
-  const match = sn.match(/.{18}(\d{4})/);
+  const match = sn.match(/^.{17}(\d{4})/);
   if (!match) return null;
 
   const dateStr = match[1];

@@ -41,10 +41,10 @@ interface ClassificationPreview {
 }
 
 function parseSN(sn: string): { tahun: number; bulan: number } | null {
-  // Pola: skip 18 karakter prefix, ambil 4 digit berikutnya (MMYY)
+  // Pola: skip 17 karakter prefix, ambil 4 digit berikutnya (MMYY)
   // Contoh: PLN0325000004806110230513231 → "1023" → Bulan 10, Tahun 2023
   // Contoh: PLN0325000004806110246E11146 → "1024" → Bulan 10, Tahun 2024
-  const match = sn.match(/.{18}(\d{4})/);
+  const match = sn.match(/^.{17}(\d{4})/);
   if (!match) return null;
 
   const dateStr = match[1];
@@ -89,7 +89,18 @@ export default function MaterialBekas() {
   const [isScanning, setIsScanning] = useState(false);
   const [autoClassification, setAutoClassification] = useState<ClassificationPreview | null>(null);
   const submittedSNRef = useRef<string>("");
-  const clearingInputRef = useRef(false);
+  const lastValidClassificationRef = useRef<string | null>(null);
+  const snInputRef = useRef<HTMLInputElement>(null);
+
+  const handleSNChange = useCallback((value: string) => {
+    const prevValid = lastValidClassificationRef.current;
+    // Jika ada valid classification sebelumnya dan user mulai backspace (length < 28), clear input
+    if (prevValid && value.length > 0 && value.length < 28) {
+      setManualSN("");
+      return;
+    }
+    setManualSN(value);
+  }, []);
   const videoRef = useRef<HTMLVideoElement>(null);
   const codeReaderRef = useRef<BrowserMultiFormatReader | null>(null);
 
@@ -146,19 +157,10 @@ export default function MaterialBekas() {
   useEffect(() => {
     const sn = manualSN.trim();
     
-    // Clear input if user starts editing after valid classification (length drops below 28)
-    // Use clearingInputRef to prevent infinite loop when we clear the input
-    if (autoClassification && sn.length > 0 && sn.length < 28 && !clearingInputRef.current) {
-      clearingInputRef.current = true;
-      setManualSN("");
-      setAutoClassification(null);
-      clearingInputRef.current = false;
-      return;
-    }
-    
     if (sn.length === 28) {
       const result = classifySN(sn);
       if (result.valid && result.target) {
+        lastValidClassificationRef.current = sn; // Simpan SN yang valid
         const message = result.target === "garansi"
           ? `Tahun ${result.tahun} > 2021 → Material Garansi`
           : `Tahun ${result.tahun} ≤ 2021 → Material Usul Hapus`;
@@ -169,9 +171,11 @@ export default function MaterialBekas() {
           message,
         });
       } else {
+        lastValidClassificationRef.current = null;
         setAutoClassification(null);
       }
     } else {
+      lastValidClassificationRef.current = null;
       setAutoClassification(null);
     }
   }, [manualSN]);
@@ -513,7 +517,7 @@ export default function MaterialBekas() {
                 <Label>Atau masukkan Serial Number secara manual</Label>
                 <Input
                   value={manualSN}
-                  onChange={(e) => setManualSN(e.target.value)}
+                  onChange={(e) => handleSNChange(e.target.value)}
                   placeholder="Contoh: PLN0325000005402510222Z00630"
                 />
                 <p className="text-xs text-muted-foreground">
