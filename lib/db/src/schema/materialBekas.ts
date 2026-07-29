@@ -6,6 +6,7 @@ import { usersTable } from "./users";
 export const materialBekasGaransiTable = pgTable("material_bekas_garansi", {
   id: serial("id").primaryKey(),
   serialNumber: text("serial_number").notNull(),
+  materialCode: text("material_code"),
   materialName: text("material_name").notNull(),
   merk: text("merk"),
   tahun: integer("tahun").notNull(),
@@ -21,6 +22,7 @@ export type MaterialBekasGaransi = typeof materialBekasGaransiTable.$inferSelect
 export const materialBekasUsulHapusTable = pgTable("material_bekas_usul_hapus", {
   id: serial("id").primaryKey(),
   serialNumber: text("serial_number").notNull(),
+  materialCode: text("material_code"),
   materialName: text("material_name").notNull(),
   merk: text("merk"),
   tahun: integer("tahun").notNull(),

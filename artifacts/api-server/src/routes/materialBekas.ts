@@ -37,6 +37,7 @@ function garansiToJson(g: any, userName?: string) {
   return {
     id: g.id,
     serialNumber: g.serialNumber,
+    materialCode: g.materialCode,
     materialName: g.materialName,
     merk: g.merk,
     tahun: g.tahun,
@@ -51,6 +52,7 @@ function usulHapusToJson(u: any, userName?: string) {
   return {
     id: u.id,
     serialNumber: u.serialNumber,
+    materialCode: u.materialCode,
     materialName: u.materialName,
     merk: u.merk,
     tahun: u.tahun,
@@ -72,6 +74,7 @@ router.get("/material-bekas/garansi", async (req, res): Promise<void> => {
         ilike(materialBekasGaransiTable.serialNumber, `%${search}%`),
         ilike(materialBekasGaransiTable.materialName, `%${search}%`),
         ilike(materialBekasGaransiTable.merk, `%${search}%`),
+        ilike(materialBekasGaransiTable.materialCode, `%${search}%`),
       ),
     );
   }
@@ -109,6 +112,7 @@ router.get("/material-bekas/usul-hapus", async (req, res): Promise<void> => {
         ilike(materialBekasUsulHapusTable.serialNumber, `%${search}%`),
         ilike(materialBekasUsulHapusTable.materialName, `%${search}%`),
         ilike(materialBekasUsulHapusTable.merk, `%${search}%`),
+        ilike(materialBekasUsulHapusTable.materialCode, `%${search}%`),
       ),
     );
   }
@@ -137,7 +141,7 @@ router.get("/material-bekas/usul-hapus", async (req, res): Promise<void> => {
 
 // POST scan SN and classify
 router.post("/material-bekas/scan", async (req, res): Promise<void> => {
-  const { serialNumber, materialName, merk, userId } = req.body ?? {};
+  const { serialNumber, materialName, materialCode, merk, userId } = req.body ?? {};
 
   if (!serialNumber || typeof serialNumber !== "string" || serialNumber.trim() === "") {
     res.status(400).json({ error: "Serial number harus diisi" });
@@ -181,6 +185,7 @@ router.post("/material-bekas/scan", async (req, res): Promise<void> => {
   if (classification.target === "garansi") {
     [record] = await db.insert(materialBekasGaransiTable).values({
       serialNumber: classification.serialNumber,
+      materialCode: materialCode || null,
       materialName: materialName.trim(),
       merk: (merk?.trim() || "").trim(),
       tahun: classification.tahun,
@@ -195,6 +200,7 @@ router.post("/material-bekas/scan", async (req, res): Promise<void> => {
   } else {
     [record] = await db.insert(materialBekasUsulHapusTable).values({
       serialNumber: classification.serialNumber,
+      materialCode: materialCode || null,
       materialName: materialName.trim(),
       merk: (merk?.trim() || "").trim(),
       tahun: classification.tahun,

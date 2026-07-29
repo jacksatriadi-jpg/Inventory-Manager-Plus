@@ -15,6 +15,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 interface GaransiRecord {
   id: number;
   serialNumber: string;
+  materialCode: string | null;
   materialName: string;
   merk: string | null;
   tahun: number;
@@ -26,6 +27,7 @@ interface GaransiRecord {
 interface UsulHapusRecord {
   id: number;
   serialNumber: string;
+  materialCode: string | null;
   materialName: string;
   merk: string | null;
   tahun: number;
@@ -213,6 +215,7 @@ export default function MaterialBekas() {
           body: JSON.stringify({
             serialNumber: sn,
             materialName: material.name,
+            materialCode: material.code,
             merk: merkInput.trim(),
             userId: user.id,
           }),
@@ -362,6 +365,7 @@ export default function MaterialBekas() {
       : garansiRecords;
     const wsData = records.map((r) => ({
       "Serial Number": r.serialNumber,
+      "Kode Material": r.materialCode || "-",
       "Material": r.materialName,
       "Merk": r.merk || "-",
       "Tahun": r.tahun,
@@ -382,6 +386,7 @@ export default function MaterialBekas() {
       : usulHapusRecords;
     const wsData = records.map((r) => ({
       "Serial Number": r.serialNumber,
+      "Kode Material": r.materialCode || "-",
       "Material": r.materialName,
       "Merk": r.merk || "-",
       "Tahun": r.tahun,
@@ -743,6 +748,7 @@ export default function MaterialBekas() {
                           />
                         </th>
                         <th className="text-left p-3 font-semibold">Serial Number</th>
+                        <th className="text-left p-3 font-semibold">Kode Material</th>
                         <th className="text-left p-3 font-semibold">Material</th>
                         <th className="text-left p-3 font-semibold">Merk</th>
                         <th className="text-center p-3 font-semibold">Tahun</th>
@@ -767,6 +773,7 @@ export default function MaterialBekas() {
                             />
                           </td>
                           <td className="p-3 font-mono text-xs">{r.serialNumber}</td>
+                          <td className="p-3 font-mono text-xs">{r.materialCode || "-"}</td>
                           <td className="p-3">{r.materialName}</td>
                           <td className="p-3">{r.merk || "-"}</td>
                           <td className="p-3 text-center">{r.tahun}</td>
@@ -886,6 +893,7 @@ export default function MaterialBekas() {
                           />
                         </th>
                         <th className="text-left p-3 font-semibold">Serial Number</th>
+                        <th className="text-left p-3 font-semibold">Kode Material</th>
                         <th className="text-left p-3 font-semibold">Material</th>
                         <th className="text-left p-3 font-semibold">Merk</th>
                         <th className="text-center p-3 font-semibold">Tahun</th>
@@ -910,6 +918,7 @@ export default function MaterialBekas() {
                             />
                           </td>
                           <td className="p-3 font-mono text-xs">{r.serialNumber}</td>
+                          <td className="p-3 font-mono text-xs">{r.materialCode || "-"}</td>
                           <td className="p-3">{r.materialName}</td>
                           <td className="p-3">{r.merk || "-"}</td>
                           <td className="p-3 text-center">{r.tahun}</td>
