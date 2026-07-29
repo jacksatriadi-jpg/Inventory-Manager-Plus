@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { IRouter } from "express";
 import { db, materialBekasGaransiTable, materialBekasUsulHapusTable, usersTable } from "@workspace/db";
-import { eq, desc, ilike, and, gte, lte } from "drizzle-orm";
+import { eq, desc, ilike, and, or, gte, lte } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -70,7 +70,7 @@ router.get("/material-bekas/garansi", async (req, res): Promise<void> => {
   let conditions = [];
   if (search) {
     conditions.push(
-      and(
+      or(
         ilike(materialBekasGaransiTable.serialNumber, `%${search}%`),
         ilike(materialBekasGaransiTable.materialName, `%${search}%`),
         ilike(materialBekasGaransiTable.merk, `%${search}%`),
@@ -108,7 +108,7 @@ router.get("/material-bekas/usul-hapus", async (req, res): Promise<void> => {
   let conditions = [];
   if (search) {
     conditions.push(
-      and(
+      or(
         ilike(materialBekasUsulHapusTable.serialNumber, `%${search}%`),
         ilike(materialBekasUsulHapusTable.materialName, `%${search}%`),
         ilike(materialBekasUsulHapusTable.merk, `%${search}%`),

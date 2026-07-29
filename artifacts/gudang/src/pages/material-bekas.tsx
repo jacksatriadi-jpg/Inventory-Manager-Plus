@@ -329,6 +329,7 @@ export default function MaterialBekas() {
         body: JSON.stringify({
           serialNumber: sn,
           materialName: material.name,
+          materialCode: material.code,
           merk: merkInput.trim(),
           userId: user.id,
         }),
