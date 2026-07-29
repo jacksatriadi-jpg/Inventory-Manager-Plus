@@ -79,7 +79,9 @@ router.get("/material-bekas/garansi", async (req, res): Promise<void> => {
     conditions.push(gte(materialBekasGaransiTable.createdAt, new Date(from)));
   }
   if (to) {
-    conditions.push(lte(materialBekasGaransiTable.createdAt, new Date(to)));
+    const toEnd = new Date(to);
+    toEnd.setUTCHours(23, 59, 59, 999);
+    conditions.push(lte(materialBekasGaransiTable.createdAt, toEnd));
   }
 
   let rows;
@@ -114,7 +116,9 @@ router.get("/material-bekas/usul-hapus", async (req, res): Promise<void> => {
     conditions.push(gte(materialBekasUsulHapusTable.createdAt, new Date(from)));
   }
   if (to) {
-    conditions.push(lte(materialBekasUsulHapusTable.createdAt, new Date(to)));
+    const toEnd = new Date(to);
+    toEnd.setUTCHours(23, 59, 59, 999);
+    conditions.push(lte(materialBekasUsulHapusTable.createdAt, toEnd));
   }
 
   let rows;
