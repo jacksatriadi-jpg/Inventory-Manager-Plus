@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Loader2, ScanLine, PackageOpen, Trash2, FileSpreadsheet, CheckCircle2, AlertCircle, RefreshCw, Search, CalendarRange } from "lucide-react";
 import { BrowserMultiFormatReader } from "@zxing/library";
 import * as XLSX from "xlsx";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface GaransiRecord {
   id: number;
@@ -109,6 +110,10 @@ export default function MaterialBekas() {
   const [usulHapusRecords, setUsulHapusRecords] = useState<UsulHapusRecord[]>([]);
   const [loadingGaransi, setLoadingGaransi] = useState(true);
   const [loadingUsulHapus, setLoadingUsulHapus] = useState(true);
+
+  // Selection state
+  const [selectedGaransi, setSelectedGaransi] = useState<Set<number>>(new Set());
+  const [selectedUsulHapus, setSelectedUsulHapus] = useState<Set<number>>(new Set());
 
   // Filters
   const [garansiSearch, setGaransiSearch] = useState("");
@@ -351,8 +356,11 @@ export default function MaterialBekas() {
     }
   };
 
-  const exportGaransi = () => {
-    const wsData = garansiRecords.map((r) => ({
+  const exportGaransi = (selectedOnly = false) => {
+    const records = selectedOnly && selectedGaransi.size > 0
+      ? garansiRecords.filter(r => selectedGaransi.has(r.id))
+      : garansiRecords;
+    const wsData = records.map((r) => ({
       "Serial Number": r.serialNumber,
       "Material": r.materialName,
       "Merk": r.merk || "-",
@@ -368,8 +376,11 @@ export default function MaterialBekas() {
     XLSX.writeFile(wb, `Material_Garansi_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
 
-  const exportUsulHapus = () => {
-    const wsData = usulHapusRecords.map((r) => ({
+  const exportUsulHapus = (selectedOnly = false) => {
+    const records = selectedOnly && selectedUsulHapus.size > 0
+      ? usulHapusRecords.filter(r => selectedUsulHapus.has(r.id))
+      : usulHapusRecords;
+    const wsData = records.map((r) => ({
       "Serial Number": r.serialNumber,
       "Material": r.materialName,
       "Merk": r.merk || "-",
@@ -390,6 +401,22 @@ export default function MaterialBekas() {
     try {
       await customFetch(`/api/material-bekas/garansi/${id}`, { method: "DELETE" });
       fetchGaransi();
+      setSelectedGaransi(prev => { const next = new Set(prev); next.delete(id); return next; });
+    } catch (err) {
+      console.error(err);
+      alert("Gagal menghapus data.");
+    }
+  };
+
+  const deleteBulkGaransi = async () => {
+    if (selectedGaransi.size === 0) return;
+    if (!confirm(`Hapus ${selectedGaransi.size} data yang dipilih dari Material Garansi?`)) return;
+    try {
+      await Promise.all(Array.from(selectedGaransi).map(id =>
+        customFetch(`/api/material-bekas/garansi/${id}`, { method: "DELETE" })
+      ));
+      fetchGaransi();
+      setSelectedGaransi(new Set());
     } catch (err) {
       console.error(err);
       alert("Gagal menghapus data.");
@@ -401,6 +428,22 @@ export default function MaterialBekas() {
     try {
       await customFetch(`/api/material-bekas/usul-hapus/${id}`, { method: "DELETE" });
       fetchUsulHapus();
+      setSelectedUsulHapus(prev => { const next = new Set(prev); next.delete(id); return next; });
+    } catch (err) {
+      console.error(err);
+      alert("Gagal menghapus data.");
+    }
+  };
+
+  const deleteBulkUsulHapus = async () => {
+    if (selectedUsulHapus.size === 0) return;
+    if (!confirm(`Hapus ${selectedUsulHapus.size} data yang dipilih dari Material Usul Hapus?`)) return;
+    try {
+      await Promise.all(Array.from(selectedUsulHapus).map(id =>
+        customFetch(`/api/material-bekas/usul-hapus/${id}`, { method: "DELETE" })
+      ));
+      fetchUsulHapus();
+      setSelectedUsulHapus(new Set());
     } catch (err) {
       console.error(err);
       alert("Gagal menghapus data.");
@@ -626,10 +669,22 @@ export default function MaterialBekas() {
                 <RefreshCw className="w-4 h-4 mr-1" />
                 Refresh
               </Button>
-              <Button variant="outline" size="sm" onClick={exportGaransi} disabled={garansiRecords.length === 0}>
+              <Button variant="outline" size="sm" onClick={() => exportGaransi(false)} disabled={garansiRecords.length === 0}>
                 <FileSpreadsheet className="w-4 h-4 mr-1" />
                 Export Excel
               </Button>
+              {selectedGaransi.size > 0 && (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => exportGaransi(true)}>
+                    <FileSpreadsheet className="w-4 h-4 mr-1" />
+                    Export Terpilih ({selectedGaransi.size})
+                  </Button>
+                  <Button variant="destructive" size="sm" onClick={deleteBulkGaransi}>
+                    <Trash2 className="w-4 h-4 mr-1" />
+                    Hapus Terpilih ({selectedGaransi.size})
+                  </Button>
+                </>
+              )}
             </div>
           </div>
 
@@ -678,6 +733,15 @@ export default function MaterialBekas() {
                   <table className="w-full text-sm">
                     <thead className="bg-muted/50">
                       <tr>
+                        <th className="text-center p-3 font-semibold w-12">
+                          <Checkbox
+                            checked={garansiRecords.length > 0 && selectedGaransi.size === garansiRecords.length}
+                            onCheckedChange={(checked) => {
+                              if (checked) setSelectedGaransi(new Set(garansiRecords.map(r => r.id)));
+                              else setSelectedGaransi(new Set());
+                            }}
+                          />
+                        </th>
                         <th className="text-left p-3 font-semibold">Serial Number</th>
                         <th className="text-left p-3 font-semibold">Material</th>
                         <th className="text-left p-3 font-semibold">Merk</th>
@@ -690,7 +754,18 @@ export default function MaterialBekas() {
                     </thead>
                     <tbody>
                       {garansiRecords.map((r) => (
-                        <tr key={r.id} className="border-t hover:bg-muted/20">
+                        <tr key={r.id} className={`border-t hover:bg-muted/20 ${selectedGaransi.has(r.id) ? 'bg-blue-50 dark:bg-blue-950/20' : ''}`}>
+                          <td className="p-3 text-center">
+                            <Checkbox
+                              checked={selectedGaransi.has(r.id)}
+                              onCheckedChange={(checked) => {
+                                const next = new Set(selectedGaransi);
+                                if (checked) next.add(r.id);
+                                else next.delete(r.id);
+                                setSelectedGaransi(next);
+                              }}
+                            />
+                          </td>
                           <td className="p-3 font-mono text-xs">{r.serialNumber}</td>
                           <td className="p-3">{r.materialName}</td>
                           <td className="p-3">{r.merk || "-"}</td>
@@ -737,10 +812,22 @@ export default function MaterialBekas() {
                 <RefreshCw className="w-4 h-4 mr-1" />
                 Refresh
               </Button>
-              <Button variant="outline" size="sm" onClick={exportUsulHapus} disabled={usulHapusRecords.length === 0}>
+              <Button variant="outline" size="sm" onClick={() => exportUsulHapus(false)} disabled={usulHapusRecords.length === 0}>
                 <FileSpreadsheet className="w-4 h-4 mr-1" />
                 Export Excel
               </Button>
+              {selectedUsulHapus.size > 0 && (
+                <>
+                  <Button variant="outline" size="sm" onClick={() => exportUsulHapus(true)}>
+                    <FileSpreadsheet className="w-4 h-4 mr-1" />
+                    Export Terpilih ({selectedUsulHapus.size})
+                  </Button>
+                  <Button variant="destructive" size="sm" onClick={deleteBulkUsulHapus}>
+                    <Trash2 className="w-4 h-4 mr-1" />
+                    Hapus Terpilih ({selectedUsulHapus.size})
+                  </Button>
+                </>
+              )}
             </div>
           </div>
 
@@ -789,6 +876,15 @@ export default function MaterialBekas() {
                   <table className="w-full text-sm">
                     <thead className="bg-muted/50">
                       <tr>
+                        <th className="text-center p-3 font-semibold w-12">
+                          <Checkbox
+                            checked={usulHapusRecords.length > 0 && selectedUsulHapus.size === usulHapusRecords.length}
+                            onCheckedChange={(checked) => {
+                              if (checked) setSelectedUsulHapus(new Set(usulHapusRecords.map(r => r.id)));
+                              else setSelectedUsulHapus(new Set());
+                            }}
+                          />
+                        </th>
                         <th className="text-left p-3 font-semibold">Serial Number</th>
                         <th className="text-left p-3 font-semibold">Material</th>
                         <th className="text-left p-3 font-semibold">Merk</th>
@@ -801,7 +897,18 @@ export default function MaterialBekas() {
                     </thead>
                     <tbody>
                       {usulHapusRecords.map((r) => (
-                        <tr key={r.id} className="border-t hover:bg-muted/20">
+                        <tr key={r.id} className={`border-t hover:bg-muted/20 ${selectedUsulHapus.has(r.id) ? 'bg-blue-50 dark:bg-blue-950/20' : ''}`}>
+                          <td className="p-3 text-center">
+                            <Checkbox
+                              checked={selectedUsulHapus.has(r.id)}
+                              onCheckedChange={(checked) => {
+                                const next = new Set(selectedUsulHapus);
+                                if (checked) next.add(r.id);
+                                else next.delete(r.id);
+                                setSelectedUsulHapus(next);
+                              }}
+                            />
+                          </td>
                           <td className="p-3 font-mono text-xs">{r.serialNumber}</td>
                           <td className="p-3">{r.materialName}</td>
                           <td className="p-3">{r.merk || "-"}</td>
