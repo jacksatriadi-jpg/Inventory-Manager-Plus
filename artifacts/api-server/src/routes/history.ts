@@ -26,8 +26,8 @@ router.get("/history", async (req, res): Promise<void> => {
     const conds: string[] = ["si.status = 'completed'"];
     if (filterMaterialId) { args.push(filterMaterialId); conds.push(`si.material_id = $${args.length}`); }
     if (filterUserId)     { args.push(filterUserId);     conds.push(`si.user_id = $${args.length}`); }
-    if (filterFrom)       { args.push(filterFrom);       conds.push(`si.created_at >= $${args.length}::timestamptz`); }
-    if (filterTo)         { args.push(filterTo);         conds.push(`si.created_at <= $${args.length}::timestamptz`); }
+    if (filterFrom)       { args.push(filterFrom);       conds.push(`si.created_at >= $${args.length}::date`); }
+    if (filterTo)         { args.push(filterTo);         conds.push(`si.created_at <= $${args.length}::date + interval '1 day' - interval '1 second'`); }
     const where = conds.join(" AND ");
     // stockOnly: only join scan_items that have NOT been scanned out yet
     const itemJoinCond = filterStockOnly
@@ -55,8 +55,8 @@ router.get("/history", async (req, res): Promise<void> => {
     const args: any[] = [];
     const conds: string[] = [];
     if (filterUserId) { args.push(filterUserId); conds.push(`so.user_id = $${args.length}`); }
-    if (filterFrom)   { args.push(filterFrom);   conds.push(`so.created_at >= $${args.length}::timestamptz`); }
-    if (filterTo)     { args.push(filterTo);     conds.push(`so.created_at <= $${args.length}::timestamptz`); }
+    if (filterFrom)   { args.push(filterFrom);   conds.push(`so.created_at >= $${args.length}::date`); }
+    if (filterTo)     { args.push(filterTo);     conds.push(`so.created_at <= $${args.length}::date + interval '1 day' - interval '1 second'`); }
     const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
     return pool.query(
       `WITH so_first AS (
@@ -86,8 +86,8 @@ router.get("/history", async (req, res): Promise<void> => {
     const conds: string[] = [];
     if (filterMaterialId) { args.push(filterMaterialId); conds.push(`nm.material_id = $${args.length}`); }
     if (filterUserId)     { args.push(filterUserId);     conds.push(`nm.user_id = $${args.length}`); }
-    if (filterFrom)       { args.push(filterFrom);       conds.push(`nm.created_at >= $${args.length}::timestamptz`); }
-    if (filterTo)         { args.push(filterTo);         conds.push(`nm.created_at <= $${args.length}::timestamptz`); }
+    if (filterFrom)       { args.push(filterFrom);       conds.push(`nm.created_at >= $${args.length}::date`); }
+    if (filterTo)         { args.push(filterTo);         conds.push(`nm.created_at <= $${args.length}::date + interval '1 day' - interval '1 second'`); }
     const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
     return pool.query(
       `SELECT nm.id, nm.created_at, nm.material_id, m.code AS material_code, m.name AS material_name,
@@ -105,8 +105,8 @@ router.get("/history", async (req, res): Promise<void> => {
     const conds: string[] = [];
     if (filterMaterialId) { args.push(filterMaterialId); conds.push(`nk.material_id = $${args.length}`); }
     if (filterUserId)     { args.push(filterUserId);     conds.push(`nk.user_id = $${args.length}`); }
-    if (filterFrom)       { args.push(filterFrom);       conds.push(`nk.created_at >= $${args.length}::timestamptz`); }
-    if (filterTo)         { args.push(filterTo);         conds.push(`nk.created_at <= $${args.length}::timestamptz`); }
+    if (filterFrom)       { args.push(filterFrom);       conds.push(`nk.created_at >= $${args.length}::date`); }
+    if (filterTo)         { args.push(filterTo);         conds.push(`nk.created_at <= $${args.length}::date + interval '1 day' - interval '1 second'`); }
     const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
     return pool.query(
       `SELECT nk.id, nk.created_at, nk.material_id, m.code AS material_code, m.name AS material_name,

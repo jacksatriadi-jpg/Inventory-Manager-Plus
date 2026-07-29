@@ -72,7 +72,7 @@ export default function Riwayat() {
   const { data: history, isLoading, refetch } = useListHistory({
     type:       filterType === "all" ? undefined : filterType,
     materialId: filterMaterialId !== "all" ? Number(filterMaterialId) : undefined,
-    from:       filterFrom || undefined,
+    from:       filterFrom ? filterFrom + "T00:00:00" : undefined,
     to:         filterTo   ? filterTo + "T23:59:59" : undefined,
     stockOnly:  filterStockOnly || undefined,
   });
@@ -696,7 +696,7 @@ export default function Riwayat() {
                                 record.boxLabel || "-"
                               )}
                             </TableCell>
-                            <TableCell className="font-mono">{record.materialCode || record.materialName || "-"}</TableCell>
+                            <TableCell className="font-mono">{record.materialName || record.materialCode || "-"}</TableCell>
                             <TableCell className="text-center font-bold font-mono">{qty}</TableCell>
                             <TableCell>{record.userName}</TableCell>
                             <TableCell className="text-center" onClick={(e) => e.stopPropagation()}>
