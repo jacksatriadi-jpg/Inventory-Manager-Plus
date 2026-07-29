@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { IRouter } from "express";
 import { db, materialBekasGaransiTable, materialBekasUsulHapusTable, usersTable } from "@workspace/db";
-import { eq, desc, ilike, and } from "drizzle-orm";
+import { eq, desc, ilike, and, gte, lte } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -76,10 +76,10 @@ router.get("/material-bekas/garansi", async (req, res): Promise<void> => {
     );
   }
   if (from) {
-    conditions.push(eq(materialBekasGaransiTable.createdAt, new Date(from)));
+    conditions.push(gte(materialBekasGaransiTable.createdAt, new Date(from)));
   }
   if (to) {
-    conditions.push(eq(materialBekasGaransiTable.createdAt, new Date(to)));
+    conditions.push(lte(materialBekasGaransiTable.createdAt, new Date(to)));
   }
 
   let rows;
@@ -111,10 +111,10 @@ router.get("/material-bekas/usul-hapus", async (req, res): Promise<void> => {
     );
   }
   if (from) {
-    conditions.push(eq(materialBekasUsulHapusTable.createdAt, new Date(from)));
+    conditions.push(gte(materialBekasUsulHapusTable.createdAt, new Date(from)));
   }
   if (to) {
-    conditions.push(eq(materialBekasUsulHapusTable.createdAt, new Date(to)));
+    conditions.push(lte(materialBekasUsulHapusTable.createdAt, new Date(to)));
   }
 
   let rows;
