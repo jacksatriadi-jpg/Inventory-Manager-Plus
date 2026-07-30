@@ -66,9 +66,10 @@ export async function getSheetStockMap(
   const stockMap = new Map<string, number>();
 
   for (const row of rows) {
-    // Column C = index 0 (material name), Column J = index 6 (stock value)
+    // Column C = index 0 (material name), Column J = index 7 (stock value)
+    // Range C:J → C=0, D=1, E=2, F=3, G=4, H=5, I=6, J=7
     const materialName = row[0]?.trim();
-    const stockValue = row[6];
+    const stockValue = row[7];
 
     if (materialName && stockValue !== undefined && stockValue !== null && stockValue !== "") {
       // Handle Indonesian number format: "1.500" → 1500
