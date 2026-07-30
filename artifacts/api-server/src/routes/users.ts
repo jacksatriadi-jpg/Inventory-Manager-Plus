@@ -39,6 +39,7 @@ router.get("/users", async (req, res): Promise<void> => {
       id: u.id,
       username: u.username,
       role: u.role,
+      menuAccess: u.menuAccess || [],
       createdAt: u.createdAt.toISOString(),
     }))
   );
@@ -52,18 +53,19 @@ router.post("/users", async (req, res): Promise<void> => {
     return;
   }
 
-  const { username, password, role } = parsed.data;
+  const { username, password, role, menuAccess } = parsed.data;
   const passwordHash = hashPassword(password);
 
   const [user] = await db
     .insert(usersTable)
-    .values({ username, passwordHash, role })
+    .values({ username, passwordHash, role, menuAccess: menuAccess || [] })
     .returning();
 
   res.status(201).json({
     id: user.id,
     username: user.username,
     role: user.role,
+    menuAccess: user.menuAccess || [],
     createdAt: user.createdAt.toISOString(),
   });
 });
@@ -85,6 +87,7 @@ router.get("/users/:id", async (req, res): Promise<void> => {
     id: user.id,
     username: user.username,
     role: user.role,
+    menuAccess: user.menuAccess || [],
     createdAt: user.createdAt.toISOString(),
   }));
 });
@@ -106,6 +109,7 @@ router.patch("/users/:id", async (req, res): Promise<void> => {
   if (parsed.data.username) updateData.username = parsed.data.username;
   if (parsed.data.role) updateData.role = parsed.data.role;
   if (parsed.data.password) updateData.passwordHash = hashPassword(parsed.data.password);
+  if (parsed.data.menuAccess !== undefined) updateData.menuAccess = parsed.data.menuAccess;
 
   const [user] = await db
     .update(usersTable)
@@ -122,6 +126,7 @@ router.patch("/users/:id", async (req, res): Promise<void> => {
     id: user.id,
     username: user.username,
     role: user.role,
+    menuAccess: user.menuAccess || [],
     createdAt: user.createdAt.toISOString(),
   }));
 });

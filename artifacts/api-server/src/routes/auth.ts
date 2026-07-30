@@ -30,6 +30,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     id: user.id,
     username: user.username,
     role: user.role,
+    menuAccess: user.menuAccess || [],
     createdAt: user.createdAt.toISOString(),
   };
 
@@ -61,6 +62,7 @@ router.get("/auth/me", async (req, res): Promise<void> => {
     id: user.id,
     username: user.username,
     role: user.role,
+    menuAccess: user.menuAccess || [],
     createdAt: user.createdAt.toISOString(),
   });
   res.json(response);

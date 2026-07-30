@@ -1,7 +1,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from "react";
 import { User } from "@workspace/api-client-react";
 
-export type AppUser = User | { id: 0; username: string; role: "guest"; createdAt: string };
+export type AppUser = User | { id: 0; username: string; role: "guest"; menuAccess?: string[]; createdAt: string };
 
 interface AuthContextType {
   user: AppUser | null;
@@ -44,7 +44,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loginAsGuest = () => {
     setToken(null);
-    setUser({ id: 0, username: "Tamu", role: "guest", createdAt: new Date().toISOString() });
+    setUser({ id: 0, username: "Tamu", role: "guest", menuAccess: ["/dashboard", "/riwayat"], createdAt: new Date().toISOString() });
   };
 
   const logout = () => {

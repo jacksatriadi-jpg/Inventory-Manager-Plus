@@ -30,6 +30,7 @@ export const LoginResponse = zod.object({
   "id": zod.number(),
   "username": zod.string(),
   "role": zod.enum(['master', 'user']),
+  "menuAccess": zod.array(zod.string()).optional().default([]),
   "createdAt": zod.string()
 })
 })
@@ -46,6 +47,7 @@ export const GetMeResponse = zod.object({
   "id": zod.number(),
   "username": zod.string(),
   "role": zod.enum(['master', 'user']),
+  "menuAccess": zod.array(zod.string()).optional().default([]),
   "createdAt": zod.string()
 })
 
@@ -57,6 +59,7 @@ export const ListUsersResponseItem = zod.object({
   "id": zod.number(),
   "username": zod.string(),
   "role": zod.enum(['master', 'user']),
+  "menuAccess": zod.array(zod.string()).optional().default([]),
   "createdAt": zod.string()
 })
 export const ListUsersResponse = zod.array(ListUsersResponseItem)
@@ -68,7 +71,8 @@ export const ListUsersResponse = zod.array(ListUsersResponseItem)
 export const CreateUserBody = zod.object({
   "username": zod.string(),
   "password": zod.string(),
-  "role": zod.enum(['master', 'user'])
+  "role": zod.enum(['master', 'user']),
+  "menuAccess": zod.array(zod.string()).optional().default([])
 })
 
 
@@ -83,6 +87,7 @@ export const GetUserResponse = zod.object({
   "id": zod.number(),
   "username": zod.string(),
   "role": zod.enum(['master', 'user']),
+  "menuAccess": zod.array(zod.string()).optional().default([]),
   "createdAt": zod.string()
 })
 
@@ -97,13 +102,15 @@ export const UpdateUserParams = zod.object({
 export const UpdateUserBody = zod.object({
   "username": zod.string().optional(),
   "password": zod.string().nullish(),
-  "role": zod.enum(['master', 'user']).optional()
+  "role": zod.enum(['master', 'user']).optional(),
+  "menuAccess": zod.array(zod.string()).optional()
 })
 
 export const UpdateUserResponse = zod.object({
   "id": zod.number(),
   "username": zod.string(),
   "role": zod.enum(['master', 'user']),
+  "menuAccess": zod.array(zod.string()).optional().default([]),
   "createdAt": zod.string()
 })
 

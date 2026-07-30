@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import * as xlsx from "xlsx";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Database, Package2, Users2, Plus, Pencil, Trash2, Loader2, DatabaseBackup, Download, Upload, ShieldAlert, CheckCircle2, Clock, Calendar, HardDrive, PlayCircle, RefreshCw, Link2, Link2Off, CloudUpload, FileSpreadsheet } from "lucide-react";
+import { Database, Package2, Users2, Plus, Pencil, Trash2, Loader2, DatabaseBackup, Download, Upload, ShieldAlert, CheckCircle2, Clock, Calendar, HardDrive, PlayCircle, RefreshCw, Link2, Link2Off, CloudUpload, FileSpreadsheet, LayoutDashboard, ScanLine, PackagePlus, PackageMinus, History, QrCode, PackageOpen } from "lucide-react";
 import { useListMaterials, useCreateMaterial, useUpdateMaterial, useDeleteMaterial, 
          useListUsers, useCreateUser, useUpdateUser, useDeleteUser, getListMaterialsQueryKey, getListUsersQueryKey } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
@@ -525,6 +526,19 @@ function ImportMaterialDialog({
 }
 
 
+// ─── Available menus for access control ──────────────────────────────────────
+const AVAILABLE_MENUS = [
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/scan", label: "Scan Material", icon: ScanLine },
+  { href: "/material-masuk", label: "Material Masuk", icon: PackagePlus },
+  { href: "/material-keluar", label: "Material Keluar", icon: PackageMinus },
+  { href: "/riwayat", label: "Riwayat", icon: History },
+  { href: "/barcode-tools", label: "Barcode Tools", icon: QrCode },
+  { href: "/material-bekas", label: "Material Bekas", icon: PackageOpen },
+  { href: "/master", label: "Master", icon: Database },
+  { href: "/master?tab=backup", label: "Backup & Restore", icon: DatabaseBackup },
+];
+
 function UsersTab() {
   const { data: users, isLoading } = useListUsers();
   const createMutation = useCreateUser();
@@ -535,24 +549,44 @@ function UsersTab() {
 
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [formData, setFormData] = useState({ username: "", password: "", role: "user" as "master" | "user" });
+  const [formData, setFormData] = useState({ username: "", password: "", role: "user" as "master" | "user", menuAccess: [] as string[] });
 
   const handleOpen = (user?: any) => {
     if (user) {
       setEditingId(user.id);
-      setFormData({ username: user.username, password: "", role: user.role });
+      setFormData({ username: user.username, password: "", role: user.role, menuAccess: user.menuAccess || [] });
     } else {
       setEditingId(null);
-      setFormData({ username: "", password: "", role: "user" });
+      setFormData({ username: "", password: "", role: "user", menuAccess: [] });
     }
     setIsOpen(true);
+  };
+
+  const toggleMenuAccess = (href: string) => {
+    setFormData(prev => ({
+      ...prev,
+      menuAccess: prev.menuAccess.includes(href)
+        ? prev.menuAccess.filter(m => m !== href)
+        : [...prev.menuAccess, href]
+    }));
+  };
+
+  const selectAllMenus = () => {
+    setFormData(prev => ({
+      ...prev,
+      menuAccess: AVAILABLE_MENUS.map(m => m.href)
+    }));
+  };
+
+  const clearAllMenus = () => {
+    setFormData(prev => ({ ...prev, menuAccess: [] }));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       if (editingId) {
-        const payload: any = { username: formData.username, role: formData.role };
+        const payload: any = { username: formData.username, role: formData.role, menuAccess: formData.menuAccess };
         if (formData.password) payload.password = formData.password;
         await updateMutation.mutateAsync({ id: editingId, data: payload });
         toast({ title: "User updated" });
@@ -596,7 +630,7 @@ function UsersTab() {
               <Plus className="w-4 h-4 mr-2" /> Add User
             </Button>
           </DialogTrigger>
-          <DialogContent>
+          <DialogContent className="max-w-2xl">
             <form onSubmit={handleSubmit}>
               <DialogHeader>
                 <DialogTitle>{editingId ? "Edit User" : "New User"}</DialogTitle>
@@ -631,6 +665,50 @@ function UsersTab() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {/* ─── Menu Access Controls ─── */}
+                <div className="space-y-3 border-t pt-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <Label className="text-base font-semibold">Menu Access</Label>
+                      <p className="text-xs text-muted-foreground mt-0.5">Pilih menu yang bisa diakses user ini</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={selectAllMenus} className="text-xs">
+                        Pilih Semua
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={clearAllMenus} className="text-xs">
+                        Hapus Semua
+                      </Button>
+                    </div>
+                  </div>
+
+                  {formData.role === "master" && (
+                    <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-md p-3 text-xs text-amber-700 dark:text-amber-400">
+                      ⚠️ Admin (Master) memiliki akses ke semua menu secara otomatis. Menu access tidak berlaku untuk role Master.
+                    </div>
+                  )}
+
+                  <div className="max-h-48 overflow-y-auto space-y-1 border rounded-md p-3">
+                    {AVAILABLE_MENUS.map(menu => {
+                      const isChecked = formData.menuAccess.includes(menu.href);
+                      const Icon = menu.icon;
+                      return (
+                        <div key={menu.href} className="flex items-center gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer" onClick={() => toggleMenuAccess(menu.href)}>
+                          <Checkbox checked={isChecked} onCheckedChange={() => toggleMenuAccess(menu.href)} />
+                          <Icon className="w-4 h-4 text-muted-foreground" />
+                          <span className="text-sm">{menu.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {formData.menuAccess.length > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      ✓ {formData.menuAccess.length} menu dipilih
+                    </p>
+                  )}
+                </div>
               </div>
               <DialogFooter>
                 <Button type="submit" disabled={createMutation.isPending || updateMutation.isPending}>
@@ -650,6 +728,7 @@ function UsersTab() {
               <TableRow>
                 <TableHead>Username</TableHead>
                 <TableHead>Role</TableHead>
+                <TableHead>Menu Access</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -661,6 +740,24 @@ function UsersTab() {
                     <span className={`px-2 py-1 rounded text-xs font-semibold uppercase ${u.role === 'master' ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground'}`}>
                       {u.role}
                     </span>
+                  </TableCell>
+                  <TableCell>
+                    {u.role === 'master' ? (
+                      <span className="text-xs text-muted-foreground">Semua Menu (Admin)</span>
+                    ) : (u.menuAccess && u.menuAccess.length > 0) ? (
+                      <div className="flex flex-wrap gap-1">
+                        {u.menuAccess.map((href: string) => {
+                          const menu = AVAILABLE_MENUS.find(m => m.href === href);
+                          return (
+                            <span key={href} className="px-2 py-0.5 rounded text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" title={href}>
+                              {menu?.label || href}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">Semua (Non-Admin)</span>
+                    )}
                   </TableCell>
                   <TableCell className="text-right space-x-2">
                     <Button variant="ghost" size="icon" onClick={() => handleOpen(u)}><Pencil className="w-4 h-4" /></Button>

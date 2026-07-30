@@ -16,30 +16,41 @@ interface LayoutProps {
   children: React.ReactNode;
 }
 
+// Define all available menus
+const ALL_MENUS = [
+  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/scan", label: "Scan Material", icon: ScanLine },
+  { href: "/material-masuk", label: "Material Masuk", icon: PackagePlus },
+  { href: "/material-keluar", label: "Material Keluar", icon: PackageMinus },
+  { href: "/riwayat", label: "Riwayat", icon: History },
+  { href: "/barcode-tools", label: "Barcode Tools", icon: QrCode },
+  { href: "/material-bekas", label: "Material Bekas", icon: PackageOpen },
+  { href: "/master", label: "Master", icon: Database },
+  { href: "/master?tab=backup", label: "Backup & Restore", icon: DatabaseBackup },
+];
+
 export function Layout({ children }: LayoutProps) {
   const { user, logout } = useAuth();
   const [location] = useLocation();
 
   const isGuest = user?.role === "guest";
+  const isAdmin = user?.role === "master";
 
+  // Filter menus based on role and menuAccess
   const menuItems = isGuest
-    ? [
-        { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-        { href: "/riwayat", label: "Riwayat", icon: History },
-      ]
-    : [
-        { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
-        { href: "/scan", label: "Scan Material", icon: ScanLine },
-        { href: "/material-masuk", label: "Material Masuk", icon: PackagePlus },
-        { href: "/material-keluar", label: "Material Keluar", icon: PackageMinus },
-        { href: "/riwayat", label: "Riwayat", icon: History },
-        { href: "/barcode-tools", label: "Barcode Tools", icon: QrCode },
-        { href: "/material-bekas", label: "Material Bekas", icon: PackageOpen },
-        ...(user?.role === "master" ? [
-          { href: "/master", label: "Master", icon: Database },
-          { href: "/master?tab=backup", label: "Backup & Restore", icon: DatabaseBackup },
-        ] : []),
-      ];
+    ? ALL_MENUS.filter(m => ["/dashboard", "/riwayat"].includes(m.href))
+    : ALL_MENUS.filter(menu => {
+        // Master sees all menus
+        if (isAdmin) return true;
+        // For regular users, check menuAccess
+        const userMenuAccess = (user?.menuAccess as string[]) || [];
+        // If menuAccess is empty, user has access to all non-admin menus
+        if (userMenuAccess.length === 0) {
+          return !["/master", "/master?tab=backup"].includes(menu.href);
+        }
+        // Otherwise filter by menuAccess
+        return userMenuAccess.includes(menu.href);
+      });
 
   const AccountMenu = () => (
     <DropdownMenu>
