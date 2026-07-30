@@ -11,7 +11,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth";
@@ -694,8 +693,24 @@ function UsersTab() {
                       const isChecked = formData.menuAccess.includes(menu.href);
                       const Icon = menu.icon;
                       return (
-                        <div key={menu.href} className="flex items-center gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer" onClick={() => toggleMenuAccess(menu.href)}>
-                          <Checkbox checked={isChecked} onCheckedChange={() => toggleMenuAccess(menu.href)} />
+                        <div
+                          key={menu.href}
+                          className="flex items-center gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer"
+                          onClick={() => toggleMenuAccess(menu.href)}
+                        >
+                          <div className="relative inline-flex items-center">
+                            <div className={`w-4 h-4 rounded border-2 flex items-center justify-center transition-colors ${
+                              isChecked
+                                ? 'bg-primary border-primary'
+                                : 'border-input bg-background'
+                            }`}>
+                              {isChecked && (
+                                <svg className="w-3 h-3 text-primary-foreground" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                                  <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                              )}
+                            </div>
+                          </div>
                           <Icon className="w-4 h-4 text-muted-foreground" />
                           <span className="text-sm">{menu.label}</span>
                         </div>
