@@ -2,7 +2,7 @@ import { useGetMaterialStats, useGetRecentActivity, useListMaterials, useGetDash
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowDownRight, ArrowUpRight, Activity, Loader2, PackagePlus, PackageMinus, Layers, FileSpreadsheet, FileText, Search, X, RefreshCw } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
@@ -73,6 +73,31 @@ export default function Dashboard() {
       setIsFetchingSheet(false);
     }
   }, [token, toast]);
+
+  // Auto-fetch Google Sheets stock on mount
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    setIsFetchingSheet(true);
+    fetch("/api/sheets/stock", {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(res => res.json().then(d => ({ ok: res.ok, data: d })))
+      .then(({ ok, data }) => {
+        if (cancelled) return;
+        if (!ok) throw new Error(data.error || "Gagal mengambil data spreadsheet");
+        const map = new Map<string, number>();
+        for (const row of data.stock) {
+          map.set(row.materialName.toLowerCase(), row.stockExcel);
+        }
+        setSheetStockMap(map);
+      })
+      .catch(() => { /* silent on mount — user can retry manually */ })
+      .finally(() => {
+        if (!cancelled) setIsFetchingSheet(false);
+      });
+    return () => { cancelled = true; };
+  }, [token]);
 
   const handleExportExcel = () => {
     if (filteredStats.length === 0) {
