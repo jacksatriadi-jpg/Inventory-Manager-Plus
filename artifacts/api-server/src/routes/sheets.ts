@@ -88,14 +88,14 @@ router.get("/sheets/stock", async (req, res): Promise<void> => {
       return;
     }
 
-    const stockMap = await getSheetStockMap(spreadsheetId, sheetName);
+    const { stockMap, fetchTimestamp } = await getSheetStockMap(spreadsheetId, sheetName);
 
     const stock = Array.from(stockMap.entries()).map(([materialName, stockExcel]) => ({
       materialName,
       stockExcel,
     }));
 
-    res.json({ stock, spreadsheetId, sheetName });
+    res.json({ stock, spreadsheetId, sheetName, fetchTimestamp });
   } catch (err: any) {
     // Return the full error message so the frontend can show it
     res.status(500).json({ error: err.message ?? "Terjadi kesalahan saat membaca spreadsheet." });

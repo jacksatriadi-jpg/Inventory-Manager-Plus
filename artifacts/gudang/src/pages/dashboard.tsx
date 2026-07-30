@@ -18,6 +18,7 @@ export default function Dashboard() {
 
   // Google Sheets stock state
   const [sheetStockMap, setSheetStockMap] = useState<Map<string, number>>(new Map());
+  const [sheetFetchTimestamp, setSheetFetchTimestamp] = useState<string | null>(null);
   const [isFetchingSheet, setIsFetchingSheet] = useState(false);
 
   const { data: summary, isLoading: isLoadingSummary } = useGetDashboardSummary();
@@ -66,6 +67,7 @@ export default function Dashboard() {
         map.set(row.materialName.toLowerCase(), row.stockExcel);
       }
       setSheetStockMap(map);
+      setSheetFetchTimestamp(d.fetchTimestamp ?? null);
       toast({ title: "Data Spreadsheet berhasil diambil ✅", description: `${map.size} material dari Google Sheets.` });
     } catch (err: any) {
       toast({ title: "Gagal Fetch Spreadsheet", description: err.message, variant: "destructive" });
@@ -91,6 +93,7 @@ export default function Dashboard() {
           map.set(row.materialName.toLowerCase(), row.stockExcel);
         }
         setSheetStockMap(map);
+        setSheetFetchTimestamp(data.fetchTimestamp ?? null);
       })
       .catch(() => { /* silent on mount — user can retry manually */ })
       .finally(() => {
@@ -270,6 +273,11 @@ export default function Dashboard() {
                     : <RefreshCw className="w-4 h-4" />}
                   Fetch
                 </Button>
+                {sheetFetchTimestamp && (
+                  <span className="text-[11px] text-muted-foreground bg-muted/50 px-2 py-1 rounded-md whitespace-nowrap">
+                    Terakhir: {sheetFetchTimestamp}
+                  </span>
+                )}
                 <Button
                   variant="outline"
                   size="sm"

@@ -24,7 +24,7 @@ function getSheetsClient() {
 export async function getSheetStockMap(
   spreadsheetId: string,
   sheetName: string | null = null
-): Promise<Map<string, number>> {
+): Promise<{ stockMap: Map<string, number>; fetchTimestamp: string | null }> {
   const configResult = await pool.query(
     "SELECT gdrive_access_token, gdrive_refresh_token FROM backup_config LIMIT 1"
   );
@@ -43,16 +43,24 @@ export async function getSheetStockMap(
   const sheets = google.sheets({ version: "v4", auth: client });
 
   // Read columns C (material name) and J (stock value) from row 9 onward
-  // Range: C9:J1000 to cover enough rows
-  const range = sheetName ? `${sheetName}!C9:J1000` : "C9:J1000";
-  const response = await sheets.spreadsheets.values.get({
+  const dataRange = sheetName ? `${sheetName}!C9:J1000` : "C9:J1000";
+  const dataResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range,
+    range: dataRange,
   });
 
-  const rows = response.data.values;
+  // Read timestamp from cell J7
+  const tsRange = sheetName ? `${sheetName}!J7:J7` : "J7:J7";
+  const tsResponse = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: tsRange,
+  });
+  const tsRows = tsResponse.data.values;
+  const fetchTimestamp = tsRows?.[0]?.[0] ?? null;
+
+  const rows = dataResponse.data.values;
   if (!rows || rows.length === 0) {
-    return new Map();
+    return { stockMap: new Map<string, number>(), fetchTimestamp };
   }
 
   const stockMap = new Map<string, number>();
@@ -63,7 +71,16 @@ export async function getSheetStockMap(
     const stockValue = row[6];
 
     if (materialName && stockValue !== undefined && stockValue !== null && stockValue !== "") {
-      const stock = parseFloat(String(stockValue));
+      // Handle Indonesian number format: "1.500" → 1500
+      // Google Sheets may return string with dot as thousand separator
+      let stock: number;
+      const raw = String(stockValue);
+      if (raw.includes(".") && !raw.includes(",")) {
+        // Likely thousand separator (e.g. "1.500"), strip dots
+        stock = parseFloat(raw.replace(/\./g, ""));
+      } else {
+        stock = parseFloat(raw);
+      }
       if (!isNaN(stock)) {
         stockMap.set(materialName, stock);
       }
@@ -71,9 +88,9 @@ export async function getSheetStockMap(
   }
 
   logger.info(
-    { spreadsheetId, sheetName, rowCount: stockMap.size },
+    { spreadsheetId, sheetName, rowCount: stockMap.size, fetchTimestamp },
     "Google Sheets: stock fetched successfully"
   );
 
-  return stockMap;
+  return { stockMap, fetchTimestamp };
 }
