@@ -297,8 +297,9 @@ export default function Dashboard() {
                   <p className="text-sm font-semibold text-muted-foreground text-center uppercase tracking-wider font-mono">
                     {singleStat.materialCode ?? singleStat.materialName}
                   </p>
-                  <div className="grid gap-4 sm:grid-cols-3">
+                  <div className="grid gap-4 sm:grid-cols-2">
                     <StatBox label="Stock" value={singleStat.currentStock} color="primary" />
+                    <StatBox label="Stock Excel" value={sheetStockMap.get((singleStat.materialName ?? "").toLowerCase()) ?? 0} color="green" />
                     <StatBox label="Masuk" value={singleStat.totalIn} color="emerald" />
                     <StatBox label="Keluar" value={singleStat.totalOut} color="amber" />
                   </div>
@@ -429,7 +430,7 @@ export default function Dashboard() {
   );
 }
 
-function StatBox({ label, value, color }: { label: string; value: number; color: "primary" | "emerald" | "amber" }) {
+function StatBox({ label, value, color }: { label: string; value: number; color: "primary" | "emerald" | "amber" | "green" }) {
   const styles = {
     primary: {
       wrap: "bg-primary/5 border-primary/20",
@@ -445,6 +446,11 @@ function StatBox({ label, value, color }: { label: string; value: number; color:
       wrap: "bg-amber-50 dark:bg-amber-950/20 border-amber-500/20",
       label: "text-muted-foreground",
       value: "text-amber-600 dark:text-amber-500",
+    },
+    green: {
+      wrap: "bg-green-50 dark:bg-green-950/20 border-green-500/20",
+      label: "text-muted-foreground",
+      value: "text-green-600 dark:text-green-500",
     },
   }[color];
 
