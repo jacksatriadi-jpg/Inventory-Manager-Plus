@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { db, usersTable, materialsTable, scanInTable, scanItemsTable, scanOutTable, nonScanMasukTable, nonScanKeluarTable } from "@workspace/db";
+import { db, usersTable, materialsTable, scanInTable, scanItemsTable, scanOutTable, nonScanMasukTable, nonScanKeluarTable, materialBekasGaransiTable, materialBekasUsulHapusTable } from "@workspace/db";
 import { pool } from "@workspace/db";
 import { logger } from "./logger";
 import { uploadBackupToDrive } from "./google-drive";
@@ -16,7 +16,7 @@ export function ensureBackupDir() {
 export async function runBackupToFile(): Promise<string> {
   ensureBackupDir();
 
-  const [users, materials, scanIns, scanItems, scanOuts, nonScanMasuk, nonScanKeluar] = await Promise.all([
+  const [users, materials, scanIns, scanItems, scanOuts, nonScanMasuk, nonScanKeluar, materialBekasGaransi, materialBekasUsulHapus] = await Promise.all([
     db.select().from(usersTable),
     db.select().from(materialsTable),
     db.select().from(scanInTable),
@@ -24,13 +24,15 @@ export async function runBackupToFile(): Promise<string> {
     db.select().from(scanOutTable),
     db.select().from(nonScanMasukTable),
     db.select().from(nonScanKeluarTable),
+    db.select().from(materialBekasGaransiTable),
+    db.select().from(materialBekasUsulHapusTable),
   ]);
 
   const backup = {
     exportedAt: new Date().toISOString(),
     version: 2,
     autoBackup: true,
-    data: { users, materials, scanIns, scanItems, scanOuts, nonScanMasuk, nonScanKeluar },
+    data: { users, materials, scanIns, scanItems, scanOuts, nonScanMasuk, nonScanKeluar, materialBekasGaransi, materialBekasUsulHapus },
   };
 
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);

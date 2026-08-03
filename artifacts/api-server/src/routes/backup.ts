@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { sql } from "drizzle-orm";
 import fs from "fs";
 import path from "path";
-import { db, usersTable, materialsTable, scanInTable, scanItemsTable, scanOutTable, nonScanMasukTable, nonScanKeluarTable } from "@workspace/db";
+import { db, usersTable, materialsTable, scanInTable, scanItemsTable, scanOutTable, nonScanMasukTable, nonScanKeluarTable, materialBekasGaransiTable, materialBekasUsulHapusTable } from "@workspace/db";
 import { pool } from "@workspace/db";
 import { parseToken } from "../lib/auth";
 import { runBackupToFile, listBackupFiles, getBackupFilePath, ensureBackupDir } from "../lib/backup-scheduler";
@@ -37,7 +37,7 @@ router.get("/backup", async (req, res): Promise<void> => {
   if (!requireMaster(req, res)) return;
 
   try {
-    const [users, materials, scanIns, scanItems, scanOuts, nonScanMasuk, nonScanKeluar] = await Promise.all([
+    const [users, materials, scanIns, scanItems, scanOuts, nonScanMasuk, nonScanKeluar, materialBekasGaransi, materialBekasUsulHapus] = await Promise.all([
       db.select().from(usersTable),
       db.select().from(materialsTable),
       db.select().from(scanInTable),
@@ -45,6 +45,8 @@ router.get("/backup", async (req, res): Promise<void> => {
       db.select().from(scanOutTable),
       db.select().from(nonScanMasukTable),
       db.select().from(nonScanKeluarTable),
+      db.select().from(materialBekasGaransiTable),
+      db.select().from(materialBekasUsulHapusTable),
     ]);
 
     const backup = {
@@ -58,6 +60,8 @@ router.get("/backup", async (req, res): Promise<void> => {
         scanOuts,
         nonScanMasuk,
         nonScanKeluar,
+        materialBekasGaransi,
+        materialBekasUsulHapus,
       },
     };
 
@@ -79,10 +83,11 @@ router.post("/restore", async (req, res): Promise<void> => {
       return;
     }
 
-    const { users = [], materials = [], scanIns = [], scanItems = [], scanOuts = [], nonScanMasuk = [], nonScanKeluar = [] } = data;
+    const { users = [], materials = [], scanIns = [], scanItems = [], scanOuts = [], nonScanMasuk = [], nonScanKeluar = [], materialBekasGaransi = [], materialBekasUsulHapus = [] } = data;
 
     let insertedUsers = 0, insertedMaterials = 0, insertedScanIns = 0;
     let insertedScanItems = 0, insertedScanOuts = 0, insertedNonScanMasuk = 0, insertedNonScanKeluar = 0;
+    let insertedMaterialBekasGaransi = 0, insertedMaterialBekasUsulHapus = 0;
 
     const client = await pool.connect();
     try {
@@ -93,6 +98,8 @@ router.post("/restore", async (req, res): Promise<void> => {
       await client.query("DELETE FROM scan_items");
       await client.query("DELETE FROM scan_out");
       await client.query("DELETE FROM scan_in");
+      await client.query("DELETE FROM material_bekas_garansi");
+      await client.query("DELETE FROM material_bekas_usul_hapus");
       await client.query("DELETE FROM materials");
       await client.query("DELETE FROM users");
 
@@ -166,6 +173,26 @@ router.post("/restore", async (req, res): Promise<void> => {
         insertedNonScanKeluar = nonScanKeluar.length;
       }
 
+      if (materialBekasGaransi.length > 0) {
+        for (const mbg of materialBekasGaransi) {
+          await client.query(
+            `INSERT INTO material_bekas_garansi (id, serial_number, material_code, material_name, merk, tahun, bulan, user_id, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            [mbg.id, mbg.serialNumber ?? mbg.serial_number, mbg.materialCode ?? mbg.material_code, mbg.materialName ?? mbg.material_name, mbg.merk ?? null, mbg.tahun, mbg.bulan, mbg.userId ?? mbg.user_id, toDate(mbg.createdAt) ?? toDate(mbg.created_at) ?? new Date()]
+          );
+        }
+        insertedMaterialBekasGaransi = materialBekasGaransi.length;
+      }
+
+      if (materialBekasUsulHapus.length > 0) {
+        for (const mbh of materialBekasUsulHapus) {
+          await client.query(
+            `INSERT INTO material_bekas_usul_hapus (id, serial_number, material_code, material_name, merk, tahun, bulan, user_id, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+            [mbh.id, mbh.serialNumber ?? mbh.serial_number, mbh.materialCode ?? mbh.material_code, mbh.materialName ?? mbh.material_name, mbh.merk ?? null, mbh.tahun, mbh.bulan, mbh.userId ?? mbh.user_id, toDate(mbh.createdAt) ?? toDate(mbh.created_at) ?? new Date()]
+          );
+        }
+        insertedMaterialBekasUsulHapus = materialBekasUsulHapus.length;
+      }
+
       await client.query(`SELECT setval('users_id_seq', COALESCE((SELECT MAX(id) FROM users), 0) + 1, false)`);
       await client.query(`SELECT setval('materials_id_seq', COALESCE((SELECT MAX(id) FROM materials), 0) + 1, false)`);
       await client.query(`SELECT setval('scan_in_id_seq', COALESCE((SELECT MAX(id) FROM scan_in), 0) + 1, false)`);
@@ -173,6 +200,8 @@ router.post("/restore", async (req, res): Promise<void> => {
       await client.query(`SELECT setval('scan_out_id_seq', COALESCE((SELECT MAX(id) FROM scan_out), 0) + 1, false)`);
       await client.query(`SELECT setval('non_scan_masuk_id_seq', COALESCE((SELECT MAX(id) FROM non_scan_masuk), 0) + 1, false)`);
       await client.query(`SELECT setval('non_scan_keluar_id_seq', COALESCE((SELECT MAX(id) FROM non_scan_keluar), 0) + 1, false)`);
+      await client.query(`SELECT setval('material_bekas_garansi_id_seq', COALESCE((SELECT MAX(id) FROM material_bekas_garansi), 0) + 1, false)`);
+      await client.query(`SELECT setval('material_bekas_usul_hapus_id_seq', COALESCE((SELECT MAX(id) FROM material_bekas_usul_hapus), 0) + 1, false)`);
 
       await client.query("COMMIT");
     } catch (txErr) {
@@ -188,6 +217,7 @@ router.post("/restore", async (req, res): Promise<void> => {
         users: insertedUsers, materials: insertedMaterials, scanIns: insertedScanIns,
         scanItems: insertedScanItems, scanOuts: insertedScanOuts,
         nonScanMasuk: insertedNonScanMasuk, nonScanKeluar: insertedNonScanKeluar,
+        materialBekasGaransi: insertedMaterialBekasGaransi, materialBekasUsulHapus: insertedMaterialBekasUsulHapus,
       },
     });
   } catch (err: any) {
