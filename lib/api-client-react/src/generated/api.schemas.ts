@@ -164,6 +164,15 @@ export interface ScanInUpdate {
   qrCodeData?: string;
 }
 
+export interface CompleteAndContinueScanInResponse extends ScanIn {}
+
+/**
+ * @summary Complete scan-in session and create new session for same material/user
+ */
+export interface CompleteAndContinueScanInParams {
+  id: number;
+}
+
 export interface ScanOut {
   id: number;
   userId: number;

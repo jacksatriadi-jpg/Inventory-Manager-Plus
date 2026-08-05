@@ -1539,6 +1539,63 @@ export const useDeleteScanInItem = <TError = ErrorType<unknown>,
       return useMutation(getDeleteScanInItemMutationOptions(options));
     }
 
+export const getCompleteAndContinueScanInUrl = (id: number,) => {
+
+
+  return `/api/scan-in/${id}/complete-and-continue`
+}
+
+/**
+ * @summary Complete scan-in session and create new session for same material/user
+ */
+export const completeAndContinueScanIn = async (id: number, options?: RequestInit): Promise<CompleteAndContinueScanInResponse> => {
+
+  return customFetch<CompleteAndContinueScanInResponse>(getCompleteAndContinueScanInUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+  }
+);}
+
+
+export const getCompleteAndContinueScanInMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeAndContinueScanIn>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof completeAndContinueScanIn>>, TError,{id: number}, TContext> => {
+
+const mutationKey = ['completeAndContinueScanIn'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof completeAndContinueScanIn>>, {id: number}> = (props) => {
+          const {id} = props ?? {};
+
+          return  completeAndContinueScanIn(id,requestOptions)
+        }
+
+
+  return  { mutationFn, ...mutationOptions }}
+    export type CompleteAndContinueScanInMutationResult = NonNullable<Awaited<ReturnType<typeof completeAndContinueScanIn>>>
+    export type CompleteAndContinueScanInMutationError = ErrorType<unknown>
+
+    /**
+ * @summary Complete scan-in session and create new session for same material/user
+ */
+export const useCompleteAndContinueScanIn = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeAndContinueScanIn>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof completeAndContinueScanIn>>,
+        TError,
+        {id: number},
+        TContext
+      > => {
+      return useMutation(getCompleteAndContinueScanInMutationOptions(options));
+    }
+
 export const getListScanOutUrl = (params?: ListScanOutParams,) => {
   const normalizedParams = new URLSearchParams();
 

@@ -401,6 +401,29 @@ paths:
         "204":
           description: Deleted
 
+  /scan-in/{id}/complete-and-continue:
+    post:
+      operationId: completeAndContinueScanIn
+      tags: [scan-in]
+      summary: Complete current scan-in session and create new session for same material/user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "201":
+          description: New session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScanIn"
+        "400":
+          description: Session not in scanning state
+        "404":
+          description: Session not found
+
   /scan-out:
     get:
       operationId: listScanOut

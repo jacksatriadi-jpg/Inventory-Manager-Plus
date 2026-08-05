@@ -35,6 +35,7 @@ export * from './scanInUpdate';
 export * from './scanInUpdateStatus';
 export * from './scanItem';
 export * from './scanItemInput';
+export * from './completeAndContinueScanIn';
 export * from './scanOut';
 export * from './scanOutInput';
 export * from './scanOutItemInput';

@@ -307,6 +307,34 @@ export const DeleteScanInParams = zod.object({
 
 
 /**
+ * @summary Complete scan-in session and create new session for same material/user
+ */
+export const CompleteAndContinueScanInParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const CompleteAndContinueScanInResponse = zod.object({
+  "id": zod.number(),
+  "materialId": zod.number(),
+  "materialName": zod.string(),
+  "boxLabel": zod.string(),
+  "status": zod.enum(['scanning', 'completed']),
+  "userId": zod.number(),
+  "userName": zod.string(),
+  "qrCodeData": zod.string().nullish(),
+  "createdAt": zod.string(),
+  "completedAt": zod.string().nullish(),
+  "items": zod.array(zod.object({
+  "id": zod.number(),
+  "serialNumber": zod.string(),
+  "scanInId": zod.number().nullish(),
+  "scanOutId": zod.number().nullish(),
+  "createdAt": zod.string()
+}))
+})
+
+
+/**
  * @summary Add a serial number to a scan-in session
  */
 export const AddScanInItemParams = zod.object({

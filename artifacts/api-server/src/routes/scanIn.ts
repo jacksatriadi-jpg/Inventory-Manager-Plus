@@ -174,6 +174,64 @@ router.delete("/scan-in/:id", async (req, res): Promise<void> => {
   res.sendStatus(204);
 });
 
+router.post("/scan-in/:id/complete-and-continue", async (req, res): Promise<void> => {
+  const params = UpdateScanInParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+
+  const [currentSession] = await db.select().from(scanInTable).where(eq(scanInTable.id, params.data.id));
+  if (!currentSession) {
+    res.status(404).json({ error: "ScanIn session not found" });
+    return;
+  }
+
+  if (currentSession.status !== "scanning") {
+    res.status(400).json({ error: "Session is not in scanning state" });
+    return;
+  }
+
+  try {
+    // Complete the current session
+    await db
+      .update(scanInTable)
+      .set({ status: "completed", completedAt: new Date() })
+      .where(eq(scanInTable.id, params.data.id));
+
+    // Get material info for box label generation
+    const [material] = await db.select().from(materialsTable).where(eq(materialsTable.id, currentSession.materialId));
+    if (!material) {
+      res.status(404).json({ error: "Material not found" });
+      return;
+    }
+
+    // Count ALL sessions for this material to get next sequential number
+    const allSessions = await db
+      .select()
+      .from(scanInTable)
+      .where(eq(scanInTable.materialId, currentSession.materialId));
+    const seqNum = (allSessions.length + 1).toString().padStart(3, "0");
+    const boxLabel = `${material.code}${seqNum}`;
+
+    // Create new session with same material and user
+    const [newScanIn] = await db
+      .insert(scanInTable)
+      .values({
+        materialId: currentSession.materialId,
+        boxLabel,
+        status: "scanning",
+        userId: currentSession.userId,
+      })
+      .returning();
+
+    const result = await buildScanInResponse(newScanIn);
+    res.status(201).json(result);
+  } catch {
+    res.status(500).json({ error: "Failed to complete and continue session" });
+  }
+});
+
 router.post("/scan-in/:id/items", async (req, res): Promise<void> => {
   const params = AddScanInItemParams.safeParse(req.params);
   if (!params.success) {

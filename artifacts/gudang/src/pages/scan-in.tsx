@@ -1,12 +1,12 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useListMaterials, useCreateScanIn, useUpdateScanIn, useAddScanInItem, useDeleteScanInItem, useDeleteScanIn, getListScanInQueryKey } from "@workspace/api-client-react";
+import { useListMaterials, useCreateScanIn, useUpdateScanIn, useAddScanInItem, useDeleteScanInItem, useDeleteScanIn, useCompleteAndContinueScanIn, getListScanInQueryKey } from "@workspace/api-client-react";
 import { useAuth } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { QrCode, Trash2, Camera, Keyboard, CheckCircle2, Play, Square, Loader2, XCircle, Printer } from "lucide-react";
+import { QrCode, Trash2, Camera, Keyboard, CheckCircle2, Play, Square, Loader2, XCircle, Printer, Plus } from "lucide-react";
 import { LabelPreviewDialog } from "@/components/label-preview-dialog";
 import { type LabelData } from "@/lib/print-label";
 import { format } from "date-fns";
@@ -58,6 +58,7 @@ export default function ScanInView() {
   const createScanInMutation = useCreateScanIn();
   const updateScanInMutation = useUpdateScanIn();
   const deleteScanInMutation = useDeleteScanIn();
+  const completeAndContinueMutation = useCompleteAndContinueScanIn();
   const addItemMutation = useAddScanInItem();
   const deleteItemMutation = useDeleteScanInItem();
 
@@ -182,26 +183,48 @@ export default function ScanInView() {
   };
 
   const handleCompleteSession = async () => {
-    if (!activeSession) return;
-    if (scannedItems.length === 0) {
-      toast({ title: "Belum ada item", description: "Scan minimal 1 item sebelum selesai.", variant: "destructive" });
-      return;
-    }
-    try {
-      await updateScanInMutation.mutateAsync({ id: activeSession.id, data: { status: "completed" } });
-      const qrText = scannedItems.map(i => i.serialNumber).join('\n');
-      const qrDataUrl = await QRCode.toDataURL(qrText, { errorCorrectionLevel: 'M', margin: 2, width: 300 });
-      setGeneratedQr(qrDataUrl);
-      localStorage.removeItem(SESSION_KEY);
-      queryClient.invalidateQueries({ queryKey: getListScanInQueryKey() });
-      toast({ title: "Sesi selesai", description: `${scannedItems.length} item berhasil discan.` });
-      stopCamera();
-    } catch {
-      toast({ title: "Gagal menyelesaikan", variant: "destructive" });
-    }
-  };
+      if (!activeSession) return;
+      if (scannedItems.length === 0) {
+        toast({ title: "Belum ada item", description: "Scan minimal 1 item sebelum selesai.", variant: "destructive" });
+        return;
+      }
+      try {
+        await updateScanInMutation.mutateAsync({ id: activeSession.id, data: { status: "completed" } });
+        const qrText = scannedItems.map(i => i.serialNumber).join('\\n');
+        const qrDataUrl = await QRCode.toDataURL(qrText, { errorCorrectionLevel: 'M', margin: 2, width: 300 });
+        setGeneratedQr(qrDataUrl);
+        localStorage.removeItem(SESSION_KEY);
+        queryClient.invalidateQueries({ queryKey: getListScanInQueryKey() });
+        toast({ title: "Sesi selesai", description: `${scannedItems.length} item berhasil discan.` });
+        stopCamera();
+      } catch {
+        toast({ title: "Gagal menyelesaikan", variant: "destructive" });
+      }
+    };
 
-  const handleReset = () => {
+    const handleCompleteAndContinue = async () => {
+      if (!activeSession) return;
+      if (scannedItems.length === 0) {
+        toast({ title: "Belum ada item", description: "Scan minimal 1 item sebelum lanjut.", variant: "destructive" });
+        return;
+      }
+      try {
+        const newSession = await completeAndContinueMutation.mutateAsync({ id: activeSession.id });
+        setActiveSession(newSession);
+        setScannedItems([]);
+        setGeneratedQr(null);
+        localStorage.setItem(SESSION_KEY, String(newSession.id));
+        queryClient.invalidateQueries({ queryKey: getListScanInQueryKey() });
+        toast({ title: "Box selesai, sesi baru dimulai", description: `Box ${newSession.boxLabel} siap untuk scan.` });
+        if (scanMethod === "manual") {
+          setTimeout(() => inputRef.current?.focus(), 100);
+        }
+      } catch {
+        toast({ title: "Gagal lanjut sesi", variant: "destructive" });
+      }
+    };
+
+    const handleReset = () => {
     setActiveSession(null);
     setScannedItems([]);
     setGeneratedQr(null);
@@ -465,6 +488,14 @@ export default function ScanInView() {
                 >
                   {updateScanInMutation.isPending ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Square className="w-5 h-5 mr-2 fill-current" />}
                   Selesaikan Box
+                </Button>
+                <Button
+                  onClick={handleCompleteAndContinue}
+                  disabled={scannedItems.length === 0 || completeAndContinueMutation.isPending || deleteScanInMutation.isPending}
+                  className="w-full h-12 uppercase tracking-wide font-bold bg-primary hover:bg-primary/90 text-primary-foreground"
+                >
+                  {completeAndContinueMutation.isPending ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Plus className="w-5 h-5 mr-2" />}
+                  Selesaikan Box dan Lanjut Sesi
                 </Button>
                 <Button
                   variant="outline"
