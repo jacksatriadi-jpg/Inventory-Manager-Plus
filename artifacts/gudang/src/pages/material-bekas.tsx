@@ -506,7 +506,7 @@ export default function MaterialBekas() {
                   <SelectTrigger>
                     <SelectValue placeholder="Pilih material MCB..." />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="max-h-80 min-w-[20rem]">
                     {mcbMaterials.map((m) => (
                       <SelectItem key={m.id} value={m.id.toString()}>
                         {m.name} ({m.code})
