@@ -164,53 +164,76 @@ export default function Riwayat() {
       toast({ title: "Tidak ada data", variant: "destructive" }); return;
     }
     const rows: object[] = [];
+    let rowNumber = 0;
     effectiveRecords.forEach(h => {
       const isNonScan = h.source === "non-scan";
       const count  = isNonScan ? (h.count ?? 0) : h.serialNumbers.length;
       const satuan = isNonScan ? (h.satuan ?? "") : "";
-      if (isNonScan) {
+      const tipe   = isNonScan
+        ? (h.type === "in" ? "Material Masuk" : "Material Keluar")
+        : (h.type === "in" ? "Scan Masuk" : "Scan Keluar");
+      const sumber = isNonScan ? "Non-Scan" : "Scan";
+      const tanggal = format(new Date(h.createdAt), "yyyy-MM-dd HH:mm:ss");
+      const material = h.materialName || "-";
+      const boxLabel = isNonScan ? "-" : (h.boxLabel || "-");
+      const jumlah   = isNonScan ? `${count} ${satuan}` : `${count}`;
+      const operator = h.userName;
+      const materialCode = h.materialCode || "-";
+
+      if (isNonScan || h.serialNumbers.length === 0) {
+        rowNumber++;
         rows.push({
-          Tipe: h.type === "in" ? "Material Masuk" : "Material Keluar",
-          Sumber: "Non-Scan",
-          Tanggal: format(new Date(h.createdAt), "yyyy-MM-dd HH:mm:ss"),
-          Material: h.materialName || "-",
-          BoxLabel: "-",
-          Jumlah: `${count} ${satuan}`,
-          Operator: h.userName,
-          SerialNumber: "-",
-        });
-      } else if (h.serialNumbers.length === 0) {
-        rows.push({
-          Tipe: h.type === "in" ? "Scan Masuk" : "Scan Keluar",
-          Sumber: "Scan",
-          Tanggal: format(new Date(h.createdAt), "yyyy-MM-dd HH:mm:ss"),
-          Material: h.materialName || "-",
-          BoxLabel: h.boxLabel || "-",
-          Jumlah: `${count}`,
-          Operator: h.userName,
-          SerialNumber: "-",
+          No: rowNumber,
+          Tipe: tipe,
+          Sumber: sumber,
+          Tanggal: tanggal,
+          "Kode Material": materialCode,
+          Material: material,
+          BoxLabel: boxLabel,
+          Jumlah: jumlah,
+          Satuan: isNonScan ? satuan : "item",
+          Operator: operator,
+          "Serial Number": "-",
         });
       } else {
-        h.serialNumbers.forEach((sn, idx) => {
+        h.serialNumbers.forEach((sn) => {
+          rowNumber++;
           rows.push({
-            Tipe:   idx === 0 ? (h.type === "in" ? "Scan Masuk" : "Scan Keluar") : "",
-            Sumber: idx === 0 ? "Scan" : "",
-            Tanggal: idx === 0 ? format(new Date(h.createdAt), "yyyy-MM-dd HH:mm:ss") : "",
-            Material: idx === 0 ? (h.materialName || "-") : "",
-            BoxLabel: idx === 0 ? (h.boxLabel || "-") : "",
-            Jumlah:   idx === 0 ? `${count}` : "",
-            Operator: idx === 0 ? h.userName : "",
-            SerialNumber: sn,
+            No: rowNumber,
+            Tipe: tipe,
+            Sumber: sumber,
+            Tanggal: tanggal,
+            "Kode Material": materialCode,
+            Material: material,
+            BoxLabel: boxLabel,
+            Jumlah: jumlah,
+            Satuan: "item",
+            Operator: operator,
+            "Serial Number": sn,
           });
         });
       }
     });
     const ws = XLSX.utils.json_to_sheet(rows);
-    ws["!cols"] = [{ wch: 16 }, { wch: 10 }, { wch: 22 }, { wch: 20 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 30 }];
+    // Kolom: No, Tipe, Sumber, Tanggal, Kode Material, Material, BoxLabel, Jumlah, Satuan, Operator, Serial Number
+    ws["!cols"] = [
+      { wch: 6 },   // No
+      { wch: 16 },  // Tipe
+      { wch: 10 },  // Sumber
+      { wch: 20 },  // Tanggal
+      { wch: 18 },  // Kode Material
+      { wch: 28 },  // Material
+      { wch: 18 },  // BoxLabel
+      { wch: 12 },  // Jumlah
+      { wch: 10 },  // Satuan
+      { wch: 16 },  // Operator
+      { wch: 32 },  // Serial Number
+    ];
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Riwayat");
-    XLSX.writeFile(wb, `Riwayat_MIG_${format(new Date(), "yyyyMMdd")}.xlsx`);
-    toast({ title: "Export Excel berhasil", description: `${effectiveRecords.length} record.` });
+    const sheetName = `Riwayat_${format(new Date(), "yyyyMMdd_HHmm")}`;
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    XLSX.writeFile(wb, `Riwayat_MIG_${format(new Date(), "yyyyMMdd_HHmm")}.xlsx`);
+    toast({ title: "Export Excel berhasil", description: `${effectiveRecords.length} record (${rows.length} baris).` });
   };
 
   const handleExportPDF = () => {
