@@ -49,8 +49,8 @@ export async function getSheetStockMap(
     range: dataRange,
   });
 
-  // Read timestamp from cell J7
-  const tsRange = sheetName ? `${sheetName}!J7:J7` : "J7:J7";
+  // Read timestamp from cell K7
+  const tsRange = sheetName ? `${sheetName}!K7:K7` : "K7:K7";
   const tsResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: tsRange,
