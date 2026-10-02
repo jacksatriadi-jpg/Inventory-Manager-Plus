@@ -42,8 +42,8 @@ export async function getSheetStockMap(
 
   const sheets = google.sheets({ version: "v4", auth: client });
 
-  // Read columns C (material name) and J (stock value) from row 9 onward
-  const dataRange = sheetName ? `${sheetName}!C9:J1000` : "C9:J1000";
+  // Read columns C (material name) and K (stock value) from row 9 onward
+  const dataRange = sheetName ? `${sheetName}!C9:K1000` : "C9:K1000";
   const dataResponse = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: dataRange,
@@ -66,10 +66,10 @@ export async function getSheetStockMap(
   const stockMap = new Map<string, number>();
 
   for (const row of rows) {
-    // Column C = index 0 (material name), Column J = index 7 (stock value)
-    // Range C:J → C=0, D=1, E=2, F=3, G=4, H=5, I=6, J=7
+    // Column C = index 0 (material name), Column K = index 8 (stock value)
+    // Range C:K → C=0, D=1, E=2, F=3, G=4, H=5, I=6, J=7, K=8
     const materialName = row[0]?.trim();
-    const stockValue = row[7];
+    const stockValue = row[8];
 
     if (materialName && stockValue !== undefined && stockValue !== null && stockValue !== "") {
       // Handle Indonesian number format: "1.500" → 1500
