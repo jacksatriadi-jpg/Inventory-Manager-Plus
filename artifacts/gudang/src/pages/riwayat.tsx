@@ -93,7 +93,9 @@ export default function Riwayat() {
         (h.materialCode ?? "").toLowerCase().includes(q) ||
         (h.materialName ?? "").toLowerCase().includes(q) ||
         (h.boxLabel     ?? "").toLowerCase().includes(q) ||
-        (h.userName     ?? "").toLowerCase().includes(q),
+        (h.userName     ?? "").toLowerCase().includes(q) ||
+        // Cari per Serial Number: tampilkan box & material tempat SN tersebut berada
+        (h.serialNumbers ?? []).some(sn => sn.toLowerCase().includes(q)),
       );
     }
     return result;
@@ -615,7 +617,7 @@ export default function Riwayat() {
             <div className="relative w-full max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
               <Input
-                placeholder="Cari material, box, operator..."
+                placeholder="Cari material, box, operator, SN..."
                 value={searchQuery}
                 onChange={e => { setSearchQuery(e.target.value); setSelectedIds(new Set()); resetPage(); }}
                 className="pl-9 pr-9 h-9"
