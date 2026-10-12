@@ -13,8 +13,13 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import { Wallet, ArrowDownCircle, ArrowUpCircle, Trash2, Camera, Loader2, ScanText, ImageOff, RefreshCw } from "lucide-react";
+import {
+  Wallet, ArrowDownCircle, ArrowUpCircle, Trash2, Camera, Loader2, ScanText, ImageOff, RefreshCw,
+  FileDown, Printer, Clock, Pencil, UserPlus, MapPin, Smile,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import * as XLSX from "xlsx";
+import jsPDF from "jspdf";
 
 interface KasRecord {
   id: number;
@@ -95,6 +100,15 @@ export default function KasGudang() {
   const [buktiView, setBuktiView] = useState<number | null>(null);
   const [buktiData, setBuktiData] = useState<string | null>(null);
 
+  // ── Lembur ──
+  const [view, setView]                   = useState<"kas" | "lembur">("kas");
+  const [karyawan, setKaryawan]           = useState<{ id: number; nama: string }[]>([]);
+  const [absensi, setAbsensi]             = useState<any[]>([]);
+  const [tglLembur, setTglLembur]         = useState(() => new Date().toISOString().slice(0, 10));
+  const [editKaryawan, setEditKaryawan]   = useState<{ id: number; nama: string } | null>(null);
+  const [newKaryawan, setNewKaryawan]     = useState("");
+  const [feeInputs, setFeeInputs]         = useState<Record<number, string>>({});
+
   const loadData = useCallback(async () => {
     try {
       const [sumRes, recRes] = await Promise.all([
@@ -107,6 +121,128 @@ export default function KasGudang() {
   }, [search]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const loadLembur = useCallback(async () => {
+    try {
+      const [kRes, aRes] = await Promise.all([
+        fetch("/api/kas/lembur/karyawan"),
+        fetch("/api/kas/lembur/absensi"),
+      ]);
+      if (kRes.ok) setKaryawan(await kRes.json());
+      if (aRes.ok) setAbsensi(await aRes.json());
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => { loadLembur(); }, [loadLembur]);
+
+  // ── handler lembur ──
+  const toggleAbsen = async (karyawanId: number, jenis: "gps" | "wajah") => {
+    const existing = absensi.find(a => a.karyawanId === karyawanId && a.tanggal === tglLembur);
+    if (existing) {
+      const res = await fetch(`/api/kas/lembur/absensi/${existing.id}`, { method: "DELETE" });
+      if (res.ok) { toast({ title: "Absensi dibatalkan" }); loadLembur(); loadData(); }
+      return;
+    }
+    const res = await fetch("/api/kas/lembur/absensi", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ karyawanId, tanggal: tglLembur, jenis }),
+    });
+    if (res.ok) { toast({ title: "Absensi lembur tercatat" }); loadLembur(); }
+    else { const d = await res.json().catch(() => ({})); toast({ title: "Gagal", description: d.error, variant: "destructive" }); }
+  };
+
+  const saveFee = async (id: number) => {
+    const raw = feeInputs[id];
+    const fee = raw === "" || raw === undefined ? null : Number(raw);
+    const res = await fetch(`/api/kas/lembur/absensi/${id}`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fee, userId: user?.id }),
+    });
+    if (res.ok) { toast({ title: "Fee tersimpan", description: fee ? fmt(fee) + " tercatat sebagai kas keluar" : "Fee dihapus" }); loadLembur(); loadData(); }
+    else toast({ title: "Gagal menyimpan fee", variant: "destructive" });
+  };
+
+  const saveKaryawan = async (id: number | null, nama: string) => {
+    const res = await fetch(id ? `/api/kas/lembur/karyawan/${id}` : "/api/kas/lembur/karyawan", {
+      method: id ? "PUT" : "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nama }),
+    });
+    if (res.ok) { toast({ title: id ? "Nama diperbarui" : "Karyawan ditambahkan" }); setEditKaryawan(null); setNewKaryawan(""); loadLembur(); }
+    else { const d = await res.json().catch(() => ({})); toast({ title: "Gagal", description: d.error, variant: "destructive" }); }
+  };
+
+  // ── export mutasi kas ──
+  const exportColumns = [
+    { key: "tanggal", label: "Tanggal", w: 18 },
+    { key: "tipe", label: "Tipe", w: 8 },
+    { key: "metode", label: "Metode", w: 8 },
+    { key: "keterangan", label: "Keterangan", w: 34 },
+    { key: "jumlah", label: "Nominal", w: 16 },
+    { key: "operator", label: "Operator", w: 14 },
+  ];
+  const exportRows = () => records.map(r => ({
+    tanggal: new Date(r.createdAt).toLocaleString("id-ID"),
+    tipe: r.tipe.toUpperCase(),
+    metode: r.metode === "ocr" ? "Auto-OCR" : "Manual",
+    keterangan: r.keterangan ?? "-",
+    jumlah: (r.tipe === "masuk" ? "+" : "-") + new Intl.NumberFormat("id-ID").format(r.jumlah),
+    operator: r.userName,
+  }));
+
+  const handleExportExcel = () => {
+    if (records.length === 0) { toast({ title: "Tidak ada data", variant: "destructive" }); return; }
+    const aoa: (string | number)[][] = [
+      ["Laporan Mutasi Kas Gudang"],
+      [`Dicetak: ${new Date().toLocaleString("id-ID")}  |  ${records.length} transaksi`],
+      [],
+      exportColumns.map(c => c.label),
+      ...exportRows().map(r => [r.tanggal, r.tipe, r.metode, r.keterangan, r.jumlah, r.operator]),
+      [],
+      ["Total Kas Masuk", "", "", "", new Intl.NumberFormat("id-ID").format(summary?.totalMasuk ?? 0)],
+      ["Total Kas Keluar", "", "", "", new Intl.NumberFormat("id-ID").format(summary?.totalKeluar ?? 0)],
+      ["Saldo", "", "", "", new Intl.NumberFormat("id-ID").format(summary?.saldo ?? 0)],
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(aoa);
+    ws["!cols"] = exportColumns.map(c => ({ wch: c.w }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Mutasi Kas");
+    XLSX.writeFile(wb, `mutasi-kas-gudang-${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  const handleExportPDF = () => {
+    if (records.length === 0) { toast({ title: "Tidak ada data", variant: "destructive" }); return; }
+    const doc = new jsPDF();
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
+    const margin = 12;
+    doc.setFontSize(14); doc.setFont("helvetica", "bold");
+    doc.text("Laporan Mutasi Kas Gudang", margin, 16);
+    doc.setFontSize(8); doc.setFont("helvetica", "normal"); doc.setTextColor(100);
+    doc.text(`Dicetak: ${new Date().toLocaleString("id-ID")}  |  ${records.length} transaksi`, margin, 22);
+    doc.setTextColor(0);
+    const colX = [margin, margin + 32, margin + 46, margin + 58, pageW - margin - 32, pageW - margin - 16];
+    let y = 30;
+    doc.setFontSize(8); doc.setFont("helvetica", "bold");
+    ["Tanggal", "Tipe", "Metode", "Keterangan", "Nominal", "Operator"].forEach((h, i) => doc.text(h, colX[i], y));
+    y += 2; doc.setLineWidth(0.2); doc.line(margin, y, pageW - margin, y); y += 4;
+    doc.setFont("helvetica", "normal");
+    for (const r of exportRows()) {
+      if (y > pageH - 15) { doc.addPage(); y = 16; }
+      const ket = doc.splitTextToSize(r.keterangan, pageW - margin - 16 - (colX[3]) - 2)[0] ?? "";
+      doc.text(r.tanggal, colX[0], y);
+      doc.text(r.tipe, colX[1], y);
+      doc.text(r.metode, colX[2], y);
+      doc.text(ket, colX[3], y);
+      doc.text(r.jumlah, colX[4], y);
+      doc.text(r.operator, colX[5], y);
+      y += 5;
+    }
+    y += 2; doc.setLineWidth(0.3); doc.line(margin, y, pageW - margin, y); y += 5;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+    doc.text(`Total Kas Masuk: ${fmt(summary?.totalMasuk ?? 0)}`, margin, y); y += 5;
+    doc.text(`Total Kas Keluar: ${fmt(summary?.totalKeluar ?? 0)}`, margin, y); y += 5;
+    doc.text(`Saldo: ${fmt(summary?.saldo ?? 0)}`, margin, y);
+    doc.save(`mutasi-kas-gudang-${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
 
   const handleFile = (file: File | null) => {
     if (!file) return;
@@ -213,6 +349,7 @@ export default function KasGudang() {
       </div>
 
       {/* Form input */}
+      {view === "kas" && (<>
       <Card>
         <CardHeader><CardTitle className="text-base">Catat Transaksi</CardTitle></CardHeader>
         <CardContent className="space-y-4">
@@ -222,6 +359,9 @@ export default function KasGudang() {
             </Button>
             <Button variant={tipe === "keluar" ? "default" : "outline"} className={tipe === "keluar" ? "bg-red-600 hover:bg-red-700" : ""} onClick={() => setTipe("keluar")}>
               <ArrowUpCircle className="w-4 h-4 mr-2" /> Kas Keluar
+            </Button>
+            <Button variant={view === "lembur" ? "default" : "outline"} className={view === "lembur" ? "bg-amber-600 hover:bg-amber-700" : ""} onClick={() => setView(view === "lembur" ? "kas" : "lembur")}>
+              <Clock className="w-4 h-4 mr-2" /> Lembur
             </Button>
             <div className="flex-1" />
             <Button variant={metode === "manual" ? "secondary" : "ghost"} size="sm" onClick={() => setMetode("manual")}>Manual</Button>
@@ -283,6 +423,8 @@ export default function KasGudang() {
           <CardTitle className="text-base">Riwayat Transaksi Kas</CardTitle>
           <div className="flex gap-2">
             <Input placeholder="Cari keterangan/operator..." value={search} onChange={e => setSearch(e.target.value)} className="h-9 w-56" />
+            <Button variant="outline" size="sm" onClick={handleExportExcel}><FileDown className="w-4 h-4 mr-1.5" /> Excel</Button>
+            <Button variant="outline" size="sm" onClick={handleExportPDF}><Printer className="w-4 h-4 mr-1.5" /> PDF</Button>
             <Button variant="outline" size="sm" onClick={loadData}><RefreshCw className="w-4 h-4" /></Button>
           </div>
         </CardHeader>
@@ -336,6 +478,137 @@ export default function KasGudang() {
           )}
         </CardContent>
       </Card>
+
+      </>)}
+
+      {/* ═══ PANEL LEMBUR ═══ */}
+      {view === "lembur" && (<>
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardTitle className="text-base flex items-center gap-2"><Clock className="w-4 h-4 text-amber-600" /> Absensi Lembur (Sabtu/Minggu)</CardTitle>
+            <div className="flex items-center gap-2">
+              <Label className="text-sm text-muted-foreground">Tanggal:</Label>
+              <Input type="date" value={tglLembur} onChange={e => setTglLembur(e.target.value)} className="h-9 w-40" />
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Tanggal terpilih: <b>{new Date(tglLembur + "T00:00:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</b>
+              {(() => { const d = new Date(tglLembur + "T00:00:00").getDay(); return d !== 0 && d !== 6 ? <span className="text-amber-600"> — bukan hari Sabtu/Minggu</span> : null; })()}
+              {" "}· klik <MapPin className="w-3.5 h-3.5 inline" /> GPS atau <Smile className="w-3.5 h-3.5 inline" /> Wajah untuk mencatat absensi. Fee diisi bendahara dan otomatis tercatat sebagai kas keluar.
+            </p>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Karyawan</TableHead>
+                  <TableHead className="text-center">Absen GPS</TableHead>
+                  <TableHead className="text-center">Absen Wajah</TableHead>
+                  <TableHead className="text-right">Fee Lembur (Rp)</TableHead>
+                  <TableHead className="text-right">Aksi</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {karyawan.length === 0 && (
+                  <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">Belum ada karyawan. Tambahkan di bawah.</TableCell></TableRow>
+                )}
+                {karyawan.map(k => {
+                  const rec = absensi.find(a => a.karyawanId === k.id && a.tanggal === tglLembur);
+                  const feeVal = feeInputs[rec?.id] ?? (rec?.fee != null ? String(rec.fee) : "");
+                  return (
+                    <TableRow key={k.id}>
+                      <td className="font-medium">{k.nama}</td>
+                      <td className="text-center">
+                        <Button variant={rec?.jenis === "gps" ? "default" : "ghost"} size="sm"
+                          className={rec?.jenis === "gps" ? "bg-green-600 hover:bg-green-700" : "text-muted-foreground"}
+                          onClick={() => toggleAbsen(k.id, "gps")}>
+                          <MapPin className="w-4 h-4" />
+                        </Button>
+                      </td>
+                      <td className="text-center">
+                        <Button variant={rec?.jenis === "wajah" ? "default" : "ghost"} size="sm"
+                          className={rec?.jenis === "wajah" ? "bg-blue-600 hover:bg-blue-700" : "text-muted-foreground"}
+                          onClick={() => toggleAbsen(k.id, "wajah")}>
+                          <Smile className="w-4 h-4" />
+                        </Button>
+                      </td>
+                      <td className="text-right">
+                        {rec ? (
+                          <div className="flex items-center justify-end gap-2">
+                            <Input inputMode="numeric" placeholder="0" className="h-8 w-32 text-right"
+                              value={feeVal} onChange={e => setFeeInputs(p => ({ ...p, [rec.id]: e.target.value.replace(/[^\d]/g, "") }))} />
+                            <Button variant="outline" size="sm" onClick={() => saveFee(rec.id)}>Simpan</Button>
+                          </div>
+                        ) : <span className="text-muted-foreground text-xs">-</span>}
+                      </td>
+                      <td className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button variant="ghost" size="sm" onClick={() => setEditKaryawan({ id: k.id, nama: k.nama })}><Pencil className="w-4 h-4" /></Button>
+                          {rec && <Button variant="ghost" size="sm" className="text-destructive" onClick={() => toggleAbsen(k.id, rec.jenis)}><Trash2 className="w-4 h-4" /></Button>}
+                        </div>
+                      </td>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+            <div className="flex gap-2 items-end">
+              <div className="space-y-1">
+                <Label className="text-sm">Tambah karyawan</Label>
+                <Input placeholder="Nama karyawan..." value={newKaryawan} onChange={e => setNewKaryawan(e.target.value)} className="h-9 w-56" />
+              </div>
+              <Button variant="outline" onClick={() => newKaryawan.trim() && saveKaryawan(null, newKaryawan.trim())}>
+                <UserPlus className="w-4 h-4 mr-2" /> Tambah
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle className="text-base">Riwayat Absensi Lembur</CardTitle></CardHeader>
+          <CardContent>
+            {absensi.length === 0 ? <p className="text-center text-muted-foreground py-6">Belum ada absensi lembur.</p> : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Tanggal</TableHead>
+                    <TableHead>Karyawan</TableHead>
+                    <TableHead className="text-center">Jenis</TableHead>
+                    <TableHead className="text-right">Fee</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {absensi.map(a => (
+                    <TableRow key={a.id}>
+                      <td className="whitespace-nowrap text-sm">{new Date(a.tanggal + "T00:00:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</td>
+                      <td className="font-medium">{a.karyawan}</td>
+                      <td className="text-center">
+                        <Badge variant="outline" className={a.jenis === "gps" ? "text-green-600 border-green-600" : "text-blue-600 border-blue-600"}>
+                          {a.jenis === "gps" ? <MapPin className="w-3 h-3 mr-1" /> : <Smile className="w-3 h-3 mr-1" />}{a.jenis.toUpperCase()}
+                        </Badge>
+                      </td>
+                      <td className="text-right whitespace-nowrap">{a.fee != null ? <span className="text-red-600 font-semibold">{fmt(a.fee)}</span> : <span className="text-muted-foreground text-xs">belum diinput</span>}</td>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      </>)}
+
+      {/* Dialog edit nama karyawan */}
+      <Dialog open={editKaryawan !== null} onOpenChange={open => { if (!open) setEditKaryawan(null); }}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Edit Nama Karyawan</DialogTitle></DialogHeader>
+          {editKaryawan && (<>
+            <Input value={editKaryawan.nama} onChange={e => setEditKaryawan({ ...editKaryawan, nama: e.target.value })} />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setEditKaryawan(null)}>Batal</Button>
+              <Button onClick={() => editKaryawan.nama.trim() && saveKaryawan(editKaryawan.id, editKaryawan.nama.trim())}>Simpan</Button>
+            </div>
+          </>)}
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog lihat bukti */}
       <Dialog open={buktiView !== null} onOpenChange={open => { if (!open) { setBuktiView(null); setBuktiData(null); } }}>

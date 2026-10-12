@@ -111,4 +111,133 @@ router.delete("/kas/transaksi/:id", async (req, res): Promise<void> => {
   res.status(404).json({ error: "Transaksi tidak ditemukan" });
 });
 
+// ═══ LEMBUR: karyawan ═══════════════════════════════════════════════════
+router.get("/kas/lembur/karyawan", async (_req, res): Promise<void> => {
+  const result = await pool.query(
+    `SELECT id, nama FROM lembur_karyawan ORDER BY id`);
+  res.json(result.rows);
+});
+
+router.post("/kas/lembur/karyawan", async (req, res): Promise<void> => {
+  const nama = typeof req.body?.nama === "string" ? req.body.nama.trim() : "";
+  if (!nama) { res.status(400).json({ error: "Nama karyawan wajib diisi" }); return; }
+  const result = await pool.query("INSERT INTO lembur_karyawan (nama) VALUES ($1) RETURNING id, nama", [nama]);
+  res.status(201).json(result.rows[0]);
+});
+
+router.put("/kas/lembur/karyawan/:id", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  const nama = typeof req.body?.nama === "string" ? req.body.nama.trim() : "";
+  if (!Number.isInteger(id) || !nama) { res.status(400).json({ error: "Data tidak valid" }); return; }
+  const result = await pool.query("UPDATE lembur_karyawan SET nama = $1 WHERE id = $2 RETURNING id, nama", [nama, id]);
+  if (result.rowCount === 0) { res.status(404).json({ error: "Karyawan tidak ditemukan" }); return; }
+  res.json(result.rows[0]);
+});
+
+router.delete("/kas/lembur/karyawan/:id", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
+  try {
+    const result = await pool.query("DELETE FROM lembur_karyawan WHERE id = $1 RETURNING id", [id]);
+    if (result.rowCount && result.rowCount > 0) { res.sendStatus(204); return; }
+    res.status(404).json({ error: "Karyawan tidak ditemukan" });
+  } catch {
+    res.status(400).json({ error: "Tidak bisa dihapus — masih punya riwayat absensi lembur" });
+  }
+});
+
+// ═══ LEMBUR: absensi ════════════════════════════════════════════════════
+router.get("/kas/lembur/absensi", async (req, res): Promise<void> => {
+  const from = typeof req.query.from === "string" ? req.query.from : null;
+  const to   = typeof req.query.to   === "string" ? req.query.to   : null;
+  const args: any[] = [];
+  const conds: string[] = [];
+  if (from) { args.push(from); conds.push(`la.tanggal >= $${args.length}`); }
+  if (to)   { args.push(to);   conds.push(`la.tanggal <= $${args.length}`); }
+  const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
+  const result = await pool.query(
+    `SELECT la.id, la.karyawan_id, lk.nama AS karyawan, la.tanggal, la.jenis,
+            la.fee, la.kas_transaksi_id, la.created_at
+     FROM lembur_absensi la
+     JOIN lembur_karyawan lk ON lk.id = la.karyawan_id
+     ${where}
+     ORDER BY la.tanggal DESC, lk.nama
+     LIMIT 1000`,
+    args,
+  );
+  res.json(result.rows.map(r => ({
+    id: r.id, karyawanId: r.karyawan_id, karyawan: r.nama, tanggal: r.tanggal,
+    jenis: r.jenis, fee: r.fee === null ? null : Number(r.fee),
+    kasTransaksiId: r.kas_transaksi_id,
+    createdAt: new Date(r.created_at).toISOString(),
+  })));
+});
+
+router.post("/kas/lembur/absensi", async (req, res): Promise<void> => {
+  const { karyawanId, tanggal, jenis } = req.body ?? {};
+  if (!Number.isInteger(karyawanId)) { res.status(400).json({ error: "Karyawan tidak valid" }); return; }
+  if (typeof tanggal !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) { res.status(400).json({ error: "Tanggal tidak valid (YYYY-MM-DD)" }); return; }
+  if (!["gps", "wajah"].includes(jenis)) { res.status(400).json({ error: "Jenis absensi harus 'gps' atau 'wajah'" }); return; }
+  try {
+    const result = await pool.query(
+      `INSERT INTO lembur_absensi (karyawan_id, tanggal, jenis) VALUES ($1, $2, $3)
+       ON CONFLICT (karyawan_id, tanggal) DO NOTHING RETURNING id`,
+      [karyawanId, tanggal, jenis],
+    );
+    if (result.rowCount === 0) { res.status(409).json({ error: "Karyawan ini sudah tercatat absen pada tanggal tersebut" }); return; }
+    res.status(201).json({ id: result.rows[0].id });
+  } catch (err) {
+    logger.error({ err }, "Lembur: gagal mencatat absensi");
+    res.status(500).json({ error: "Gagal mencatat absensi" });
+  }
+});
+
+// Input/ubah fee → otomatis jadi kas keluar (dibuat/di-update)
+router.put("/kas/lembur/absensi/:id", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
+  const feeRaw = req.body?.fee;
+  const fee = feeRaw === null || feeRaw === "" || feeRaw === undefined ? null : Number(feeRaw);
+  if (fee !== null && (!Number.isFinite(fee) || fee < 0)) { res.status(400).json({ error: "Fee tidak valid" }); return; }
+
+  const cur = await pool.query(
+    `SELECT la.*, lk.nama AS karyawan FROM lembur_absensi la
+     JOIN lembur_karyawan lk ON lk.id = la.karyawan_id WHERE la.id = $1`, [id]);
+  if (cur.rowCount === 0) { res.status(404).json({ error: "Absensi tidak ditemukan" }); return; }
+  const row = cur.rows[0];
+
+  try {
+    if (fee === null) {
+      // fee dihapus → hapus kas keluar terkait
+      if (row.kas_transaksi_id) await pool.query("DELETE FROM kas_transaksi WHERE id = $1", [row.kas_transaksi_id]);
+      await pool.query("UPDATE lembur_absensi SET fee = NULL, kas_transaksi_id = NULL WHERE id = $1", [id]);
+      res.json({ id, fee: null }); return;
+    }
+    const ket = `Fee lembur ${row.nama} (${row.tanggal})`;
+    if (row.kas_transaksi_id) {
+      await pool.query("UPDATE kas_transaksi SET jumlah = $1, keterangan = $2 WHERE id = $3", [Math.round(fee), ket, row.kas_transaksi_id]);
+    } else {
+      const ins = await pool.query(
+        `INSERT INTO kas_transaksi (tipe, metode, jumlah, keterangan, user_id)
+         VALUES ('keluar', 'manual', $1, $2, $3) RETURNING id`,
+        [Math.round(fee), ket, Number.isInteger(Number(req.body?.userId)) ? Number(req.body.userId) : 1]);
+      await pool.query("UPDATE lembur_absensi SET fee = $1, kas_transaksi_id = $2 WHERE id = $3", [Math.round(fee), ins.rows[0].id, id]);
+    }
+    res.json({ id, fee: Math.round(fee) });
+  } catch (err) {
+    logger.error({ err }, "Lembur: gagal menyimpan fee");
+    res.status(500).json({ error: "Gagal menyimpan fee" });
+  }
+});
+
+router.delete("/kas/lembur/absensi/:id", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
+  const cur = await pool.query("SELECT kas_transaksi_id FROM lembur_absensi WHERE id = $1", [id]);
+  if (cur.rowCount === 0) { res.status(404).json({ error: "Absensi tidak ditemukan" }); return; }
+  if (cur.rows[0].kas_transaksi_id) await pool.query("DELETE FROM kas_transaksi WHERE id = $1", [cur.rows[0].kas_transaksi_id]);
+  await pool.query("DELETE FROM lembur_absensi WHERE id = $1", [id]);
+  res.sendStatus(204);
+});
+
 export default router;

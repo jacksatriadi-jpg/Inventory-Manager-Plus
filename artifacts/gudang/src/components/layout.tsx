@@ -41,6 +41,8 @@ export function Layout({ children }: LayoutProps) {
   const menuItems = isGuest
     ? ALL_MENUS.filter(m => ["/dashboard", "/riwayat"].includes(m.href))
     : ALL_MENUS.filter(menu => {
+        // Kas Gudang khusus untuk user Bendahara
+        if (menu.href === "/kas-gudang") return user?.role === "bendahara";
         // Master sees all menus
         if (isAdmin) return true;
         // For regular users, check menuAccess

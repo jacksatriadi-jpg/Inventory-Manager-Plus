@@ -16,3 +16,22 @@ export const kasTransaksiTable = pgTable("kas_transaksi", {
 });
 
 export type KasTransaksi = typeof kasTransaksiTable.$inferSelect;
+
+// ─── Lembur: karyawan tetap untuk absensi lembur Sabtu/Minggu ─────────────
+export const lemburKaryawanTable = pgTable("lembur_karyawan", {
+  id: serial("id").primaryKey(),
+  nama: text("nama").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ─── Lembur: absensi lembur per karyawan per tanggal ──────────────────────
+// jenis: 'gps' | 'wajah' ; fee diisi bendahara → otomatis jadi kas keluar
+export const lemburAbsensiTable = pgTable("lembur_absensi", {
+  id: serial("id").primaryKey(),
+  karyawanId: integer("karyawan_id").notNull().references(() => lemburKaryawanTable.id),
+  tanggal: text("tanggal").notNull(), // YYYY-MM-DD
+  jenis: text("jenis").notNull().default("gps"),
+  fee: bigint("fee", { mode: "number" }),
+  kasTransaksiId: integer("kas_transaksi_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});

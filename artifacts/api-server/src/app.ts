@@ -97,6 +97,23 @@ async function setupDatabase() {
         user_id INTEGER NOT NULL REFERENCES users(id),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
+
+      CREATE TABLE IF NOT EXISTS lembur_karyawan (
+        id SERIAL PRIMARY KEY,
+        nama TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS lembur_absensi (
+        id SERIAL PRIMARY KEY,
+        karyawan_id INTEGER NOT NULL REFERENCES lembur_karyawan(id),
+        tanggal TEXT NOT NULL,
+        jenis TEXT NOT NULL DEFAULT 'gps',
+        fee BIGINT,
+        kas_transaksi_id INTEGER,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (karyawan_id, tanggal)
+      );
     `);
 
     // Migrate: tambah kolom baru jika belum ada (aman untuk database lama)

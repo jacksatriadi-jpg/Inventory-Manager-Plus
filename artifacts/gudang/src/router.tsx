@@ -53,7 +53,7 @@ export default function AppRouter() {
             <Route path="/backup" component={() => <ProtectedRoute component={Backup} roles={["master"]} />} />
             <Route path="/barcode-tools" component={() => <ProtectedRoute component={BarcodeTools} roles={["user", "master"]} />} />
             <Route path="/material-bekas" component={() => <ProtectedRoute component={MaterialBekas} roles={["user", "master"]} />} />
-            <Route path="/kas-gudang" component={() => <ProtectedRoute component={KasGudang} roles={["user", "master"]} />} />
+            <Route path="/kas-gudang" component={() => <ProtectedRoute component={KasGudang} roles={["bendahara"]} />} />
             <Route>404 Not Found</Route>
           </Switch>
         </Layout>
