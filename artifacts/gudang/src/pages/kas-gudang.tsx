@@ -135,18 +135,116 @@ export default function KasGudang() {
   useEffect(() => { loadLembur(); }, [loadLembur]);
 
   // ── handler lembur ──
-  const toggleAbsen = async (karyawanId: number, jenis: "gps" | "wajah") => {
+  const [selfieDialog, setSelfieDialog] = useState<{ karyawanId: number; nama: string } | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+
+  const getBrowserLocation = (): Promise<{ lat: number; lng: number }> => new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error("Browser tidak mendukung GPS")); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      err => reject(new Error(err.message === "User denied Geolocation" ? "Izin GPS ditolak — izinkan lokasi di browser" : "Gagal membaca GPS: " + err.message)),
+      { enableHighAccuracy: true, timeout: 15000 },
+    );
+  });
+
+  const doAbsen = async (karyawanId: number, lat: number, lng: number, selfieImage: string | null) => {
+    const res = await fetch("/api/kas/lembur/absensi", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ karyawanId, tanggal: tglLembur, jenis: "gps", lat, lng, selfieImage }),
+    });
+    if (res.ok) {
+      const d = await res.json();
+      toast({ title: "Absensi lembur tercatat", description: d.jarakMeter != null ? `Terverifikasi di lokasi kerja (${d.jarakMeter} m dari titik)` : undefined });
+      loadLembur();
+    } else { const d = await res.json().catch(() => ({})); toast({ title: "Absensi ditolak", description: d.error, variant: "destructive" }); }
+  };
+
+  // Klik absen → minta GPS, lalu buka kamera selfie
+  const toggleAbsen = async (karyawanId: number, nama: string) => {
     const existing = absensi.find(a => a.karyawanId === karyawanId && a.tanggal === tglLembur);
     if (existing) {
       const res = await fetch(`/api/kas/lembur/absensi/${existing.id}`, { method: "DELETE" });
       if (res.ok) { toast({ title: "Absensi dibatalkan" }); loadLembur(); loadData(); }
       return;
     }
-    const res = await fetch("/api/kas/lembur/absensi", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ karyawanId, tanggal: tglLembur, jenis }),
+    let loc: { lat: number; lng: number };
+    try {
+      toast({ title: "Mengambil lokasi GPS...", description: "Pastikan GPS aktif" });
+      loc = await getBrowserLocation();
+    } catch (e: any) { toast({ title: "GPS gagal", description: e?.message, variant: "destructive" }); return; }
+    setSelfieDialog({ karyawanId, nama });
+    // simpan loc di ref agar dipakai saat capture
+    pendingLocRef.current = loc;
+  };
+  const pendingLocRef = useRef<{ lat: number; lng: number } | null>(null);
+
+  useEffect(() => { if (selfieDialog) startCamera(); /* eslint-disable-next-line */ }, [selfieDialog]);
+
+  const startCamera = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: 640, height: 480 }, audio: false });
+      streamRef.current = stream;
+      if (videoRef.current) { videoRef.current.srcObject = stream; await videoRef.current.play(); }
+    } catch {
+      toast({ title: "Kamera tidak tersedia", description: "Absen tetap bisa dilanjutkan tanpa foto wajah", variant: "destructive" });
+      if (pendingLocRef.current && selfieDialog) {
+        await doAbsen(selfieDialog.karyawanId, pendingLocRef.current.lat, pendingLocRef.current.lng, null);
+        closeSelfie();
+      }
+    }
+  };
+  const closeSelfie = () => {
+    streamRef.current?.getTracks().forEach(t => t.stop());
+    streamRef.current = null;
+    setSelfieDialog(null);
+    pendingLocRef.current = null;
+  };
+  const captureSelfie = () => {
+    const video = videoRef.current;
+    if (!video || !pendingLocRef.current || !selfieDialog) return;
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 640; canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.translate(canvas.width, 0); ctx.scale(-1, 1); // mirror selfie
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+    doAbsen(selfieDialog.karyawanId, pendingLocRef.current.lat, pendingLocRef.current.lng, dataUrl);
+    closeSelfie();
+  };
+
+  const [selfieView, setSelfieView] = useState<string | null>(null);
+  const openSelfie = async (id: number) => {
+    try {
+      const res = await fetch(`/api/kas/lembur/absensi/${id}`);
+      if (res.ok) { const d = await res.json(); setSelfieView(d.selfieImage); }
+    } catch { /* ignore */ }
+  };
+
+  // ── lokasi kerja lembur ──
+  const [lokasi, setLokasi] = useState<any | null>(null);
+  const [editLokasi, setEditLokasi] = useState(false);
+  const [locForm, setLocForm] = useState({ lat: "", lng: "", radius: "100", label: "" });
+
+  const loadLokasi = useCallback(async () => {
+    try { const res = await fetch("/api/kas/lembur/lokasi"); if (res.ok) setLokasi(await res.json()); } catch { /* ignore */ }
+  }, []);
+  useEffect(() => { loadLokasi(); }, [loadLokasi]);
+
+  const ambilLokasiSekarang = async () => {
+    try {
+      const loc = await getBrowserLocation();
+      setLocForm(f => ({ ...f, lat: loc.lat.toFixed(6), lng: loc.lng.toFixed(6) }));
+      toast({ title: "Koordinat diambil dari posisi saat ini" });
+    } catch (e: any) { toast({ title: "GPS gagal", description: e?.message, variant: "destructive" }); }
+  };
+  const saveLokasi = async () => {
+    const res = await fetch("/api/kas/lembur/lokasi", {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lat: locForm.lat, lng: locForm.lng, radiusMeter: Number(locForm.radius), label: locForm.label }),
     });
-    if (res.ok) { toast({ title: "Absensi lembur tercatat" }); loadLembur(); }
+    if (res.ok) { toast({ title: "Lokasi kerja lembur tersimpan" }); setEditLokasi(false); loadLokasi(); }
     else { const d = await res.json().catch(() => ({})); toast({ title: "Gagal", description: d.error, variant: "destructive" }); }
   };
 
@@ -492,24 +590,38 @@ export default function KasGudang() {
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* Pengaturan lokasi kerja */}
+            <div className="flex flex-wrap items-center gap-3 p-3 bg-muted/50 rounded-lg">
+              <MapPin className="w-4 h-4 text-amber-600 shrink-0" />
+              {lokasi ? (
+                <span className="text-sm">
+                  Lokasi kerja: <b>{lokasi.label || "Tanpa nama"}</b> ({lokasi.lat}, {lokasi.lng}) · radius <b>{lokasi.radiusMeter} m</b>
+                </span>
+              ) : (
+                <span className="text-sm text-amber-600">Lokasi kerja belum diatur — absensi belum divalidasi GPS. Atur dulu di bawah ini.</span>
+              )}
+              <div className="flex-1" />
+              <Button variant="outline" size="sm" onClick={() => { setLocForm({ lat: lokasi?.lat ?? "", lng: lokasi?.lng ?? "", radius: String(lokasi?.radiusMeter ?? 100), label: lokasi?.label ?? "" }); setEditLokasi(true); }}>
+                <Pencil className="w-3.5 h-3.5 mr-1" /> Atur Lokasi
+              </Button>
+            </div>
             <p className="text-sm text-muted-foreground">
               Tanggal terpilih: <b>{new Date(tglLembur + "T00:00:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</b>
               {(() => { const d = new Date(tglLembur + "T00:00:00").getDay(); return d !== 0 && d !== 6 ? <span className="text-amber-600"> — bukan hari Sabtu/Minggu</span> : null; })()}
-              {" "}· klik <MapPin className="w-3.5 h-3.5 inline" /> GPS atau <Smile className="w-3.5 h-3.5 inline" /> Wajah untuk mencatat absensi. Fee diisi bendahara dan otomatis tercatat sebagai kas keluar.
+              {" "}· klik <MapPin className="w-3.5 h-3.5 inline" /> <b>Absen</b>: sistem mengambil GPS perangkat lalu meminta <b>foto selfie</b> via kamera HP. Absensi ditolak jika karyawan tidak berada dalam radius lokasi kerja. Fee diisi bendahara dan otomatis tercatat sebagai kas keluar.
             </p>
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead>Karyawan</TableHead>
-                  <TableHead className="text-center">Absen GPS</TableHead>
-                  <TableHead className="text-center">Absen Wajah</TableHead>
+                  <TableHead className="text-center">Absen (GPS + Selfie)</TableHead>
                   <TableHead className="text-right">Fee Lembur (Rp)</TableHead>
                   <TableHead className="text-right">Aksi</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {karyawan.length === 0 && (
-                  <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">Belum ada karyawan. Tambahkan di bawah.</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-6">Belum ada karyawan. Tambahkan di bawah.</TableCell></TableRow>
                 )}
                 {karyawan.map(k => {
                   const rec = absensi.find(a => a.karyawanId === k.id && a.tanggal === tglLembur);
@@ -518,18 +630,16 @@ export default function KasGudang() {
                     <TableRow key={k.id}>
                       <td className="font-medium">{k.nama}</td>
                       <td className="text-center">
-                        <Button variant={rec?.jenis === "gps" ? "default" : "ghost"} size="sm"
-                          className={rec?.jenis === "gps" ? "bg-green-600 hover:bg-green-700" : "text-muted-foreground"}
-                          onClick={() => toggleAbsen(k.id, "gps")}>
-                          <MapPin className="w-4 h-4" />
-                        </Button>
-                      </td>
-                      <td className="text-center">
-                        <Button variant={rec?.jenis === "wajah" ? "default" : "ghost"} size="sm"
-                          className={rec?.jenis === "wajah" ? "bg-blue-600 hover:bg-blue-700" : "text-muted-foreground"}
-                          onClick={() => toggleAbsen(k.id, "wajah")}>
-                          <Smile className="w-4 h-4" />
-                        </Button>
+                        {rec ? (
+                          <div className="flex flex-col items-center gap-1">
+                            <Badge className="bg-green-600"><MapPin className="w-3 h-3 mr-1" />HADIR{rec.jarakMeter != null ? ` · ${rec.jarakMeter} m` : ""}</Badge>
+                            {rec.hasSelfie && <Badge variant="outline" className="text-blue-600 border-blue-600"><Smile className="w-3 h-3 mr-1" />selfie ✓</Badge>}
+                          </div>
+                        ) : (
+                          <Button variant="outline" size="sm" onClick={() => toggleAbsen(k.id, k.nama)}>
+                            <MapPin className="w-4 h-4 mr-1.5" /> Absen
+                          </Button>
+                        )}
                       </td>
                       <td className="text-right">
                         {rec ? (
@@ -543,7 +653,7 @@ export default function KasGudang() {
                       <td className="text-right">
                         <div className="flex justify-end gap-1">
                           <Button variant="ghost" size="sm" onClick={() => setEditKaryawan({ id: k.id, nama: k.nama })}><Pencil className="w-4 h-4" /></Button>
-                          {rec && <Button variant="ghost" size="sm" className="text-destructive" onClick={() => toggleAbsen(k.id, rec.jenis)}><Trash2 className="w-4 h-4" /></Button>}
+                          {rec && <Button variant="ghost" size="sm" className="text-destructive" onClick={() => toggleAbsen(k.id, k.nama)}><Trash2 className="w-4 h-4" /></Button>}
                         </div>
                       </td>
                     </TableRow>
@@ -572,7 +682,7 @@ export default function KasGudang() {
                   <TableRow>
                     <TableHead>Tanggal</TableHead>
                     <TableHead>Karyawan</TableHead>
-                    <TableHead className="text-center">Jenis</TableHead>
+                    <TableHead className="text-center">Verifikasi</TableHead>
                     <TableHead className="text-right">Fee</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -582,9 +692,14 @@ export default function KasGudang() {
                       <td className="whitespace-nowrap text-sm">{new Date(a.tanggal + "T00:00:00").toLocaleDateString("id-ID", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}</td>
                       <td className="font-medium">{a.karyawan}</td>
                       <td className="text-center">
-                        <Badge variant="outline" className={a.jenis === "gps" ? "text-green-600 border-green-600" : "text-blue-600 border-blue-600"}>
-                          {a.jenis === "gps" ? <MapPin className="w-3 h-3 mr-1" /> : <Smile className="w-3 h-3 mr-1" />}{a.jenis.toUpperCase()}
-                        </Badge>
+                        <div className="flex flex-col items-center gap-1">
+                          <Badge variant="outline" className="text-green-600 border-green-600">
+                            <MapPin className="w-3 h-3 mr-1" />GPS{a.jarakMeter != null ? ` · ${a.jarakMeter} m` : ""}
+                          </Badge>
+                          {a.hasSelfie
+                            ? <Button variant="ghost" size="sm" className="h-6 text-xs text-blue-600" onClick={() => openSelfie(a.id)}><Smile className="w-3 h-3 mr-1" />lihat selfie</Button>
+                            : <span className="text-xs text-muted-foreground">tanpa foto</span>}
+                        </div>
                       </td>
                       <td className="text-right whitespace-nowrap">{a.fee != null ? <span className="text-red-600 font-semibold">{fmt(a.fee)}</span> : <span className="text-muted-foreground text-xs">belum diinput</span>}</td>
                     </TableRow>
@@ -595,6 +710,57 @@ export default function KasGudang() {
           </CardContent>
         </Card>
       </>)}
+
+      {/* Dialog selfie saat absen */}
+      <Dialog open={selfieDialog !== null} onOpenChange={open => { if (!open) closeSelfie(); }}>
+        <DialogContent onOpenAutoFocus={e => e.preventDefault()}>
+          <DialogHeader><DialogTitle>Absen Lembur — Foto Wajah</DialogTitle></DialogHeader>
+          {selfieDialog && (<>
+            <p className="text-sm text-muted-foreground">
+              Karyawan: <b>{selfieDialog.nama}</b> · GPS sudah terbaca. Ambil <b>foto selfie</b> untuk melengkapi absensi.
+            </p>
+            <div className="relative rounded-lg overflow-hidden bg-black aspect-[4/3]">
+              <video ref={videoRef} className="w-full h-full object-cover" style={{ transform: "scaleX(-1)" }} muted playsInline
+                onCanPlay={() => {}} />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={closeSelfie}>Batal</Button>
+              <Button onClick={captureSelfie}><Camera className="w-4 h-4 mr-2" />Ambil Foto & Absen</Button>
+            </div>
+          </>)}
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog lihat selfie tersimpan */}
+      <Dialog open={selfieView !== null} onOpenChange={open => { if (!open) setSelfieView(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Foto Selfie Absensi Lembur</DialogTitle></DialogHeader>
+          {selfieView ? <img src={selfieView} alt="selfie absensi" className="max-h-[70vh] mx-auto rounded" /> : null}
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog atur lokasi kerja lembur */}
+      <Dialog open={editLokasi} onOpenChange={setEditLokasi}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Atur Lokasi Kerja Lembur</DialogTitle></DialogHeader>
+          <p className="text-sm text-muted-foreground">Absensi hanya diterima jika GPS karyawan berada dalam radius dari titik ini. Bisa ambil koordinat dari posisi Anda sekarang (berdiri di lokasi kerja).</p>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1"><Label>Latitude</Label><Input value={locForm.lat} onChange={e => setLocForm(f => ({ ...f, lat: e.target.value }))} placeholder="-7.xxx" /></div>
+              <div className="space-y-1"><Label>Longitude</Label><Input value={locForm.lng} onChange={e => setLocForm(f => ({ ...f, lng: e.target.value }))} placeholder="110.xxx" /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1"><Label>Radius (meter)</Label><Input inputMode="numeric" value={locForm.radius} onChange={e => setLocForm(f => ({ ...f, radius: e.target.value.replace(/[^\d]/g, "") }))} /></div>
+              <div className="space-y-1"><Label>Nama Lokasi</Label><Input value={locForm.label} onChange={e => setLocForm(f => ({ ...f, label: e.target.value }))} placeholder="mis. Gudang Pemaron" /></div>
+            </div>
+            <Button variant="outline" size="sm" onClick={ambilLokasiSekarang}><MapPin className="w-4 h-4 mr-2" />Ambil dari posisi saya sekarang</Button>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setEditLokasi(false)}>Batal</Button>
+              <Button onClick={saveLokasi}>Simpan Lokasi</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Dialog edit nama karyawan */}
       <Dialog open={editKaryawan !== null} onOpenChange={open => { if (!open) setEditKaryawan(null); }}>

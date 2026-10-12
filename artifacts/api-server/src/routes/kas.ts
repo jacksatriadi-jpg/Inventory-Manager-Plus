@@ -146,6 +146,35 @@ router.delete("/kas/lembur/karyawan/:id", async (req, res): Promise<void> => {
   }
 });
 
+// ═══ LEMBUR: lokasi kerja (ditentukan bendahara) ═══════════════════════
+router.get("/kas/lembur/lokasi", async (_req, res): Promise<void> => {
+  const result = await pool.query(
+    "SELECT id, lat, lng, radius_meter, label FROM lembur_lokasi_config ORDER BY id DESC LIMIT 1");
+  if (result.rowCount === 0) { res.json(null); return; }
+  const r = result.rows[0];
+  res.json({ id: r.id, lat: r.lat, lng: r.lng, radiusMeter: r.radius_meter, label: r.label });
+});
+
+router.put("/kas/lembur/lokasi", async (req, res): Promise<void> => {
+  const { lat, lng, radiusMeter, label } = req.body ?? {};
+  const latN = Number(lat), lngN = Number(lng), radius = Number(radiusMeter ?? 100);
+  if (!Number.isFinite(latN) || !Number.isFinite(lngN)) { res.status(400).json({ error: "Koordinat lat/lng tidak valid" }); return; }
+  if (!Number.isFinite(radius) || radius < 10 || radius > 5000) { res.status(400).json({ error: "Radius harus 10-5000 meter" }); return; }
+  await pool.query(
+    `INSERT INTO lembur_lokasi_config (lat, lng, radius_meter, label) VALUES ($1, $2, $3, $4)`,
+    [String(latN), String(lngN), Math.round(radius), typeof label === "string" ? label.trim() || null : null],
+  );
+  res.json({ ok: true });
+});
+
+// Haversine distance in meters
+function haversine(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371000, toRad = (d: number) => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return Math.round(2 * R * Math.asin(Math.sqrt(a)));
+}
+
 // ═══ LEMBUR: absensi ════════════════════════════════════════════════════
 router.get("/kas/lembur/absensi", async (req, res): Promise<void> => {
   const from = typeof req.query.from === "string" ? req.query.from : null;
@@ -157,7 +186,8 @@ router.get("/kas/lembur/absensi", async (req, res): Promise<void> => {
   const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
   const result = await pool.query(
     `SELECT la.id, la.karyawan_id, lk.nama AS karyawan, la.tanggal, la.jenis,
-            la.fee, la.kas_transaksi_id, la.created_at
+            la.fee, la.kas_transaksi_id, la.lat, la.lng, la.jarak_meter,
+            (la.selfie_image IS NOT NULL) AS has_selfie, la.created_at
      FROM lembur_absensi la
      JOIN lembur_karyawan lk ON lk.id = la.karyawan_id
      ${where}
@@ -169,27 +199,62 @@ router.get("/kas/lembur/absensi", async (req, res): Promise<void> => {
     id: r.id, karyawanId: r.karyawan_id, karyawan: r.nama, tanggal: r.tanggal,
     jenis: r.jenis, fee: r.fee === null ? null : Number(r.fee),
     kasTransaksiId: r.kas_transaksi_id,
+    lat: r.lat, lng: r.lng, jarakMeter: r.jarak_meter, hasSelfie: r.has_selfie,
     createdAt: new Date(r.created_at).toISOString(),
   })));
 });
 
 router.post("/kas/lembur/absensi", async (req, res): Promise<void> => {
-  const { karyawanId, tanggal, jenis } = req.body ?? {};
+  const { karyawanId, tanggal, jenis, lat, lng, selfieImage } = req.body ?? {};
   if (!Number.isInteger(karyawanId)) { res.status(400).json({ error: "Karyawan tidak valid" }); return; }
   if (typeof tanggal !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) { res.status(400).json({ error: "Tanggal tidak valid (YYYY-MM-DD)" }); return; }
   if (!["gps", "wajah"].includes(jenis)) { res.status(400).json({ error: "Jenis absensi harus 'gps' atau 'wajah'" }); return; }
+
+  // Validasi kehadiran di lokasi kerja yang ditentukan bendahara
+  const locRes = await pool.query("SELECT lat, lng, radius_meter FROM lembur_lokasi_config ORDER BY id DESC LIMIT 1");
+  const loc = locRes.rows[0];
+  const latN = Number(lat), lngN = Number(lng);
+  let jarak: number | null = null;
+  if (loc) {
+    if (!Number.isFinite(latN) || !Number.isFinite(lngN)) {
+      res.status(400).json({ error: "Lokasi GPS tidak terbaca. Aktifkan GPS browser lalu coba lagi." }); return;
+    }
+    jarak = haversine(Number(loc.lat), Number(loc.lng), latN, lngN);
+    if (jarak > loc.radius_meter) {
+      res.status(403).json({ error: `Karyawan tidak berada di lokasi kerja (berjarak ${jarak} m, batas ${loc.radius_meter} m).` }); return;
+    }
+  }
+  const selfie = typeof selfieImage === "string" && selfieImage.startsWith("data:image/") ? selfieImage : null;
+
   try {
     const result = await pool.query(
-      `INSERT INTO lembur_absensi (karyawan_id, tanggal, jenis) VALUES ($1, $2, $3)
+      `INSERT INTO lembur_absensi (karyawan_id, tanggal, jenis, lat, lng, jarak_meter, selfie_image)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (karyawan_id, tanggal) DO NOTHING RETURNING id`,
-      [karyawanId, tanggal, jenis],
+      [karyawanId, tanggal, jenis, Number.isFinite(latN) ? String(latN) : null, Number.isFinite(lngN) ? String(lngN) : null, jarak, selfie],
     );
     if (result.rowCount === 0) { res.status(409).json({ error: "Karyawan ini sudah tercatat absen pada tanggal tersebut" }); return; }
-    res.status(201).json({ id: result.rows[0].id });
+    res.status(201).json({ id: result.rows[0].id, jarakMeter: jarak });
   } catch (err) {
     logger.error({ err }, "Lembur: gagal mencatat absensi");
     res.status(500).json({ error: "Gagal mencatat absensi" });
   }
+});
+
+router.get("/kas/lembur/absensi/:id", async (req, res): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
+  const result = await pool.query(
+    `SELECT la.id, la.karyawan_id, lk.nama AS karyawan, la.tanggal, la.jenis,
+            la.fee, la.lat, la.lng, la.jarak_meter, la.selfie_image
+     FROM lembur_absensi la JOIN lembur_karyawan lk ON lk.id = la.karyawan_id WHERE la.id = $1`, [id]);
+  if (result.rowCount === 0) { res.status(404).json({ error: "Absensi tidak ditemukan" }); return; }
+  const r = result.rows[0];
+  res.json({
+    id: r.id, karyawanId: r.karyawan_id, karyawan: r.nama, tanggal: r.tanggal, jenis: r.jenis,
+    fee: r.fee === null ? null : Number(r.fee), lat: r.lat, lng: r.lng, jarakMeter: r.jarak_meter,
+    selfieImage: r.selfie_image ?? null,
+  });
 });
 
 // Input/ubah fee → otomatis jadi kas keluar (dibuat/di-update)

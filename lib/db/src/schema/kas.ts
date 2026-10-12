@@ -33,5 +33,19 @@ export const lemburAbsensiTable = pgTable("lembur_absensi", {
   jenis: text("jenis").notNull().default("gps"),
   fee: bigint("fee", { mode: "number" }),
   kasTransaksiId: integer("kas_transaksi_id"),
+  lat: text("lat"),
+  lng: text("lng"),
+  jarakMeter: integer("jarak_meter"),
+  selfieImage: text("selfie_image"), // data URL foto selfie saat absen
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Lokasi kerja lembur yang ditentukan bendahara (radius toleransi dalam meter)
+export const lemburLokasiConfigTable = pgTable("lembur_lokasi_config", {
+  id: serial("id").primaryKey(),
+  lat: text("lat").notNull(),
+  lng: text("lng").notNull(),
+  radiusMeter: integer("radius_meter").notNull().default(100),
+  label: text("label"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });

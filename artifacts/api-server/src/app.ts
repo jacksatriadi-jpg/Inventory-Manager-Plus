@@ -111,8 +111,21 @@ async function setupDatabase() {
         jenis TEXT NOT NULL DEFAULT 'gps',
         fee BIGINT,
         kas_transaksi_id INTEGER,
+        lat TEXT,
+        lng TEXT,
+        jarak_meter INTEGER,
+        selfie_image TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE (karyawan_id, tanggal)
+      );
+
+      CREATE TABLE IF NOT EXISTS lembur_lokasi_config (
+        id SERIAL PRIMARY KEY,
+        lat TEXT NOT NULL,
+        lng TEXT NOT NULL,
+        radius_meter INTEGER NOT NULL DEFAULT 100,
+        label TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
 
