@@ -170,7 +170,8 @@ export default function KasGudang() {
     }
     let loc: { lat: number; lng: number };
     try {
-      toast({ title: "Mengambil lokasi GPS...", description: "Pastikan GPS aktif" });
+      // PENTING: jangan tampilkan toast/overlay sebelum getCurrentPosition —
+      // Chrome Android menolak pop-up izin lokasi saat ada overlay aktif
       loc = await getBrowserLocation();
     } catch (e: any) { toast({ title: "GPS gagal", description: e?.message, variant: "destructive" }); return; }
     setSelfieDialog({ karyawanId, nama });
@@ -234,10 +235,11 @@ export default function KasGudang() {
 
   const ambilLokasiSekarang = async () => {
     try {
+      // Tanpa toast dulu: overlay membuat Chrome Android menolak pop-up izin lokasi
       const loc = await getBrowserLocation();
       setLocForm(f => ({ ...f, lat: loc.lat.toFixed(6), lng: loc.lng.toFixed(6) }));
       toast({ title: "Koordinat diambil dari posisi saat ini" });
-    } catch (e: any) { toast({ title: "GPS gagal", description: e?.message, variant: "destructive" }); }
+    } catch (e: any) { toast({ title: "GPS gagal", description: (e?.message || "") + " — Bisa juga isi manual dari Google Maps.", variant: "destructive" }); }
   };
   const saveLokasi = async () => {
     const res = await fetch("/api/kas/lembur/lokasi", {
@@ -754,6 +756,9 @@ export default function KasGudang() {
               <div className="space-y-1"><Label>Nama Lokasi</Label><Input value={locForm.label} onChange={e => setLocForm(f => ({ ...f, label: e.target.value }))} placeholder="mis. Gudang Pemaron" /></div>
             </div>
             <Button variant="outline" size="sm" onClick={ambilLokasiSekarang}><MapPin className="w-4 h-4 mr-2" />Ambil dari posisi saya sekarang</Button>
+            <p className="text-xs text-muted-foreground">
+              Jika izin lokasi gagal diminta browser, isi manual: buka <a className="underline" href="https://maps.google.com" target="_blank" rel="noreferrer">maps.google.com</a> dari HP di lokasi kerja → klik kanan/tahan titik → salin koordinatnya ke kolom di atas.
+            </p>
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setEditLokasi(false)}>Batal</Button>
               <Button onClick={saveLokasi}>Simpan Lokasi</Button>
