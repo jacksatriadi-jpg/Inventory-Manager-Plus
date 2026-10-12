@@ -86,6 +86,17 @@ async function setupDatabase() {
       CREATE TABLE IF NOT EXISTS material_bekas_garansi (\n        id SERIAL PRIMARY KEY,\n        serial_number TEXT NOT NULL,\n        material_name TEXT NOT NULL,\n        tahun INTEGER NOT NULL,\n        bulan INTEGER NOT NULL,\n        user_id INTEGER NOT NULL REFERENCES users(id),\n        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n      );
 
       CREATE TABLE IF NOT EXISTS material_bekas_usul_hapus (\n        id SERIAL PRIMARY KEY,\n        serial_number TEXT NOT NULL,\n        material_name TEXT NOT NULL,\n        tahun INTEGER NOT NULL,\n        bulan INTEGER NOT NULL,\n        user_id INTEGER NOT NULL REFERENCES users(id),\n        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()\n      );
+
+      CREATE TABLE IF NOT EXISTS kas_transaksi (
+        id SERIAL PRIMARY KEY,
+        tipe TEXT NOT NULL,
+        metode TEXT NOT NULL DEFAULT 'manual',
+        jumlah BIGINT NOT NULL,
+        keterangan TEXT,
+        bukti_image TEXT,
+        user_id INTEGER NOT NULL REFERENCES users(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
     `);
 
     // Migrate: tambah kolom baru jika belum ada (aman untuk database lama)

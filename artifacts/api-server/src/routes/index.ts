@@ -12,6 +12,7 @@ import materialMasukRouter from "./materialMasuk";
 import materialKeluarRouter from "./materialKeluar";
 import sheetsRouter from "./sheets";
 import materialBekasRouter from "./materialBekas";
+import kasRouter from "./kas";
 
 const router: IRouter = Router();
 
@@ -28,5 +29,6 @@ router.use(materialMasukRouter);
 router.use(materialKeluarRouter);
 router.use(sheetsRouter);
 router.use(materialBekasRouter);
+router.use(kasRouter);
 
 export default router;
