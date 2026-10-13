@@ -470,32 +470,33 @@ export default function KasGudang() {
             </Button>
           </div>
 
-          {metode === "ocr" && (
-            <div className="border-2 border-dashed rounded-lg p-4 space-y-3">
-              <p className="text-sm text-muted-foreground">
-                {tipe === "masuk" ? "Unggah foto bukti transfer — nominal akan otomatis dibaca dan terinput ke kas masuk."
-                                  : "Unggah foto nota pembelian — nominal akan otomatis dibaca dan masuk ke kas keluar."}
-              </p>
-              <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
-                onChange={e => handleFile(e.target.files?.[0] ?? null)} />
-              <div className="flex items-center gap-3">
-                <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
-                  <Camera className="w-4 h-4 mr-2" /> Pilih / Foto Bukti
-                </Button>
-                {ocrStatus === "reading" && <span className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Membaca nominal...</span>}
-                {ocrStatus === "done" && <Badge className="bg-green-600">Nominal terbaca — periksa dulu</Badge>}
-                {ocrStatus === "fail" && <Badge variant="destructive">Gagal membaca — input manual di kolom nominal</Badge>}
-              </div>
-              {buktiImage && (
-                <div className="flex items-start gap-3">
-                  <img src={buktiImage} alt="bukti" className="max-h-40 rounded border" />
-                  <Button variant="ghost" size="sm" onClick={() => { setBuktiImage(null); setOcrStatus("idle"); }}>
-                    <ImageOff className="w-4 h-4 mr-1" /> Hapus foto
-                  </Button>
-                </div>
-              )}
+          <div className="border-2 border-dashed rounded-lg p-4 space-y-3">
+            <p className="text-sm text-muted-foreground">
+              {metode === "ocr"
+                ? (tipe === "masuk" ? "Unggah foto bukti transfer — nominal akan otomatis dibaca dan terinput ke kas masuk."
+                                    : "Unggah foto nota pembelian — nominal akan otomatis dibaca dan masuk ke kas keluar.")
+                : "Opsional: lampirkan foto bukti transfer / nota pembelian sebagai arsip (tersimpan di riwayat)."}
+            </p>
+            <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
+              onChange={e => handleFile(e.target.files?.[0] ?? null)} />
+            <div className="flex items-center gap-3">
+              <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+                <Camera className="w-4 h-4 mr-2" /> Pilih / Foto Bukti
+              </Button>
+              {ocrStatus === "reading" && <span className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Membaca nominal...</span>}
+              {ocrStatus === "done" && <Badge className="bg-green-600">Nominal terbaca — periksa dulu</Badge>}
+              {ocrStatus === "fail" && <Badge variant="destructive">Gagal membaca — input manual di kolom nominal</Badge>}
+              {buktiImage && ocrStatus === "idle" && <Badge variant="outline">Foto terlampir sebagai arsip</Badge>}
             </div>
-          )}
+            {buktiImage && (
+              <div className="flex items-start gap-3">
+                <img src={buktiImage} alt="bukti" className="max-h-40 rounded border" />
+                <Button variant="ghost" size="sm" onClick={() => { setBuktiImage(null); setOcrStatus("idle"); }}>
+                  <ImageOff className="w-4 h-4 mr-1" /> Hapus foto
+                </Button>
+              </div>
+            )}
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
