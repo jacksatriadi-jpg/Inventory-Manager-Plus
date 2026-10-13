@@ -344,12 +344,32 @@ export default function KasGudang() {
     doc.save(`mutasi-kas-gudang-${new Date().toISOString().slice(0, 10)}.pdf`);
   };
 
+  // Kompres foto bukti: max sisi 1280px, JPEG q0.72 — cukup terbaca utk OCR/arsip,
+  // tapi tidak membebani database (biasanya turun dari beberapa MB jadi <300KB)
+  const compressImage = (dataUrl: string): Promise<string> => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const MAX = 1280;
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (Math.max(w, h) > MAX) { const s = MAX / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { resolve(dataUrl); return; }
+      ctx.drawImage(img, 0, 0, w, h);
+      const out = canvas.toDataURL("image/jpeg", 0.72);
+      resolve(out.length < dataUrl.length ? out : dataUrl);
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+
   const handleFile = (file: File | null) => {
     if (!file) return;
     if (!file.type.startsWith("image/")) { toast({ title: "File harus berupa gambar", variant: "destructive" }); return; }
     const reader = new FileReader();
     reader.onload = async () => {
-      const dataUrl = reader.result as string;
+      const dataUrl = await compressImage(reader.result as string);
       setBuktiImage(dataUrl);
       setMetode("ocr");
       setOcrStatus("reading");
