@@ -1,6 +1,6 @@
 import { useAuth } from "@/lib/auth";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, ScanLine, History, Database, LogOut, UserCircle, DatabaseBackup, RefreshCw, PackagePlus, PackageMinus, Eye, QrCode, PackageOpen, Wallet } from "lucide-react";
+import { LayoutDashboard, ScanLine, History, Database, LogOut, UserCircle, DatabaseBackup, RefreshCw, PackagePlus, PackageMinus, Eye, QrCode, PackageOpen, Wallet, ClipboardCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +26,7 @@ const ALL_MENUS = [
   { href: "/barcode-tools", label: "Barcode Tools", icon: QrCode },
   { href: "/material-bekas", label: "Material Bekas", icon: PackageOpen },
   { href: "/kas-gudang", label: "Kas Gudang", icon: Wallet },
+  { href: "/absensi", label: "Absensi", icon: ClipboardCheck },
   { href: "/master", label: "Master", icon: Database },
   { href: "/master?tab=backup", label: "Backup & Restore", icon: DatabaseBackup },
 ];

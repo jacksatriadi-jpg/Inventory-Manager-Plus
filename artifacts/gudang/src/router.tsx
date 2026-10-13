@@ -12,6 +12,7 @@ import MaterialKeluar from "@/pages/material-keluar";
 import BarcodeTools from "@/pages/barcode-tools";
 import MaterialBekas from "@/pages/material-bekas";
 import KasGudang from "@/pages/kas-gudang";
+import Absensi from "@/pages/absensi";
 
 function ProtectedRoute({ component: Component, roles = ["user", "master", "guest"] }: { component: any, roles?: string[] }) {
   const { user, isLoading } = useAuth();
@@ -54,6 +55,7 @@ export default function AppRouter() {
             <Route path="/barcode-tools" component={() => <ProtectedRoute component={BarcodeTools} roles={["user", "master"]} />} />
             <Route path="/material-bekas" component={() => <ProtectedRoute component={MaterialBekas} roles={["user", "master"]} />} />
             <Route path="/kas-gudang" component={() => <ProtectedRoute component={KasGudang} roles={["bendahara"]} />} />
+            <Route path="/absensi" component={() => <ProtectedRoute component={Absensi} roles={["user", "master", "bendahara"]} />} />
             <Route>404 Not Found</Route>
           </Switch>
         </Layout>
