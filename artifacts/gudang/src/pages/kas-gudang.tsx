@@ -83,9 +83,9 @@ function parseAmountFromOcr(text: string): number | null {
   };
   let m: RegExpExecArray | null;
   // "Rp 1.500.000" / "Rp.1.500.000" / "IDR 1,500,000" / "Rp 1 500 000"
-  // + salah baca umum "Rp" oleh OCR (Rb, Rd, Rn, Pd)
-  const rpRe = /(?:Rp\.?|R[bnd][pdl]?\.?|IDR)\s*([0-9](?:[0-9.,]|\s\d{3})*)/gi;
-  while ((m = rpRe.exec(norm))) add(m[1], 3);
+  // + salah baca umum "Rp" oleh OCR (Rb, Rd, Rn) dan digit mirip huruf (OOO→000)
+  const rpRe = /(?:Rp\.?|R[bnd][pdl]?\.?|IDR)\s*([0-9OoDQqIlZzSsB|GbgT]+(?:[.,][0-9OoDQqIlZzSsB|GbgT]+)*(?:\s[0-9OoDQqIlZzSsB|GbgT]{3})*)/gi;
+  while ((m = rpRe.exec(norm))) add(m[1].trim(), 3);
   // "Jumlah/Total/Nominal/Tagihan: 15.000"
   const labelRe = /(?:jumlah|total|nominal|transfer|bayar|tagihan)[^\d]{0,15}(\d{1,3}(?:[.,]\d{3})+)/gi;
   while ((m = labelRe.exec(norm))) add(m[1], 3);
