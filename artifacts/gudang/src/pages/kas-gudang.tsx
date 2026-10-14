@@ -52,28 +52,49 @@ function loadTesseract(): Promise<any> {
 }
 
 function toNumberId(s: string): number | null {
-  // Format Indonesia: titik = pemisah ribuan, koma = desimal
-  const cleaned = s.replace(/\./g, "").replace(/,(\d{1,2})$/, "").replace(/,/g, "");
+  // Format Indonesia: titik = pemisah ribuan, koma = desimal, spasi = pemisah ribuan
+  const cleaned = s.replace(/ /g, "").replace(/\./g, "").replace(/,(\d{1,2})$/, "").replace(/,/g, "");
   const v = parseInt(cleaned, 10);
   return Number.isFinite(v) && v > 0 ? v : null;
 }
 
-// Baca nominal rupiah dari hasil OCR bukti transfer / nota pembelian
+// Koreksi kesalahan baca OCR yang umum pada digit (hanya diterapkan ke kelompok angka)
+const OCR_DIGIT_FIX: Record<string, string> = {
+  O: "0", o: "0", D: "0", Q: "0", q: "0",
+  I: "1", l: "1", "|": "1",
+  Z: "2", z: "2",
+  S: "5", s: "5",
+  B: "8",
+  G: "6", b: "6",
+  T: "7",
+  g: "9",
+};
+const fixOcrDigits = (s: string) => s.replace(/[A-Za-z|]/g, ch => OCR_DIGIT_FIX[ch] ?? ch);
+
+// Baca nominal rupiah dari hasil OCR bukti transfer / nota pembelian.
+// Skor: angka di dekat label "Rp" / "Jumlah/Total" lebih dipercaya daripada angka berdiri
+// sendiri (nomor referensi/tanggal sering lebih besar dari nominal → jangan pilih max buta).
 function parseAmountFromOcr(text: string): number | null {
   const norm = text.replace(/\s+/g, " ");
-  const candidates: number[] = [];
+  const cands: { v: number; score: number }[] = [];
+  const add = (raw: string, score: number) => {
+    const v = toNumberId(fixOcrDigits(raw));
+    if (v && v >= 100 && v <= 99_999_999_999) cands.push({ v, score });
+  };
   let m: RegExpExecArray | null;
-  // "Rp 1.500.000" / "Rp.1.500.000" / "IDR 1,500,000"
-  const rpRe = /(?:Rp\.?|IDR)\s*([0-9][0-9.,]*)/gi;
-  while ((m = rpRe.exec(norm))) { const v = toNumberId(m[1]); if (v) candidates.push(v); }
-  // "Jumlah/Total/Nominal: 15.000"
-  const labelRe = /(?:jumlah|total|nominal|transfer|bayar)[^\d]{0,15}(\d{1,3}(?:[.,]\d{3})+)/gi;
-  while ((m = labelRe.exec(norm))) { const v = toNumberId(m[1]); if (v) candidates.push(v); }
+  // "Rp 1.500.000" / "Rp.1.500.000" / "IDR 1,500,000" / "Rp 1 500 000"
+  // + salah baca umum "Rp" oleh OCR (Rb, Rd, Rn, Pd)
+  const rpRe = /(?:Rp\.?|R[bnd][pdl]?\.?|IDR)\s*([0-9](?:[0-9.,]|\s\d{3})*)/gi;
+  while ((m = rpRe.exec(norm))) add(m[1], 3);
+  // "Jumlah/Total/Nominal/Tagihan: 15.000"
+  const labelRe = /(?:jumlah|total|nominal|transfer|bayar|tagihan)[^\d]{0,15}(\d{1,3}(?:[.,]\d{3})+)/gi;
+  while ((m = labelRe.exec(norm))) add(m[1], 3);
   // Angka berdiri sendiri dengan pemisah ribuan (>= 4 digit)
-  const numRe = /\b\d{1,3}(?:\.\d{3})+\b|\b\d{1,3}(?:,\d{3})+\b/g;
-  while ((m = numRe.exec(norm))) { const v = toNumberId(m[0]); if (v) candidates.push(v); }
-  if (candidates.length === 0) return null;
-  return Math.max(...candidates);
+  const numRe = /\b\d{1,3}(?:[.,]\d{3})+\b|\b\d{1,3}(?:\s\d{3})+\b/g;
+  while ((m = numRe.exec(norm))) add(m[0], 1);
+  if (cands.length === 0) return null;
+  cands.sort((a, b) => b.score - a.score || b.v - a.v);
+  return cands[0].v;
 }
 
 export default function KasGudang() {
@@ -364,6 +385,46 @@ export default function KasGudang() {
     img.src = dataUrl;
   });
 
+  // Pra-pemrosesan untuk OCR: grayscale + tingkatkan kontras + upscale gambar kecil.
+  // (Arsip yang disimpan tetap versi kompresi 1280px; ini hanya untuk pembacaan.)
+  const preprocessForOcr = (dataUrl: string): Promise<string> => new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let w = img.naturalWidth, h = img.naturalHeight;
+      const MIN = 1600;
+      if (Math.max(w, h) < MIN) { const s = MIN / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { resolve(dataUrl); return; }
+      ctx.drawImage(img, 0, 0, w, h);
+      try {
+        const idata = ctx.getImageData(0, 0, w, h);
+        const d = idata.data;
+        // hitung rata-rata untuk auto-contrast
+        let sum = 0;
+        const gray = new Uint8ClampedArray(d.length / 4);
+        for (let i = 0; i < d.length; i += 4) {
+          const g = (d[i] * 299 + d[i + 1] * 587 + d[i + 2] * 114) / 1000;
+          gray[i / 4] = g; sum += g;
+        }
+        const mean = sum / (d.length / 4);
+        // contrast factor sederhana berbasis rata-rata (1.5x–2x)
+        const factor = mean > 128 ? 1.8 : 1.5;
+        for (let i = 0; i < gray.length; i++) {
+          let g = ((gray[i] - mean) * factor) + 128;
+          g = g < 0 ? 0 : g > 255 ? 255 : g;
+          const p = i * 4;
+          d[p] = d[p + 1] = d[p + 2] = g;
+        }
+        ctx.putImageData(idata, 0, 0);
+      } catch { /* canvas tainted? pakai gambar mentah */ }
+      resolve(canvas.toDataURL("image/png"));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+
   const handleFile = (file: File | null) => {
     if (!file) return;
     if (!file.type.startsWith("image/")) { toast({ title: "File harus berupa gambar", variant: "destructive" }); return; }
@@ -376,7 +437,8 @@ export default function KasGudang() {
       setOcrText("");
       try {
         const Tesseract = await loadTesseract();
-        const { data } = await Tesseract.recognize(dataUrl, "eng", { logger: () => {} });
+        const ocrInput = await preprocessForOcr(dataUrl);
+        const { data } = await Tesseract.recognize(ocrInput, "eng", { logger: () => {} });
         const text: string = data.text || "";
         setOcrText(text);
         const amount = parseAmountFromOcr(text);
