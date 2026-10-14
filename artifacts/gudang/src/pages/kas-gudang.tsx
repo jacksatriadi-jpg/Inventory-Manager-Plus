@@ -391,8 +391,9 @@ export default function KasGudang() {
     const img = new Image();
     img.onload = () => {
       let w = img.naturalWidth, h = img.naturalHeight;
-      const MIN = 1600;
+      const MIN = 1600, MAXDIM = 2000;
       if (Math.max(w, h) < MIN) { const s = MIN / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
+      else if (Math.max(w, h) > MAXDIM) { const s = MAXDIM / Math.max(w, h); w = Math.round(w * s); h = Math.round(h * s); }
       const canvas = document.createElement("canvas");
       canvas.width = w; canvas.height = h;
       const ctx = canvas.getContext("2d");
@@ -430,14 +431,16 @@ export default function KasGudang() {
     if (!file.type.startsWith("image/")) { toast({ title: "File harus berupa gambar", variant: "destructive" }); return; }
     const reader = new FileReader();
     reader.onload = async () => {
-      const dataUrl = await compressImage(reader.result as string);
+      const original = reader.result as string;
+      const dataUrl = await compressImage(original);
       setBuktiImage(dataUrl);
       setMetode("ocr");
       setOcrStatus("reading");
       setOcrText("");
       try {
         const Tesseract = await loadTesseract();
-        const ocrInput = await preprocessForOcr(dataUrl);
+        // OCR dari gambar ASLI (sebelum kompresi) agar detail angka tidak hilang
+        const ocrInput = await preprocessForOcr(original);
         const { data } = await Tesseract.recognize(ocrInput, "eng", { logger: () => {} });
         const text: string = data.text || "";
         setOcrText(text);
