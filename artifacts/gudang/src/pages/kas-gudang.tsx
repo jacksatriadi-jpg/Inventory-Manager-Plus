@@ -86,8 +86,12 @@ function parseAmountFromOcr(text: string): number | null {
   // + salah baca umum "Rp" oleh OCR (Rb, Rd, Rn) dan digit mirip huruf (OOO→000)
   const rpRe = /(?:Rp\.?|R[bnd][pdl]?\.?|IDR)\s*([0-9OoDQqIlZzSsB|GbgT]+(?:[.,][0-9OoDQqIlZzSsB|GbgT]+)*(?:\s[0-9OoDQqIlZzSsB|GbgT]{3})*)/gi;
   while ((m = rpRe.exec(norm))) add(m[1].trim(), 3);
-  // "Jumlah/Total/Nominal/Tagihan: 15.000"
-  const labelRe = /(?:jumlah|total|nominal|transfer|bayar|tagihan)[^\d]{0,15}(\d{1,3}(?:[.,]\d{3})+)/gi;
+  // Prioritas tertinggi: "Total" — pada nota multi-item, yang dibaca harus total,
+  // bukan subtotal per item ("Jumlah" sering muncul di tiap baris item)
+  const totalRe = /(?:grand\s*total|total\s*(?:harga|bayar|keseluruhan)?|tagihan)[^\d]{0,15}(\d{1,3}(?:[.,]\d{3})+|\d{4,})/gi;
+  while ((m = totalRe.exec(norm))) add(m[1], 4);
+  // "Jumlah/Transfer/Bayar: 15.000"
+  const labelRe = /(?:jumlah|transfer|bayar)[^\d]{0,15}(\d{1,3}(?:[.,]\d{3})+)/gi;
   while ((m = labelRe.exec(norm))) add(m[1], 3);
   // Angka berdiri sendiri dengan pemisah ribuan (>= 4 digit)
   const numRe = /\b\d{1,3}(?:[.,]\d{3})+\b|\b\d{1,3}(?:\s\d{3})+\b/g;
