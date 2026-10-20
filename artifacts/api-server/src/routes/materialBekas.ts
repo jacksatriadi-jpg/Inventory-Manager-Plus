@@ -22,7 +22,12 @@ function parseSN(sn: string) {
   return { tahun: year, bulan: month };
 }
 
-function classifySN(sn: string) {
+type ClassifyResult =
+  | { valid: false; reason: string }
+  | { valid: true; target: "garansi"; serialNumber: string; tahun: number; bulan: number }
+  | { valid: true; target: "usul_hapus"; serialNumber: string; tahun: number; bulan: number };
+function classifySN(sn: string): ClassifyResult {
+
   const parsed = parseSN(sn);
   if (!parsed) return { valid: false, reason: "Format SN tidak dikenali" };
 

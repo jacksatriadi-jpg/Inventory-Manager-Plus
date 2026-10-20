@@ -20,12 +20,14 @@ export type UserRole = typeof UserRole[keyof typeof UserRole];
 export const UserRole = {
   master: 'master',
   user: 'user',
+  bendahara: 'bendahara',
 } as const;
 
 export interface User {
   id: number;
   username: string;
   role: UserRole;
+  menuAccess?: string[];
   createdAt: string;
 }
 
@@ -40,12 +42,14 @@ export type UserInputRole = typeof UserInputRole[keyof typeof UserInputRole];
 export const UserInputRole = {
   master: 'master',
   user: 'user',
+  bendahara: 'bendahara',
 } as const;
 
 export interface UserInput {
   username: string;
   password: string;
   role: UserInputRole;
+  menuAccess?: string[];
 }
 
 export type UserUpdateRole = typeof UserUpdateRole[keyof typeof UserUpdateRole];
@@ -54,6 +58,7 @@ export type UserUpdateRole = typeof UserUpdateRole[keyof typeof UserUpdateRole];
 export const UserUpdateRole = {
   master: 'master',
   user: 'user',
+  bendahara: 'bendahara',
 } as const;
 
 export interface UserUpdate {
@@ -61,6 +66,7 @@ export interface UserUpdate {
   /** @nullable */
   password?: string | null;
   role?: UserUpdateRole;
+  menuAccess?: string[];
 }
 
 export type MaterialKategori = typeof MaterialKategori[keyof typeof MaterialKategori];
@@ -162,15 +168,6 @@ export const ScanInUpdateStatus = {
 export interface ScanInUpdate {
   status?: ScanInUpdateStatus;
   qrCodeData?: string;
-}
-
-export interface CompleteAndContinueScanInResponse extends ScanIn {}
-
-/**
- * @summary Complete scan-in session and create new session for same material/user
- */
-export interface CompleteAndContinueScanInParams {
-  id: number;
 }
 
 export interface ScanOut {

@@ -24,13 +24,15 @@ export const LoginBody = zod.object({
   "password": zod.string()
 })
 
+export const loginResponseUserMenuAccessDefault = [];
+
 export const LoginResponse = zod.object({
   "token": zod.string(),
   "user": zod.object({
   "id": zod.number(),
   "username": zod.string(),
   "role": zod.enum(['master', 'user', 'bendahara']),
-  "menuAccess": zod.array(zod.string()).optional().default([]),
+  "menuAccess": zod.array(zod.string()).default(loginResponseUserMenuAccessDefault),
   "createdAt": zod.string()
 })
 })
@@ -43,11 +45,13 @@ export const GetMeHeader = zod.object({
   "authorization": zod.string().optional()
 })
 
+export const getMeResponseMenuAccessDefault = [];
+
 export const GetMeResponse = zod.object({
   "id": zod.number(),
   "username": zod.string(),
   "role": zod.enum(['master', 'user', 'bendahara']),
-  "menuAccess": zod.array(zod.string()).optional().default([]),
+  "menuAccess": zod.array(zod.string()).default(getMeResponseMenuAccessDefault),
   "createdAt": zod.string()
 })
 
@@ -55,11 +59,13 @@ export const GetMeResponse = zod.object({
 /**
  * @summary List all users (master only)
  */
+export const listUsersResponseMenuAccessDefault = [];
+
 export const ListUsersResponseItem = zod.object({
   "id": zod.number(),
   "username": zod.string(),
   "role": zod.enum(['master', 'user', 'bendahara']),
-  "menuAccess": zod.array(zod.string()).optional().default([]),
+  "menuAccess": zod.array(zod.string()).default(listUsersResponseMenuAccessDefault),
   "createdAt": zod.string()
 })
 export const ListUsersResponse = zod.array(ListUsersResponseItem)
@@ -68,11 +74,13 @@ export const ListUsersResponse = zod.array(ListUsersResponseItem)
 /**
  * @summary Create a new user (master only)
  */
+export const createUserBodyMenuAccessDefault = [];
+
 export const CreateUserBody = zod.object({
   "username": zod.string(),
   "password": zod.string(),
   "role": zod.enum(['master', 'user', 'bendahara']),
-  "menuAccess": zod.array(zod.string()).optional().default([])
+  "menuAccess": zod.array(zod.string()).default(createUserBodyMenuAccessDefault)
 })
 
 
@@ -83,11 +91,13 @@ export const GetUserParams = zod.object({
   "id": zod.coerce.number()
 })
 
+export const getUserResponseMenuAccessDefault = [];
+
 export const GetUserResponse = zod.object({
   "id": zod.number(),
   "username": zod.string(),
   "role": zod.enum(['master', 'user', 'bendahara']),
-  "menuAccess": zod.array(zod.string()).optional().default([]),
+  "menuAccess": zod.array(zod.string()).default(getUserResponseMenuAccessDefault),
   "createdAt": zod.string()
 })
 
@@ -106,11 +116,13 @@ export const UpdateUserBody = zod.object({
   "menuAccess": zod.array(zod.string()).optional()
 })
 
+export const updateUserResponseMenuAccessDefault = [];
+
 export const UpdateUserResponse = zod.object({
   "id": zod.number(),
   "username": zod.string(),
   "role": zod.enum(['master', 'user', 'bendahara']),
-  "menuAccess": zod.array(zod.string()).optional().default([]),
+  "menuAccess": zod.array(zod.string()).default(updateUserResponseMenuAccessDefault),
   "createdAt": zod.string()
 })
 
@@ -307,34 +319,6 @@ export const DeleteScanInParams = zod.object({
 
 
 /**
- * @summary Complete scan-in session and create new session for same material/user
- */
-export const CompleteAndContinueScanInParams = zod.object({
-  "id": zod.coerce.number()
-})
-
-export const CompleteAndContinueScanInResponse = zod.object({
-  "id": zod.number(),
-  "materialId": zod.number(),
-  "materialName": zod.string(),
-  "boxLabel": zod.string(),
-  "status": zod.enum(['scanning', 'completed']),
-  "userId": zod.number(),
-  "userName": zod.string(),
-  "qrCodeData": zod.string().nullish(),
-  "createdAt": zod.string(),
-  "completedAt": zod.string().nullish(),
-  "items": zod.array(zod.object({
-  "id": zod.number(),
-  "serialNumber": zod.string(),
-  "scanInId": zod.number().nullish(),
-  "scanOutId": zod.number().nullish(),
-  "createdAt": zod.string()
-}))
-})
-
-
-/**
  * @summary Add a serial number to a scan-in session
  */
 export const AddScanInItemParams = zod.object({
@@ -357,6 +341,14 @@ export const AddScanInItemBody = zod.object({
 export const DeleteScanInItemParams = zod.object({
   "id": zod.coerce.number(),
   "itemId": zod.coerce.number()
+})
+
+
+/**
+ * @summary Complete current scan-in session and create new session for same material/user
+ */
+export const CompleteAndContinueScanInParams = zod.object({
+  "id": zod.coerce.number()
 })
 
 

@@ -25,7 +25,7 @@ function getClient() {
   return oauth2Client;
 }
 
-export function getOAuthClient(): google.auth.OAuth2 {
+export function getOAuthClient(): InstanceType<typeof google.auth.OAuth2> {
   return getClient();
 }
 
@@ -46,7 +46,7 @@ export async function exchangeCodeAndSave(code: string): Promise<{ email: string
   // Get account email from OAuth2 info
   const oauth2 = google.oauth2({ auth: client, version: "v2" });
   const userInfo = await oauth2.userinfo.get();
-  const email = userInfo.data.email;
+  const email = userInfo.data.email ?? "";
 
   // Save tokens to backup_config
   await pool.query(
@@ -102,8 +102,9 @@ export async function uploadBackupToDrive(
       q: "mimeType='application/vnd.google-apps.folder' and name='Inventory Backups' and trashed=false",
       fields: "files(id, name)",
     });
-    if (folderRes.data.files.length > 0) {
-      folderId = folderRes.data.files[0].id;
+    const found = folderRes.data.files ?? [];
+    if (found.length > 0) {
+      folderId = found[0].id;
     } else {
       const folder = await drive.files.create({
         requestBody: {
@@ -114,6 +115,7 @@ export async function uploadBackupToDrive(
       });
       folderId = folder.data.id;
     }
+    if (!folderId) throw new Error("Gagal menyiapkan folder Google Drive backup");
     // Save folder ID for future use
     await pool.query(
       `UPDATE backup_config SET gdrive_folder_id = $1 WHERE id = (SELECT id FROM backup_config LIMIT 1)`,
@@ -142,7 +144,7 @@ export async function uploadBackupToDrive(
   );
 
   return {
-    fileId: response.data.id,
+    fileId: response.data.id ?? "",
     webViewLink: response.data.webViewLink || "",
   };
 }

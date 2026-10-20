@@ -116,6 +116,7 @@ cat >> .env << 'EOF'
 GOOGLE_CLIENT_ID=paste_your_client_id_here
 GOOGLE_CLIENT_SECRET=paste_your_client_secret_here
 GOOGLE_REDIRECT_URI=https://app.gudangpemaron.my.id/api/auto-backup/google/callback
+GOOGLE_RETUR_REDIRECT_URI=https://app.gudangpemaron.my.id/api/retur/google/callback
 EOF
 ```
 
@@ -131,6 +132,7 @@ Or add all three lines directly to `~/.bashrc` / `~/.zshrc` to persist across Te
 echo 'export GOOGLE_CLIENT_ID="your_client_id"' >> ~/.bashrc
 echo 'export GOOGLE_CLIENT_SECRET="your_client_secret"' >> ~/.bashrc
 echo 'export GOOGLE_REDIRECT_URI="https://app.gudangpemaron.my.id/api/auto-backup/google/callback"' >> ~/.bashrc
+echo 'export GOOGLE_RETUR_REDIRECT_URI="https://app.gudangpemaron.my.id/api/retur/google/callback"' >> ~/.bashrc
 source ~/.bashrc
 ```
 

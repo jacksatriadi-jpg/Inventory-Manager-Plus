@@ -12,4 +12,5 @@ export interface UserUpdate {
   /** @nullable */
   password?: string | null;
   role?: UserUpdateRole;
+  menuAccess?: string[];
 }

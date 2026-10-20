@@ -12,4 +12,5 @@ export type UserInputRole = typeof UserInputRole[keyof typeof UserInputRole];
 export const UserInputRole = {
   master: 'master',
   user: 'user',
+  bendahara: 'bendahara',
 } as const;

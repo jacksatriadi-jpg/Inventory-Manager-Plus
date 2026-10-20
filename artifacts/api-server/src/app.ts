@@ -134,6 +134,19 @@ async function setupDatabase() {
       ALTER TABLE materials ADD COLUMN IF NOT EXISTS kategori TEXT NOT NULL DEFAULT 'scan';
     `);
 
+    await pool.query(`
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS menu_access JSONB DEFAULT '[]'::jsonb;
+    `);
+
+    await pool.query(`
+      ALTER TABLE material_bekas_garansi
+        ADD COLUMN IF NOT EXISTS material_code TEXT,
+        ADD COLUMN IF NOT EXISTS merk TEXT;
+      ALTER TABLE material_bekas_usul_hapus
+        ADD COLUMN IF NOT EXISTS material_code TEXT,
+        ADD COLUMN IF NOT EXISTS merk TEXT;
+    `);
+
     // Auto backup config table
     await pool.query(`
       CREATE TABLE IF NOT EXISTS backup_config (
@@ -179,6 +192,82 @@ async function setupDatabase() {
     await pool.query(`
       ALTER TABLE spreadsheet_config ADD COLUMN IF NOT EXISTS sheet_name TEXT;
     `);
+
+    // ─── Retur Material (TUG10 + ceklist 2 tahap) ──────────────────────────
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS retur_dokumen (
+        id SERIAL PRIMARY KEY,
+        material_id INTEGER NOT NULL REFERENCES materials(id),
+        tug10_file_id TEXT NOT NULL,
+        tug10_link TEXT,
+        status TEXT NOT NULL DEFAULT 'checked_supervisor',
+        catatan TEXT,
+        gudang_catatan TEXT,
+        pengawas_id INTEGER NOT NULL REFERENCES users(id),
+        gudang_id INTEGER REFERENCES users(id),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        completed_at TIMESTAMPTZ
+      );
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS retur_unit (
+        id SERIAL PRIMARY KEY,
+        dokumen_id INTEGER NOT NULL REFERENCES retur_dokumen(id) ON DELETE CASCADE,
+        label TEXT NOT NULL,
+        sn TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS retur_unit_sn_unique ON retur_unit (sn) WHERE sn IS NOT NULL;
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS retur_template_item (
+        id SERIAL PRIMARY KEY,
+        material_id INTEGER NOT NULL REFERENCES materials(id) ON DELETE CASCADE,
+        label TEXT NOT NULL,
+        urut INTEGER NOT NULL DEFAULT 0
+      );
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS retur_item_cek (
+        id SERIAL PRIMARY KEY,
+        unit_id INTEGER NOT NULL REFERENCES retur_unit(id) ON DELETE CASCADE,
+        stage TEXT NOT NULL,
+        item_label TEXT NOT NULL,
+        hasil TEXT NOT NULL,
+        catatan TEXT,
+        foto_file_id TEXT NOT NULL,
+        foto_link TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS retur_notifikasi (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        dokumen_id INTEGER NOT NULL REFERENCES retur_dokumen(id) ON DELETE CASCADE,
+        message TEXT NOT NULL,
+        read_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS retur_gdrive_config (
+        id SERIAL PRIMARY KEY,
+        access_token TEXT,
+        refresh_token TEXT,
+        token_expiry TIMESTAMPTZ,
+        account_email TEXT,
+        folder_id TEXT,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+    const rgcRows = await pool.query("SELECT id FROM retur_gdrive_config LIMIT 1");
+    if (rgcRows.rows.length === 0) {
+      await pool.query("INSERT INTO retur_gdrive_config (access_token, refresh_token) VALUES (NULL, NULL)");
+    }
 
     logger.info("Database tables ready");
 

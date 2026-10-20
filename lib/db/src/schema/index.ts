@@ -4,3 +4,4 @@ export * from "./scanSessions";
 export * from "./nonScanSessions";
 export * from "./materialBekas";
 export * from "./kas";
+export * from "./retur";

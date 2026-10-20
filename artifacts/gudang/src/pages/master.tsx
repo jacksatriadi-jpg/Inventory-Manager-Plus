@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import * as xlsx from "xlsx";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Database, Package2, Users2, Plus, Pencil, Trash2, Loader2, DatabaseBackup, Download, Upload, ShieldAlert, CheckCircle2, Clock, Calendar, HardDrive, PlayCircle, RefreshCw, Link2, Link2Off, CloudUpload, FileSpreadsheet, LayoutDashboard, ScanLine, PackagePlus, PackageMinus, History, QrCode, PackageOpen, ClipboardCheck } from "lucide-react";
+import { Database, Package2, Users2, Plus, Pencil, Trash2, Loader2, DatabaseBackup, Download, Upload, ShieldAlert, CheckCircle2, Clock, Calendar, HardDrive, PlayCircle, RefreshCw, Link2, Link2Off, CloudUpload, FileSpreadsheet, LayoutDashboard, ScanLine, PackagePlus, PackageMinus, History, QrCode, PackageOpen, ClipboardCheck, PackageX, BadgeCheck } from "lucide-react";
 import { useListMaterials, useCreateMaterial, useUpdateMaterial, useDeleteMaterial, 
          useListUsers, useCreateUser, useUpdateUser, useDeleteUser, getListMaterialsQueryKey, getListUsersQueryKey } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
@@ -534,6 +534,8 @@ const AVAILABLE_MENUS = [
   { href: "/riwayat", label: "Riwayat", icon: History },
   { href: "/barcode-tools", label: "Barcode Tools", icon: QrCode },
   { href: "/material-bekas", label: "Material Bekas", icon: PackageOpen },
+  { href: "/retur", label: "Material Retur", icon: PackageX },
+  { href: "retur:gudang", label: "Retur — Petugas Gudang (verifikasi, riwayat, notifikasi)", icon: BadgeCheck },
   { href: "/absensi", label: "Absensi", icon: ClipboardCheck },
   { href: "/master", label: "Master", icon: Database },
   { href: "/master?tab=backup", label: "Backup & Restore", icon: DatabaseBackup },

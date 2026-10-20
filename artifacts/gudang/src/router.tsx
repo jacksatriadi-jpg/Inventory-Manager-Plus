@@ -11,6 +11,7 @@ import MaterialMasuk from "@/pages/material-masuk";
 import MaterialKeluar from "@/pages/material-keluar";
 import BarcodeTools from "@/pages/barcode-tools";
 import MaterialBekas from "@/pages/material-bekas";
+import Retur from "@/pages/retur";
 import KasGudang from "@/pages/kas-gudang";
 import Absensi from "@/pages/absensi";
 
@@ -54,6 +55,8 @@ export default function AppRouter() {
             <Route path="/backup" component={() => <ProtectedRoute component={Backup} roles={["master"]} />} />
             <Route path="/barcode-tools" component={() => <ProtectedRoute component={BarcodeTools} roles={["user", "master"]} />} />
             <Route path="/material-bekas" component={() => <ProtectedRoute component={MaterialBekas} roles={["user", "master"]} />} />
+            <Route path="/retur" component={() => <ProtectedRoute component={Retur} roles={["user", "master"]} />} />
+            <Route path="/retur/:path*" component={() => <ProtectedRoute component={Retur} roles={["user", "master"]} />} />
             <Route path="/kas-gudang" component={() => <ProtectedRoute component={KasGudang} roles={["bendahara"]} />} />
             <Route path="/absensi" component={() => <ProtectedRoute component={Absensi} roles={["user", "master", "bendahara"]} />} />
             <Route>404 Not Found</Route>

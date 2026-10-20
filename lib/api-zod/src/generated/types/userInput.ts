@@ -11,4 +11,5 @@ export interface UserInput {
   username: string;
   password: string;
   role: UserInputRole;
+  menuAccess?: string[];
 }

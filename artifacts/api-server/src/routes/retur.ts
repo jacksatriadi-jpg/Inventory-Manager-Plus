@@ -1,0 +1,868 @@
+import { Router, type IRouter, type Request, type Response } from "express";
+import { pool } from "@workspace/db";
+import { parseToken } from "../lib/auth";
+import { logger } from "../lib/logger";
+import {
+  getReturAuthUrl,
+  exchangeReturCodeAndSave,
+  disconnectReturDrive,
+  getReturDriveStatus,
+  uploadReturDataUrl,
+  downloadReturFile,
+} from "../lib/retur-drive";
+
+const router: IRouter = Router();
+
+// ─── Modul Retur Material (TUG10 + ceklist 2 tahap) ─────────────────────────────
+// Retur user  : role master ATAU menuAccess memuat "/retur" / "retur:gudang"
+// Gudang      : role master ATAU menuAccess memuat "retur:gudang"
+// role guest selalu ditolak.
+
+const DRIVE_NOT_CONNECTED_MSG = "Akun Google Drive Retur belum terhubung. Hubungkan akun Drive di tab Pengaturan.";
+
+interface ReturActor {
+  id: number;
+  username: string;
+  role: string;
+  menuAccess: string[];
+}
+
+interface UserRow {
+  id: number;
+  username: string;
+  role: string;
+  menu_access: string[] | null;
+}
+
+async function loadActor(req: Request, res: Response): Promise<ReturActor | null> {
+  const auth = req.headers.authorization;
+  const token = typeof auth === "string" && auth.startsWith("Bearer ") ? auth.slice(7) : null;
+  if (!token) {
+    res.status(401).json({ error: "Unauthorized" });
+    return null;
+  }
+  const parsed = parseToken(token);
+  if (!parsed) {
+    res.status(401).json({ error: "Invalid token" });
+    return null;
+  }
+  const result = await pool.query(
+    "SELECT id, username, role, menu_access FROM users WHERE id = $1",
+    [parsed.userId],
+  );
+  if (result.rows.length === 0) {
+    res.status(401).json({ error: "User tidak ditemukan" });
+    return null;
+  }
+  const row = result.rows[0] as UserRow; // pg melonggarkan tipe rows; kolom sesuai SELECT
+  return {
+    id: row.id,
+    username: row.username,
+    role: row.role,
+    menuAccess: Array.isArray(row.menu_access) ? row.menu_access : [],
+  };
+}
+
+// null = respons sudah dikirim helper
+async function requireReturUser(req: Request, res: Response): Promise<ReturActor | null> {
+  const actor = await loadActor(req, res);
+  if (!actor) return null;
+  if (actor.role === "guest") { res.status(403).json({ error: "Akses ditolak" }); return null; }
+  const isReturUser =
+    actor.role === "master" ||
+    actor.menuAccess.includes("/retur") ||
+    actor.menuAccess.includes("retur:gudang");
+  if (!isReturUser) {
+    res.status(403).json({ error: "Akun Anda tidak memiliki akses modul Retur" });
+    return null;
+  }
+  return actor;
+}
+
+async function requireGudang(req: Request, res: Response): Promise<ReturActor | null> {
+  const actor = await loadActor(req, res);
+  if (!actor) return null;
+  if (actor.role === "guest") { res.status(403).json({ error: "Akses ditolak" }); return null; }
+  if (actor.role !== "master" && !actor.menuAccess.includes("retur:gudang")) {
+    res.status(403).json({ error: "Hanya petugas gudang retur yang dapat melakukan ini" });
+    return null;
+  }
+  return actor;
+}
+
+async function requireReturMaster(req: Request, res: Response): Promise<ReturActor | null> {
+  const actor = await loadActor(req, res);
+  if (!actor) return null;
+  if (actor.role !== "master") {
+    res.status(403).json({ error: "Hanya master yang dapat melakukan ini" });
+    return null;
+  }
+  return actor;
+}
+
+function bodyObject(req: Request): Record<string, unknown> {
+  const body: Record<string, unknown> =
+    req.body && typeof req.body === "object" ? req.body : {};
+  return body;
+}
+
+// ─── Validasi ───────────────────────────────────────────────────────────────────
+
+function isImageDataUrl(v: unknown): v is string {
+  return typeof v === "string" && /^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+$/i.test(v);
+}
+
+function extFromDataUrl(dataUrl: string): string {
+  const mime = dataUrl.slice(5, dataUrl.indexOf(";"));
+  const sub = (mime.split("/")[1] || "jpeg").replace(/[^a-z0-9]/gi, "");
+  return sub === "jpeg" ? "jpg" : sub;
+}
+
+interface ValidItem {
+  label: string;
+  hasil: "ada" | "hilang" | "rusak";
+  catatan: string | null;
+  foto: string;
+}
+
+type ItemsResult = { ok: true; items: ValidItem[] } | { ok: false; error: string };
+
+function validateCekItems(itemsRaw: unknown): ItemsResult {
+  if (!Array.isArray(itemsRaw)) return { ok: true, items: [] };
+  const items: ValidItem[] = [];
+  for (const entry of itemsRaw as unknown[]) {
+    if (!entry || typeof entry !== "object") {
+      return { ok: false, error: "Item ceklist tidak valid" };
+    }
+    const it = entry as Record<string, unknown>; // fields parsed via typeof guards below
+    const label = typeof it.label === "string" ? it.label.trim() : "";
+    if (!label) return { ok: false, error: "Label item ceklist wajib diisi" };
+    const hasil = it.hasil;
+    if (hasil !== "ada" && hasil !== "hilang" && hasil !== "rusak") {
+      return { ok: false, error: `Hasil untuk item "${label}" harus 'ada', 'hilang', atau 'rusak'` };
+    }
+    if (!isImageDataUrl(it.foto)) {
+      return { ok: false, error: `Foto wajib untuk item "${label}" (format image)` };
+    }
+    items.push({
+      label,
+      hasil,
+      catatan: typeof it.catatan === "string" && it.catatan.trim() ? it.catatan.trim() : null,
+      foto: it.foto,
+    });
+  }
+  return { ok: true, items };
+}
+
+// ─── Bentuk respons ─────────────────────────────────────────────────────────────
+
+interface ReturDetail {
+  id: number;
+  materialId: number;
+  materialName: string;
+  status: string;
+  tug10FileId: string;
+  tug10Link: string | null;
+  catatan: string | null;
+  gudangCatatan: string | null;
+  pengawasId: number;
+  pengawasName: string;
+  gudangId: number | null;
+  gudangName: string | null;
+  unitCount: number;
+  createdAt: string;
+  checkedAt: string;
+  completedAt: string | null;
+  units: ReturUnitDetail[];
+}
+
+interface ReturUnitDetail {
+  id: number;
+  label: string;
+  sn: string | null;
+  items: ReturItemDetail[];
+}
+
+interface ReturItemDetail {
+  stage: string;
+  itemLabel: string;
+  hasil: string;
+  catatan: string | null;
+  fotoFileId: string;
+  fotoLink: string | null;
+}
+
+interface DocJoinedRow {
+  id: number;
+  material_id: number;
+  material_name: string;
+  status: string;
+  tug10_file_id: string;
+  tug10_link: string | null;
+  catatan: string | null;
+  gudang_catatan: string | null;
+  pengawas_id: number;
+  pengawas_name: string;
+  gudang_id: number | null;
+  gudang_name: string | null;
+  created_at: Date;
+  checked_at: Date;
+  completed_at: Date | null;
+  unit_count?: number;
+}
+
+interface UnitRow {
+  id: number;
+  label: string;
+  sn: string | null;
+}
+
+interface ItemCekRow {
+  unit_id: number;
+  stage: string;
+  item_label: string;
+  hasil: string;
+  catatan: string | null;
+  foto_file_id: string;
+  foto_link: string | null;
+}
+
+async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> {
+  const docRes = await pool.query(
+    `SELECT d.id, d.material_id, m.name AS material_name, d.status,
+            d.tug10_file_id, d.tug10_link, d.catatan, d.gudang_catatan,
+            d.pengawas_id, p.username AS pengawas_name,
+            d.gudang_id, g.username AS gudang_name,
+            d.created_at, d.checked_at, d.completed_at
+     FROM retur_dokumen d
+     JOIN materials m ON m.id = d.material_id
+     JOIN users p ON p.id = d.pengawas_id
+     LEFT JOIN users g ON g.id = d.gudang_id
+     WHERE d.id = $1`,
+    [dokumenId],
+  );
+  if (docRes.rows.length === 0) return null;
+  const d = docRes.rows[0] as DocJoinedRow; // kolom sesuai SELECT
+
+  const unitsRes = await pool.query(
+    "SELECT id, label, sn FROM retur_unit WHERE dokumen_id = $1 ORDER BY id",
+    [dokumenId],
+  );
+  const unitRows = unitsRes.rows as UnitRow[];
+
+  let itemRows: ItemCekRow[] = [];
+  if (unitRows.length > 0) {
+    const itemsRes = await pool.query(
+      `SELECT unit_id, stage, item_label, hasil, catatan, foto_file_id, foto_link
+       FROM retur_item_cek WHERE unit_id = ANY($1::int[]) ORDER BY id`,
+      [unitRows.map((u) => u.id)],
+    );
+    itemRows = itemsRes.rows as ItemCekRow[];
+  }
+
+  const units: ReturUnitDetail[] = unitRows.map((u) => ({
+    id: u.id,
+    label: u.label,
+    sn: u.sn,
+    items: itemRows
+      .filter((it) => it.unit_id === u.id)
+      .map((it) => ({
+        stage: it.stage,
+        itemLabel: it.item_label,
+        hasil: it.hasil,
+        catatan: it.catatan,
+        fotoFileId: it.foto_file_id,
+        fotoLink: it.foto_link,
+      })),
+  }));
+
+  return {
+    id: d.id,
+    materialId: d.material_id,
+    materialName: d.material_name,
+    status: d.status,
+    tug10FileId: d.tug10_file_id,
+    tug10Link: d.tug10_link,
+    catatan: d.catatan,
+    gudangCatatan: d.gudang_catatan,
+    pengawasId: d.pengawas_id,
+    pengawasName: d.pengawas_name,
+    gudangId: d.gudang_id,
+    gudangName: d.gudang_name,
+    unitCount: unitRows.length,
+    createdAt: new Date(d.created_at).toISOString(),
+    checkedAt: new Date(d.checked_at).toISOString(),
+    completedAt: d.completed_at ? new Date(d.completed_at).toISOString() : null,
+    units,
+  };
+}
+
+// ─── Preset template ────────────────────────────────────────────────────────────
+
+const PRESET_2LINE = [
+  "MCB utama (incoming)",
+  "MCB line 1",
+  "MCB line 2",
+  "Busbar tembaga",
+  "Bar Netral (N)",
+  "Bar Arde/Ground",
+  "Sekrup terminal lengkap",
+  "Cover/pemisah terminal",
+  "Bracket dudukan tiang + clamp",
+  "Sticker bahaya listrik & label line",
+  "Kabel Netral terpasang",
+  "Kabel Arde terpasang",
+];
+
+const PRESET_4LINE = [
+  "MCB utama (incoming)",
+  "MCB line 1",
+  "MCB line 2",
+  "MCB line 3",
+  "MCB line 4",
+  "Jumper antar-line utuh",
+  "Busbar tembaga",
+  "Bar Netral (N)",
+  "Bar Arde/Ground",
+  "Sekrup terminal lengkap",
+  "Cover/pemisah terminal",
+  "Bracket dudukan tiang + clamp",
+  "Sticker bahaya listrik & label line",
+  "Kabel Netral terpasang",
+  "Kabel Arde terpasang",
+];
+
+const PRESET_UMUM = [
+  "Fisik unit utuh (tidak penyok/terbakar)",
+  "Nameplate terbaca",
+  "Aksesori/komponen internal lengkap",
+  "Kabel/terminal lengkap",
+];
+
+function presetForMaterialName(name: string): string[] {
+  if (/4\s*-?\s*line/i.test(name)) return PRESET_4LINE;
+  if (/2\s*-?\s*line/i.test(name)) return PRESET_2LINE;
+  return PRESET_UMUM;
+}
+
+interface TemplateRow {
+  id: number;
+  label: string;
+}
+
+// ═══ ROUTE STATIS DULU — Express 5: sebelum "/retur/:id" ═══════════════════════
+
+// ─── GET /api/retur/google/status — status akun Drive Retur ─────────────────────
+router.get("/retur/google/status", async (req, res): Promise<void> => {
+  if (!(await requireReturUser(req, res))) return;
+  res.json(await getReturDriveStatus());
+});
+
+// ─── GET /api/retur/google/auth-url (master) ────────────────────────────────────
+router.get("/retur/google/auth-url", async (req, res): Promise<void> => {
+  if (!(await requireReturMaster(req, res))) return;
+  try {
+    res.json({ url: getReturAuthUrl() });
+  } catch (err: unknown) {
+    logger.error({ err }, "Retur Drive: gagal membuat URL autorisasi");
+    res.status(500).json({ error: "Google Drive Retur memerlukan GOOGLE_CLIENT_ID dan GOOGLE_CLIENT_SECRET" });
+  }
+});
+
+// ─── GET /api/retur/google/callback — redirect Google (tanpa auth) ──────────────
+router.get("/retur/google/callback", async (req, res): Promise<void> => {
+  const code = typeof req.query.code === "string" ? req.query.code : "";
+  if (!code) { res.status(400).json({ error: "Kode autorisasi Google tidak ada" }); return; }
+  try {
+    await exchangeReturCodeAndSave(code);
+    res.redirect("/retur?drive=connected");
+  } catch (err: unknown) {
+    logger.error({ err }, "Retur Drive: tukar kode gagal");
+    res.redirect("/retur?drive=error");
+  }
+});
+
+// ─── POST /api/retur/google/disconnect (master) ─────────────────────────────────
+router.post("/retur/google/disconnect", async (req, res): Promise<void> => {
+  if (!(await requireReturMaster(req, res))) return;
+  await disconnectReturDrive();
+  res.json({ ok: true });
+});
+
+// ─── GET /api/retur/template/:materialId — daftar item ceklist ──────────────────
+router.get("/retur/template/:materialId", async (req, res): Promise<void> => {
+  if (!(await requireReturUser(req, res))) return;
+  const materialId = Number(req.params.materialId);
+  if (!Number.isInteger(materialId)) { res.status(400).json({ error: "materialId tidak valid" }); return; }
+
+  const rows = await pool.query(
+    "SELECT id, label FROM retur_template_item WHERE material_id = $1 ORDER BY urut, id",
+    [materialId],
+  );
+  if (rows.rows.length > 0) {
+    res.json({ items: (rows.rows as TemplateRow[]).map((r) => ({ id: r.id, label: r.label })) });
+    return;
+  }
+
+  const mat = await pool.query("SELECT name FROM materials WHERE id = $1", [materialId]);
+  const matRow = mat.rows[0] as { name: string } | undefined; // kolom sesuai SELECT
+  const name = matRow ? matRow.name : "";
+  res.json({ items: presetForMaterialName(name).map((label) => ({ id: null, label })) });
+});
+
+// ─── PUT /api/retur/template/:materialId (gudang) — replace template ────────────
+router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
+  if (!(await requireGudang(req, res))) return;
+  const materialId = Number(req.params.materialId);
+  if (!Number.isInteger(materialId)) { res.status(400).json({ error: "materialId tidak valid" }); return; }
+
+  const labels = bodyObject(req).labels;
+  if (!Array.isArray(labels)) { res.status(400).json({ error: "labels harus array string" }); return; }
+  const cleaned: string[] = [];
+  for (const l of labels) {
+    if (typeof l !== "string" || !l.trim()) { res.status(400).json({ error: "Setiap label harus string tidak kosong" }); return; }
+    cleaned.push(l.trim());
+  }
+
+  const mat = await pool.query("SELECT id FROM materials WHERE id = $1", [materialId]);
+  if (mat.rows.length === 0) { res.status(404).json({ error: "Material tidak ditemukan" }); return; }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM retur_template_item WHERE material_id = $1", [materialId]);
+    for (let i = 0; i < cleaned.length; i++) {
+      await client.query(
+        "INSERT INTO retur_template_item (material_id, label, urut) VALUES ($1, $2, $3)",
+        [materialId, cleaned[i], i],
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err: unknown) {
+    await client.query("ROLLBACK");
+    logger.error({ err }, "Retur template: simpan gagal");
+    res.status(500).json({ error: "Gagal menyimpan template" });
+    return;
+  } finally {
+    client.release();
+  }
+
+  const rows = await pool.query(
+    "SELECT id, label FROM retur_template_item WHERE material_id = $1 ORDER BY urut, id",
+    [materialId],
+  );
+  res.json({ items: (rows.rows as TemplateRow[]).map((r) => ({ id: r.id, label: r.label })) });
+});
+
+// ─── GET /api/retur/notifications — notifikasi unread milik user ────────────────
+interface NotifRow {
+  id: number;
+  dokumen_id: number;
+  message: string;
+  created_at: Date;
+}
+
+router.get("/retur/notifications", async (req, res): Promise<void> => {
+  const actor = await requireReturUser(req, res);
+  if (!actor) return;
+  const rows = await pool.query(
+    `SELECT id, dokumen_id, message, created_at
+     FROM retur_notifikasi
+     WHERE user_id = $1 AND read_at IS NULL
+     ORDER BY created_at DESC, id DESC`,
+    [actor.id],
+  );
+  const items = rows.rows as NotifRow[];
+  res.json({
+    count: items.length,
+    items: items.map((n) => ({
+      id: n.id,
+      dokumenId: n.dokumen_id,
+      message: n.message,
+      createdAt: new Date(n.created_at).toISOString(),
+    })),
+  });
+});
+
+// ─── POST /api/retur/notifications/read — tandai dibaca ─────────────────────────
+router.post("/retur/notifications/read", async (req, res): Promise<void> => {
+  const actor = await requireReturUser(req, res);
+  if (!actor) return;
+  const body = bodyObject(req);
+  const all = body.all === true;
+  const idsRaw = body.ids;
+
+  if (all) {
+    await pool.query(
+      "UPDATE retur_notifikasi SET read_at = NOW() WHERE user_id = $1 AND read_at IS NULL",
+      [actor.id],
+    );
+    res.json({ ok: true });
+    return;
+  }
+
+  if (!Array.isArray(idsRaw) || idsRaw.length === 0) {
+    res.json({ ok: true });
+    return;
+  }
+  const ids = (idsRaw as unknown[]).filter((v): v is number => Number.isInteger(v));
+  if (ids.length === 0) { res.json({ ok: true }); return; }
+  await pool.query(
+    "UPDATE retur_notifikasi SET read_at = NOW() WHERE user_id = $1 AND read_at IS NULL AND id = ANY($2::int[])",
+    [actor.id, ids],
+  );
+  res.json({ ok: true });
+});
+
+// ─── GET /api/retur/file/:fileId — stream bytes foto dari Drive Retur ───────────
+router.get("/retur/file/:fileId", async (req, res): Promise<void> => {
+  if (!(await requireReturUser(req, res))) return;
+  const fileId = req.params.fileId;
+  if (!fileId) { res.status(404).json({ error: "File tidak ditemukan" }); return; }
+  try {
+    const { contentType, buffer } = await downloadReturFile(fileId);
+    res.setHeader("Content-Type", contentType);
+    res.send(buffer);
+  } catch (err: unknown) {
+    logger.error({ err, fileId }, "Retur Drive: unduh file gagal");
+    res.status(404).json({ error: "File tidak ditemukan" });
+  }
+});
+
+// ─── POST /api/retur — buat dokumen retur (pengawas selesai ceklist) ────────────
+interface ValidUnit {
+  label: string;
+  items: ValidItem[];
+}
+
+interface DriveFile {
+  fileId: string;
+  webViewLink: string;
+}
+
+router.post("/retur", async (req, res): Promise<void> => {
+  const actor = await requireReturUser(req, res);
+  if (!actor) return;
+
+  const body = bodyObject(req);
+  const materialId = body.materialId;
+  const tug10Photo = body.tug10Photo;
+  const catatan = body.catatan;
+  const unitsRaw = body.units;
+
+  if (!Number.isInteger(materialId)) { res.status(400).json({ error: "materialId tidak valid" }); return; }
+  if (!isImageDataUrl(tug10Photo)) { res.status(400).json({ error: "Foto TUG10 wajib diunggah (format image)" }); return; }
+  if (!Array.isArray(unitsRaw) || unitsRaw.length === 0) { res.status(400).json({ error: "Minimal 1 unit harus diisi" }); return; }
+
+  const mat = await pool.query("SELECT id, name FROM materials WHERE id = $1", [materialId]);
+  if (mat.rows.length === 0) { res.status(400).json({ error: "Material tidak ditemukan" }); return; }
+  const matRow = mat.rows[0] as { id: number; name: string }; // kolom sesuai SELECT
+  const materialName = matRow.name;
+
+  const units: ValidUnit[] = [];
+  for (let i = 0; i < unitsRaw.length; i++) {
+    const entry = unitsRaw[i];
+    if (!entry || typeof entry !== "object") { res.status(400).json({ error: `Unit ${i + 1} tidak valid` }); return; }
+    const u = entry as Record<string, unknown>; // fields parsed via typeof guards below
+    const label = typeof u.label === "string" && u.label.trim() ? u.label.trim() : `Unit ${i + 1}`;
+    const v = validateCekItems(u.items);
+    if (!v.ok) { res.status(400).json({ error: `Unit "${label}": ${v.error}` }); return; }
+    units.push({ label, items: v.items });
+  }
+
+  const drive = await getReturDriveStatus();
+  if (!drive.connected) { res.status(400).json({ error: DRIVE_NOT_CONNECTED_MSG }); return; }
+
+  // Upload semua foto ke Drive Retur; gagal → 502
+  const stamp = Date.now();
+  let tug10File: DriveFile;
+  const unitFiles: DriveFile[][] = [];
+  try {
+    tug10File = await uploadReturDataUrl(tug10Photo, `RETUR-TUG10-${materialId}-${stamp}.${extFromDataUrl(tug10Photo)}`);
+    for (let ui = 0; ui < units.length; ui++) {
+      const files: DriveFile[] = [];
+      for (let ii = 0; ii < units[ui].items.length; ii++) {
+        files.push(await uploadReturDataUrl(units[ui].items[ii].foto, `RETUR-U${ui + 1}-I${ii + 1}-${stamp}.${extFromDataUrl(units[ui].items[ii].foto)}`));
+      }
+      unitFiles.push(files);
+    }
+  } catch (err: unknown) {
+    logger.error({ err }, "Retur: upload foto ke Drive gagal");
+    res.status(502).json({ error: "Gagal upload foto ke Google Drive" });
+    return;
+  }
+
+  const client = await pool.connect();
+  let dokumenId = 0;
+  try {
+    await client.query("BEGIN");
+    const docRes = await client.query(
+      `INSERT INTO retur_dokumen (material_id, tug10_file_id, tug10_link, catatan, pengawas_id)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [
+        materialId,
+        tug10File.fileId,
+        tug10File.webViewLink || null,
+        typeof catatan === "string" && catatan.trim() ? catatan.trim() : null,
+        actor.id,
+      ],
+    );
+    const docRow = docRes.rows[0] as { id: number }; // RETURNING id
+    dokumenId = docRow.id;
+
+    for (let ui = 0; ui < units.length; ui++) {
+      const unitRes = await client.query(
+        "INSERT INTO retur_unit (dokumen_id, label) VALUES ($1, $2) RETURNING id",
+        [dokumenId, units[ui].label],
+      );
+      const unitRow = unitRes.rows[0] as { id: number }; // RETURNING id
+      const unitId = unitRow.id;
+      for (let ii = 0; ii < units[ui].items.length; ii++) {
+        const it = units[ui].items[ii];
+        await client.query(
+          `INSERT INTO retur_item_cek (unit_id, stage, item_label, hasil, catatan, foto_file_id, foto_link)
+           VALUES ($1, 'pengawas', $2, $3, $4, $5, $6)`,
+          [unitId, it.label, it.hasil, it.catatan, unitFiles[ui][ii].fileId, unitFiles[ui][ii].webViewLink || null],
+        );
+      }
+    }
+
+    const message = `Retur ${materialName} (${units.length} unit) oleh ${actor.username} selesai diceklist — menunggu verifikasi gudang.`;
+    await client.query(
+      `INSERT INTO retur_notifikasi (user_id, dokumen_id, message)
+       SELECT u.id, $1, $2
+       FROM users u
+       WHERE (u.role = 'master' OR u.menu_access @> '["retur:gudang"]'::jsonb)
+         AND u.id <> $3`,
+      [dokumenId, message, actor.id],
+    );
+    await client.query("COMMIT");
+  } catch (err: unknown) {
+    await client.query("ROLLBACK");
+    logger.error({ err }, "Retur: simpan dokumen gagal");
+    res.status(500).json({ error: "Gagal menyimpan dokumen retur" });
+    return;
+  } finally {
+    client.release();
+  }
+
+  const detail = await buildReturDetail(dokumenId);
+  res.status(201).json(detail);
+});
+
+// ─── GET /api/retur — daftar dokumen (gudang: semua; selain gudang: milik sendiri)
+router.get("/retur", async (req, res): Promise<void> => {
+  const actor = await requireReturUser(req, res);
+  if (!actor) return;
+  const isGudang = actor.role === "master" || actor.menuAccess.includes("retur:gudang");
+
+  const args: (string | number)[] = [];
+  if (!isGudang) { args.push(actor.id); }
+  const result = await pool.query(
+    `SELECT d.id, d.material_id, m.name AS material_name, d.status,
+            d.tug10_file_id, d.tug10_link, d.catatan, d.gudang_catatan,
+            d.pengawas_id, p.username AS pengawas_name,
+            d.gudang_id, g.username AS gudang_name,
+            (SELECT COUNT(*)::int FROM retur_unit u WHERE u.dokumen_id = d.id) AS unit_count,
+            d.created_at, d.checked_at, d.completed_at
+     FROM retur_dokumen d
+     JOIN materials m ON m.id = d.material_id
+     JOIN users p ON p.id = d.pengawas_id
+     LEFT JOIN users g ON g.id = d.gudang_id
+     ${isGudang ? "" : "WHERE d.pengawas_id = $1"}
+     ORDER BY d.created_at DESC, d.id DESC`,
+    args,
+  );
+  const rows = result.rows as DocJoinedRow[]; // kolom sesuai SELECT
+  res.json(
+    rows.map((d) => ({
+      id: d.id,
+      materialId: d.material_id,
+      materialName: d.material_name,
+      status: d.status,
+      tug10FileId: d.tug10_file_id,
+      tug10Link: d.tug10_link,
+      catatan: d.catatan,
+      gudangCatatan: d.gudang_catatan,
+      pengawasId: d.pengawas_id,
+      pengawasName: d.pengawas_name,
+      gudangId: d.gudang_id,
+      gudangName: d.gudang_name,
+      unitCount: d.unit_count ?? 0,
+      createdAt: new Date(d.created_at).toISOString(),
+      checkedAt: new Date(d.checked_at).toISOString(),
+      completedAt: d.completed_at ? new Date(d.completed_at).toISOString() : null,
+    })),
+  );
+});
+
+// ═══ ROUTE DYNAMIC — setelah statis; :id dijaga numerik ════════════════════════
+
+// ─── GET /api/retur/:id — detail penuh (gudang ATAU pengawas pemilik) ───────────
+router.get("/retur/:id", async (req, res): Promise<void> => {
+  const actor = await requireReturUser(req, res);
+  if (!actor) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
+
+  const owner = await pool.query("SELECT pengawas_id FROM retur_dokumen WHERE id = $1", [id]);
+  if (owner.rows.length === 0) { res.status(404).json({ error: "Dokumen retur tidak ditemukan" }); return; }
+  const ownerRow = owner.rows[0] as { pengawas_id: number }; // kolom sesuai SELECT
+  const isGudang = actor.role === "master" || actor.menuAccess.includes("retur:gudang");
+  const isOwner = ownerRow.pengawas_id === actor.id;
+  if (!isGudang && !isOwner) { res.status(403).json({ error: "Anda tidak berhak melihat dokumen ini" }); return; }
+
+  const detail = await buildReturDetail(id);
+  if (!detail) { res.status(404).json({ error: "Dokumen retur tidak ditemukan" }); return; }
+  res.json(detail);
+});
+
+// ─── POST /api/retur/:id/verify (gudang) — verifikasi + SN + ceklist gudang ─────
+interface VerifyUnit {
+  unitId: number;
+  sn: string;
+  items: ValidItem[];
+}
+
+router.post("/retur/:id/verify", async (req, res): Promise<void> => {
+  const actor = await requireGudang(req, res);
+  if (!actor) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
+
+  const doc = await pool.query("SELECT id, status FROM retur_dokumen WHERE id = $1", [id]);
+  if (doc.rows.length === 0) { res.status(404).json({ error: "Dokumen retur tidak ditemukan" }); return; }
+  const docRow = doc.rows[0] as { id: number; status: string }; // kolom sesuai SELECT
+  if (docRow.status !== "checked_supervisor") {
+    res.status(400).json({ error: "Dokumen sudah selesai diverifikasi" });
+    return;
+  }
+
+  const body = bodyObject(req);
+  const gudangCatatan = body.gudangCatatan;
+  const unitsRaw = body.units;
+  if (!Array.isArray(unitsRaw)) { res.status(400).json({ error: "units harus array" }); return; }
+
+  const docUnitsRes = await pool.query(
+    "SELECT id, label FROM retur_unit WHERE dokumen_id = $1 ORDER BY id",
+    [id],
+  );
+  const docUnits = docUnitsRes.rows as { id: number; label: string }[];
+  const docUnitIds = new Set<number>(docUnits.map((u) => u.id));
+
+  const verifyUnits: VerifyUnit[] = [];
+  const payloadUnitIds = new Set<number>();
+  for (const entry of unitsRaw as unknown[]) {
+    if (!entry || typeof entry !== "object") { res.status(400).json({ error: "Unit verifikasi tidak valid" }); return; }
+    const u = entry as Record<string, unknown>; // fields parsed via typeof guards below
+    const unitId = typeof u.unitId === "number" ? u.unitId : NaN;
+    if (!Number.isInteger(unitId) || !docUnitIds.has(unitId)) {
+      res.status(400).json({ error: "Unit bukan milik dokumen ini" });
+      return;
+    }
+    if (payloadUnitIds.has(unitId)) {
+      res.status(400).json({ error: "Unit ganda dalam payload" });
+      return;
+    }
+    payloadUnitIds.add(unitId);
+    const sn = typeof u.sn === "string" ? u.sn.trim() : "";
+    if (!sn) { res.status(400).json({ error: "SN wajib diisi" }); return; }
+    const v = validateCekItems(u.items);
+    if (!v.ok) { res.status(400).json({ error: `SN "${sn}": ${v.error}` }); return; }
+    verifyUnits.push({ unitId, sn, items: v.items });
+  }
+
+  // SETIAP unit dokumen wajib hadir di payload
+  for (const du of docUnits) {
+    if (!payloadUnitIds.has(du.id)) {
+      res.status(400).json({ error: `Unit "${du.label}" belum diverifikasi (SN wajib diisi)` });
+      return;
+    }
+  }
+
+  // SN duplikat: duplikat internal payload + precheck terhadap dokumen lain
+  const snList = verifyUnits.map((u) => u.sn);
+  const seenSn = new Set<string>();
+  for (const sn of snList) {
+    if (seenSn.has(sn)) { res.status(409).json({ error: `SN sudah digunakan: ${sn}` }); return; }
+    seenSn.add(sn);
+  }
+  const snDup = await pool.query(
+    "SELECT sn FROM retur_unit WHERE sn = ANY($1::text[]) AND dokumen_id <> $2 ORDER BY id LIMIT 1",
+    [snList, id],
+  );
+  if (snDup.rows.length > 0) {
+    const dupRow = snDup.rows[0] as { sn: string }; // kolom sesuai SELECT
+    res.status(409).json({ error: `SN sudah digunakan: ${dupRow.sn}` });
+    return;
+  }
+
+  const drive = await getReturDriveStatus();
+  if (!drive.connected) { res.status(400).json({ error: DRIVE_NOT_CONNECTED_MSG }); return; }
+
+  const stamp = Date.now();
+  const unitFiles: DriveFile[][] = [];
+  try {
+    for (let ui = 0; ui < verifyUnits.length; ui++) {
+      const files: DriveFile[] = [];
+      for (let ii = 0; ii < verifyUnits[ui].items.length; ii++) {
+        const it = verifyUnits[ui].items[ii];
+        files.push(await uploadReturDataUrl(it.foto, `RETUR-DOK${id}-U${ui + 1}-I${ii + 1}-GUDANG-${stamp}.${extFromDataUrl(it.foto)}`));
+      }
+      unitFiles.push(files);
+    }
+  } catch (err: unknown) {
+    logger.error({ err }, "Retur verify: upload foto ke Drive gagal");
+    res.status(502).json({ error: "Gagal upload foto ke Google Drive" });
+    return;
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (let ui = 0; ui < verifyUnits.length; ui++) {
+      await client.query("UPDATE retur_unit SET sn = $1 WHERE id = $2 AND dokumen_id = $3", [verifyUnits[ui].sn, verifyUnits[ui].unitId, id]);
+      for (let ii = 0; ii < verifyUnits[ui].items.length; ii++) {
+        const it = verifyUnits[ui].items[ii];
+        await client.query(
+          `INSERT INTO retur_item_cek (unit_id, stage, item_label, hasil, catatan, foto_file_id, foto_link)
+           VALUES ($1, 'gudang', $2, $3, $4, $5, $6)`,
+          [verifyUnits[ui].unitId, it.label, it.hasil, it.catatan, unitFiles[ui][ii].fileId, unitFiles[ui][ii].webViewLink || null],
+        );
+      }
+    }
+    await client.query(
+      `UPDATE retur_dokumen
+       SET status = 'completed', gudang_id = $2, gudang_catatan = $3, completed_at = NOW()
+       WHERE id = $1`,
+      [id, actor.id, typeof gudangCatatan === "string" && gudangCatatan.trim() ? gudangCatatan.trim() : null],
+    );
+    await client.query(
+      "UPDATE retur_notifikasi SET read_at = NOW() WHERE dokumen_id = $1 AND read_at IS NULL",
+      [id],
+    );
+    await client.query("COMMIT");
+  } catch (err: unknown) {
+    await client.query("ROLLBACK");
+    const errCode = err && typeof err === "object" && "code" in err && typeof err.code === "string" ? err.code : "";
+    if (errCode === "23505") {
+      const dup = await pool.query(
+        "SELECT sn FROM retur_unit WHERE sn = ANY($1::text[]) AND dokumen_id <> $2 ORDER BY id LIMIT 1",
+        [snList, id],
+      );
+      const dupRow = dup.rows[0] as { sn: string } | undefined; // kolom sesuai SELECT
+      res.status(409).json({ error: `SN sudah digunakan: ${dupRow ? dupRow.sn : snList[0]}` });
+      return;
+    }
+    logger.error({ err }, "Retur verify: simpan gagal");
+    res.status(500).json({ error: "Gagal menyimpan verifikasi retur" });
+    return;
+  } finally {
+    client.release();
+  }
+
+  const detail = await buildReturDetail(id);
+  res.json(detail);
+});
+
+export default router;

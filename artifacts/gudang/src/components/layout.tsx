@@ -1,6 +1,7 @@
 import { useAuth } from "@/lib/auth";
 import { Link, useLocation } from "wouter";
-import { LayoutDashboard, ScanLine, History, Database, LogOut, UserCircle, DatabaseBackup, RefreshCw, PackagePlus, PackageMinus, Eye, QrCode, PackageOpen, Wallet, ClipboardCheck } from "lucide-react";
+import { useEffect, useState } from "react";
+import { LayoutDashboard, ScanLine, History, Database, LogOut, UserCircle, DatabaseBackup, RefreshCw, PackagePlus, PackageMinus, Eye, QrCode, PackageOpen, Wallet, ClipboardCheck, PackageX, Bell } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,6 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { fmtTanggal, isReturUser, returApi, type ReturNotifikasi } from "@/components/retur/shared";
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -25,11 +27,97 @@ const ALL_MENUS = [
   { href: "/riwayat", label: "Riwayat", icon: History },
   { href: "/barcode-tools", label: "Barcode Tools", icon: QrCode },
   { href: "/material-bekas", label: "Material Bekas", icon: PackageOpen },
+  { href: "/retur", label: "Material Retur", icon: PackageX },
   { href: "/kas-gudang", label: "Kas Gudang", icon: Wallet },
   { href: "/absensi", label: "Absensi", icon: ClipboardCheck },
   { href: "/master", label: "Master", icon: Database },
   { href: "/master?tab=backup", label: "Backup & Restore", icon: DatabaseBackup },
 ];
+
+// Lonceng notifikasi retur — poll GET /api/retur/notifications tiap 45 detik,
+// hanya untuk retur user; klik item → tab verifikasi dokumen terkait.
+interface NotifResponse {
+  count: number;
+  items: ReturNotifikasi[];
+}
+
+function ReturNotifications() {
+  const { user } = useAuth();
+  const [, setLocation] = useLocation();
+  const [items, setItems] = useState<ReturNotifikasi[]>([]);
+  const [count, setCount] = useState(0);
+
+  const visible = isReturUser(user);
+
+  useEffect(() => {
+    if (!visible) return;
+    let alive = true;
+    const load = () => {
+      returApi<NotifResponse>("/notifications")
+        .then((d) => { if (alive) { setCount(d.count ?? 0); setItems(d.items ?? []); } })
+        .catch(() => { /* server offline / sesi berakhir: coba lagi pada poll berikutnya */ });
+    };
+    load();
+    const timer = setInterval(load, 45000);
+    window.addEventListener("retur-notifications-changed", load);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      window.removeEventListener("retur-notifications-changed", load);
+    };
+  }, [visible]);
+
+  if (!visible) return null;
+
+  const markRead = async (ids?: number[]) => {
+    try {
+      await returApi("/notifications/read", { method: "POST", body: JSON.stringify(ids ? { ids } : { all: true }) });
+      setCount(0);
+      setItems([]);
+    } catch { /* biarkan tersinkron pada poll berikutnya */ }
+  };
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="sm" className="relative h-9 w-9 px-0 hover:bg-sidebar-accent/20" aria-label="Notifikasi Retur">
+          <Bell className="w-5 h-5" />
+          {count > 0 && (
+            <span className="absolute -top-0.5 -right-0.5 min-w-4 h-4 px-1 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center">
+              {count > 9 ? "9+" : count}
+            </span>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-80">
+        <DropdownMenuLabel className="text-sm font-semibold">Notifikasi Material Retur</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {items.length === 0 ? (
+          <div className="px-2 py-3 text-xs text-muted-foreground">Belum ada notifikasi.</div>
+        ) : (
+          items.map((n) => (
+            <DropdownMenuItem
+              key={n.id}
+              className="flex flex-col items-start gap-0.5 py-2 cursor-pointer whitespace-normal"
+              onClick={() => { markRead([n.id]); setLocation(`/retur?tab=verifikasi&dok=${n.dokumenId}`); }}
+            >
+              <span className="text-xs leading-snug">{n.message}</span>
+              <span className="text-[10px] text-muted-foreground">{fmtTanggal(n.createdAt)} · dokumen #{n.dokumenId}</span>
+            </DropdownMenuItem>
+          ))
+        )}
+        {items.length > 0 && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="text-xs cursor-pointer" onClick={() => markRead()}>
+              Tandai semua terbaca
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
 
 export function Layout({ children }: LayoutProps) {
   const { user, logout } = useAuth();
@@ -44,6 +132,11 @@ export function Layout({ children }: LayoutProps) {
     : ALL_MENUS.filter(menu => {
         // Kas Gudang khusus untuk user Bendahara
         if (menu.href === "/kas-gudang") return user?.role === "bendahara";
+        // Retur: kapabilitas "retur:gudang" saja tetap memberi akses menu /retur
+        if (menu.href === "/retur") {
+          const acc = (user?.menuAccess as string[]) || [];
+          return acc.includes("/retur") || acc.includes("retur:gudang");
+        }
         // Master sees all menus
         if (isAdmin) return true;
         // For regular users, check menuAccess
@@ -152,12 +245,18 @@ export function Layout({ children }: LayoutProps) {
             </div>
             <span className="font-bold text-sm">SISTEM GUDANG PEMARON</span>
           </div>
-          <AccountMenu />
+          <div className="flex items-center gap-1">
+            <ReturNotifications />
+            <AccountMenu />
+          </div>
         </header>
 
         {/* Desktop Top Bar */}
         <header className="hidden md:flex items-center justify-end px-6 py-2 border-b bg-card/50">
-          <AccountMenu />
+          <div className="flex items-center gap-1">
+            <ReturNotifications />
+            <AccountMenu />
+          </div>
         </header>
         
         {/* Mobile Nav */}

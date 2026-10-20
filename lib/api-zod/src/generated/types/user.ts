@@ -11,5 +11,6 @@ export interface User {
   id: number;
   username: string;
   role: UserRole;
+  menuAccess?: string[];
   createdAt: string;
 }

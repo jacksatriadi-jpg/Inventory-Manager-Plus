@@ -706,7 +706,12 @@ components:
           type: string
         role:
           type: string
-          enum: [master, user]
+          enum: [master, user, bendahara]
+        menuAccess:
+          type: array
+          items:
+            type: string
+          default: []
         createdAt:
           type: string
 
@@ -720,7 +725,12 @@ components:
           type: string
         role:
           type: string
-          enum: [master, user]
+          enum: [master, user, bendahara]
+        menuAccess:
+          type: array
+          items:
+            type: string
+          default: []
 
     UserUpdate:
       type: object
@@ -731,7 +741,11 @@ components:
           type: ["string", "null"]
         role:
           type: string
-          enum: [master, user]
+          enum: [master, user, bendahara]
+        menuAccess:
+          type: array
+          items:
+            type: string
 
     Material:
       type: object
