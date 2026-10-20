@@ -180,6 +180,7 @@ interface ReturUnitDetail {
   id: number;
   label: string;
   sn: string | null;
+  keputusan: "layak_pakai" | "usul_hapus" | null; // disposisi gudang, diisi saat verifikasi
   items: ReturItemDetail[];
 }
 
@@ -209,12 +210,14 @@ interface DocJoinedRow {
   checked_at: Date;
   completed_at: Date | null;
   unit_count?: number;
+  keputusan_values?: string[] | null;
 }
 
 interface UnitRow {
   id: number;
   label: string;
   sn: string | null;
+  keputusan: "layak_pakai" | "usul_hapus" | null; // dicegah CHECK constraint di DB
 }
 
 interface ItemCekRow {
@@ -245,7 +248,7 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
   const d = docRes.rows[0] as DocJoinedRow; // kolom sesuai SELECT
 
   const unitsRes = await pool.query(
-    "SELECT id, label, sn FROM retur_unit WHERE dokumen_id = $1 ORDER BY id",
+    "SELECT id, label, sn, keputusan FROM retur_unit WHERE dokumen_id = $1 ORDER BY id",
     [dokumenId],
   );
   const unitRows = unitsRes.rows as UnitRow[];
@@ -264,6 +267,7 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
     id: u.id,
     label: u.label,
     sn: u.sn,
+    keputusan: u.keputusan,
     items: itemRows
       .filter((it) => it.unit_id === u.id)
       .map((it) => ({
@@ -656,20 +660,34 @@ router.get("/retur", async (req, res): Promise<void> => {
   if (!actor) return;
   const isGudang = actor.role === "master" || actor.menuAccess.includes("retur:gudang");
 
+  const qRaw = req.query.q;
+  const statusRaw = req.query.status;
+  const keputusanRawQ = req.query.keputusan;
+  const q = typeof qRaw === "string" ? qRaw.trim() : "";
+  const statusF = statusRaw === "checked_supervisor" || statusRaw === "completed" ? statusRaw : "";
+  const keputusanF = keputusanRawQ === "layak_pakai" || keputusanRawQ === "usul_hapus" ? keputusanRawQ : "";
+
+  const conds: string[] = [];
   const args: (string | number)[] = [];
-  if (!isGudang) { args.push(actor.id); }
+  if (!isGudang) { args.push(actor.id); conds.push(`d.pengawas_id = $${args.length}`); }
+  if (statusF) { args.push(statusF); conds.push(`d.status = $${args.length}`); }
+  if (q) { args.push(`%${q}%`); conds.push(`(m.name ILIKE $${args.length} OR m.code ILIKE $${args.length})`); }
+  if (keputusanF) { args.push(keputusanF); conds.push(`EXISTS (SELECT 1 FROM retur_unit fu WHERE fu.dokumen_id = d.id AND fu.keputusan = $${args.length})`); }
+
   const result = await pool.query(
     `SELECT d.id, d.material_id, m.name AS material_name, d.status,
             d.tug10_file_id, d.tug10_link, d.catatan, d.gudang_catatan,
             d.pengawas_id, p.username AS pengawas_name,
             d.gudang_id, g.username AS gudang_name,
             (SELECT COUNT(*)::int FROM retur_unit u WHERE u.dokumen_id = d.id) AS unit_count,
+            (SELECT array_agg(DISTINCT u.keputusan) FROM retur_unit u
+              WHERE u.dokumen_id = d.id AND u.keputusan IS NOT NULL) AS keputusan_values,
             d.created_at, d.checked_at, d.completed_at
      FROM retur_dokumen d
      JOIN materials m ON m.id = d.material_id
      JOIN users p ON p.id = d.pengawas_id
      LEFT JOIN users g ON g.id = d.gudang_id
-     ${isGudang ? "" : "WHERE d.pengawas_id = $1"}
+     ${conds.length ? `WHERE ${conds.join(" AND ")}` : ""}
      ORDER BY d.created_at DESC, d.id DESC`,
     args,
   );
@@ -689,6 +707,7 @@ router.get("/retur", async (req, res): Promise<void> => {
       gudangId: d.gudang_id,
       gudangName: d.gudang_name,
       unitCount: d.unit_count ?? 0,
+      keputusan: Array.isArray(d.keputusan_values) ? (d.keputusan_values.length === 1 ? d.keputusan_values[0] : d.keputusan_values.length > 1 ? "campur" : null) : null,
       createdAt: new Date(d.created_at).toISOString(),
       checkedAt: new Date(d.checked_at).toISOString(),
       completedAt: d.completed_at ? new Date(d.completed_at).toISOString() : null,
@@ -721,6 +740,7 @@ router.get("/retur/:id", async (req, res): Promise<void> => {
 interface VerifyUnit {
   unitId: number;
   sn: string;
+  keputusan: "layak_pakai" | "usul_hapus"; // disposisi wajib dari petugas gudang
   items: ValidItem[];
 }
 
@@ -767,9 +787,14 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
     payloadUnitIds.add(unitId);
     const sn = typeof u.sn === "string" ? u.sn.trim() : "";
     if (!sn) { res.status(400).json({ error: "SN wajib diisi" }); return; }
+    const keputusanRaw = u.keputusan;
+    if (keputusanRaw !== "layak_pakai" && keputusanRaw !== "usul_hapus") {
+      res.status(400).json({ error: `Unit "${docUnits.find((du) => du.id === unitId)?.label}" wajib diputuskan: pilih "Layak Pakai (Standby)" atau "Tidak Layak Pakai (Usul Hapus)"` });
+      return;
+    }
     const v = validateCekItems(u.items);
     if (!v.ok) { res.status(400).json({ error: `SN "${sn}": ${v.error}` }); return; }
-    verifyUnits.push({ unitId, sn, items: v.items });
+    verifyUnits.push({ unitId, sn, keputusan: keputusanRaw, items: v.items });
   }
 
   // SETIAP unit dokumen wajib hadir di payload
@@ -821,7 +846,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   try {
     await client.query("BEGIN");
     for (let ui = 0; ui < verifyUnits.length; ui++) {
-      await client.query("UPDATE retur_unit SET sn = $1 WHERE id = $2 AND dokumen_id = $3", [verifyUnits[ui].sn, verifyUnits[ui].unitId, id]);
+      await client.query("UPDATE retur_unit SET sn = $1, keputusan = $2 WHERE id = $3 AND dokumen_id = $4", [verifyUnits[ui].sn, verifyUnits[ui].keputusan, verifyUnits[ui].unitId, id]);
       for (let ii = 0; ii < verifyUnits[ui].items.length; ii++) {
         const it = verifyUnits[ui].items[ii];
         await client.query(

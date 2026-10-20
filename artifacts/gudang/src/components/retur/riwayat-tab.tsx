@@ -11,12 +11,16 @@ import { jsPDF } from "jspdf";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CheckCircle2, Download, FileSpreadsheet, FileText, Loader2 } from "lucide-react";
+import { CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Search } from "lucide-react";
 import { DriveImg } from "./drive-img";
 import {
   HASIL_LABEL, ReturDetail, ReturDokumen,
+  KEPUTUSAN_BADGE, KEPUTUSAN_LABEL, Keputusan,
   downloadBlob, fetchReturFile, fmtTanggal, returApi,
 } from "./shared";
 
@@ -40,13 +44,22 @@ export function RiwayatTab() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [exporting, setExporting] = useState<"excel" | "pdf" | null>(null);
+  const [q, setQ] = useState("");
+  const [keputusanF, setKeputusanF] = useState<"semua" | Keputusan>("semua");
 
+  // Filter server-side (status=completed wajib utk riwayat); q didebounce 300 ms.
   useEffect(() => {
-    returApi<ReturDokumen[]>("")
-      .then((all) => setDocs(all.filter((d) => d.status === "completed")))
-      .catch((e) => toast({ title: "Gagal memuat riwayat", description: (e as Error).message, variant: "destructive" }))
-      .finally(() => setLoading(false));
-  }, [toast]);
+    const t = setTimeout(() => {
+      const params = new URLSearchParams({ status: "completed" });
+      if (q.trim()) params.set("q", q.trim());
+      if (keputusanF !== "semua") params.set("keputusan", keputusanF);
+      returApi<ReturDokumen[]>(`?${params.toString()}`)
+        .then(setDocs)
+        .catch((e) => toast({ title: "Gagal memuat riwayat", description: (e as Error).message, variant: "destructive" }))
+        .finally(() => setLoading(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [q, keputusanF, toast]);
 
   const toggle = (id: number) => {
     setSelected((prev) => {
@@ -116,7 +129,7 @@ export function RiwayatTab() {
         }
         r += 2;
         for (const u of detail.units) {
-          ws.getCell(r, 1).value = `Unit ${u.label} — SN ${u.sn ?? "-"}`;
+          ws.getCell(r, 1).value = `Unit ${u.label} — SN ${u.sn ?? "-"} — Keputusan: ${u.keputusan ? KEPUTUSAN_LABEL[u.keputusan] : "-"}`;
           ws.getCell(r, 1).font = { bold: true };
           r += 1;
           const header = ws.getRow(r);
@@ -239,7 +252,7 @@ export function RiwayatTab() {
         for (const u of detail.units) {
           ensure(14);
           doc.setFont("helvetica", "bold"); doc.setFontSize(11);
-          doc.text(`Unit ${u.label} — SN ${u.sn ?? "-"}`, margin, y); y += 5;
+          doc.text(`Unit ${u.label} — SN ${u.sn ?? "-"} — Keputusan: ${u.keputusan ? KEPUTUSAN_LABEL[u.keputusan] : "-"}`, margin, y); y += 5;
           doc.setFontSize(8);
           const colW = [52, 24, 40, 24, 46];
           const colX = [margin];
@@ -322,10 +335,27 @@ export function RiwayatTab() {
         </div>
       </CardHeader>
       <CardContent>
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <div className="relative">
+            <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground pointer-events-none" />
+            <Input className="h-8 w-64 pl-8 text-sm" placeholder="Cari nama / kode material..." value={q} onChange={(e) => setQ(e.target.value)} />
+          </div>
+          <Select value={keputusanF} onValueChange={(v) => setKeputusanF(v as "semua" | Keputusan)}>
+            <SelectTrigger className="h-8 w-64 text-sm"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="semua">Semua keputusan</SelectItem>
+              <SelectItem value="layak_pakai">Layak Pakai (Standby)</SelectItem>
+              <SelectItem value="usul_hapus">Tidak Layak Pakai (Usul Hapus)</SelectItem>
+            </SelectContent>
+          </Select>
+          {(q.trim() !== "" || keputusanF !== "semua") && (
+            <Button size="sm" variant="ghost" onClick={() => { setQ(""); setKeputusanF("semua"); }}>Reset filter</Button>
+          )}
+        </div>
         {loading ? (
           <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Memuat...</p>
         ) : docs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Belum ada dokumen retur yang selesai diverifikasi.</p>
+          <p className="text-sm text-muted-foreground">{q.trim() !== "" || keputusanF !== "semua" ? "Tidak ada dokumen yang cocok dengan filter." : "Belum ada dokumen retur yang selesai diverifikasi."}</p>
         ) : (
           <Table>
             <TableHeader>
@@ -338,6 +368,7 @@ export function RiwayatTab() {
                 <TableHead>Pengawas</TableHead>
                 <TableHead>Gudang</TableHead>
                 <TableHead>Unit</TableHead>
+                <TableHead>Keputusan</TableHead>
                 <TableHead>Selesai</TableHead>
                 <TableHead>TUG10</TableHead>
               </TableRow>
@@ -353,6 +384,11 @@ export function RiwayatTab() {
                   <TableCell>{d.pengawasName ?? "-"}</TableCell>
                   <TableCell>{d.gudangName ?? "-"}</TableCell>
                   <TableCell>{d.unitCount}</TableCell>
+                  <TableCell>
+                    {d.keputusan
+                      ? <Badge className={KEPUTUSAN_BADGE[d.keputusan]}>{KEPUTUSAN_LABEL[d.keputusan]}</Badge>
+                      : <span className="text-xs text-muted-foreground">-</span>}
+                  </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{fmtTanggal(d.completedAt)}</TableCell>
                   <TableCell>
                     <DriveImg fileId={d.tug10FileId} alt={`TUG10 #${d.id}`} />

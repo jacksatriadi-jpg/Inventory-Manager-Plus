@@ -220,6 +220,13 @@ async function setupDatabase() {
       );
     `);
     await pool.query(`
+      ALTER TABLE retur_unit ADD COLUMN IF NOT EXISTS keputusan TEXT
+        CHECK (keputusan IS NULL OR keputusan IN ('layak_pakai','usul_hapus'));
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS retur_item_cek_unit_idx ON retur_item_cek (unit_id);
+    `);
+    await pool.query(`
       CREATE UNIQUE INDEX IF NOT EXISTS retur_unit_sn_unique ON retur_unit (sn) WHERE sn IS NOT NULL;
     `);
     await pool.query(`

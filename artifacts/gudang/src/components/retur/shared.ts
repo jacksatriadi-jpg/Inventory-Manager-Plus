@@ -20,6 +20,7 @@ export interface ReturDokumen {
   gudangId: number | null;
   gudangName: string | null;
   unitCount: number;
+  keputusan: Keputusan | "campur" | null; // ringkasan dokumen: nilai seragam semua unit, 'campur', atau null
   createdAt: string;
   checkedAt: string;
   completedAt: string | null;
@@ -38,6 +39,7 @@ export interface ReturUnitDetail {
   id: number;
   label: string;
   sn: string | null;
+  keputusan: Keputusan | null; // disposisi gudang per unit; null = belum diverifikasi
   items: ReturItemCek[];
 }
 
@@ -64,6 +66,22 @@ export const HASIL_BADGE: Record<Hasil, string> = {
   ada: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
   hilang: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
   rusak: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
+};
+
+// Disposisi gudang per unit (wajib dipilih saat verifikasi). 'campur' = ringkasan dokumen
+// ber-keputusan beda antar unit — hanya muncul di level dokumen, bukan per unit.
+export type Keputusan = "layak_pakai" | "usul_hapus";
+
+export const KEPUTUSAN_LABEL: Record<Keputusan | "campur", string> = {
+  layak_pakai: "Layak Pakai (Standby)",
+  usul_hapus: "Tidak Layak Pakai (Usul Hapus)",
+  campur: "Campur (lihat unit)",
+};
+
+export const KEPUTUSAN_BADGE: Record<Keputusan | "campur", string> = {
+  layak_pakai: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
+  usul_hapus: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
+  campur: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400",
 };
 
 // "Retur user": role master ATAU menuAccess mengandung "/retur"/"retur:gudang"

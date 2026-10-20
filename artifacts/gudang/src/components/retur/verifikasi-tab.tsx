@@ -15,6 +15,7 @@ import { ArrowLeft, Camera, ImageOff, Loader2, PackageX } from "lucide-react";
 import { DriveImg } from "./drive-img";
 import {
   HASIL_BADGE, HASIL_LABEL, Hasil, ReturDetail, ReturDokumen, ReturItemCek,
+  KEPUTUSAN_LABEL, Keputusan,
   fmtTanggal, notifyReturChanged, readFileCompressed, returApi,
 } from "./shared";
 
@@ -35,6 +36,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
   const [submitting, setSubmitting] = useState(false);
   const [showTug10, setShowTug10] = useState(false);
   const [snByUnit, setSnByUnit] = useState<Record<number, string>>({});
+  const [keputusanByUnit, setKeputusanByUnit] = useState<Record<number, Keputusan | "">>({});
   const [gudangCatatan, setGudangCatatan] = useState("");
   const [itemForms, setItemForms] = useState<Record<number, Record<string, GudangItemForm>>>({});
 
@@ -60,9 +62,11 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
     try {
       const d = await returApi<ReturDetail>(`/${id}`);
       const sn: Record<number, string> = {};
+      const keputusan: Record<number, Keputusan | ""> = {};
       const forms: Record<number, Record<string, GudangItemForm>> = {};
       for (const u of d.units) {
         sn[u.id] = u.sn ?? "";
+        keputusan[u.id] = u.keputusan ?? "";
         const labels: string[] = [];
         for (const it of u.items) if (!labels.includes(it.itemLabel)) labels.push(it.itemLabel);
         forms[u.id] = Object.fromEntries(labels.map((l) => {
@@ -75,6 +79,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
       setDetail(d);
       setSnByUnit(sn);
       setItemForms(forms);
+      setKeputusanByUnit(keputusan);
       setGudangCatatan(d.gudangCatatan ?? "");
     } catch (e) {
       toast({ title: "Gagal memuat dokumen", description: (e as Error).message, variant: "destructive" });
@@ -119,6 +124,11 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
       toast({ title: "SN MIMS wajib diisi tiap unit", description: `Unit: ${snKosong.join(", ")}`, variant: "destructive" });
       return;
     }
+    const keputusanKosong = detail.units.filter((u) => !keputusanByUnit[u.id]).map((u) => u.label);
+    if (keputusanKosong.length > 0) {
+      toast({ title: "Keputusan unit wajib dipilih", description: `Pilih "Layak Pakai (Standby)" atau "Tidak Layak Pakai (Usul Hapus)" untuk unit: ${keputusanKosong.join(", ")}`, variant: "destructive" });
+      return;
+    }
     const tanpaFoto: string[] = [];
     for (const u of detail.units) {
       for (const [label, f] of Object.entries(itemForms[u.id] ?? {})) {
@@ -138,6 +148,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
           units: detail.units.map((u) => ({
             unitId: u.id,
             sn: (snByUnit[u.id] ?? "").trim(),
+            keputusan: keputusanByUnit[u.id],
             items: Object.entries(itemForms[u.id] ?? {})
               .filter(([, f]) => f.hasil)
               .map(([label, f]) => ({ label, hasil: f.hasil, catatan: f.catatan, foto: f.foto })),
@@ -203,6 +214,18 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                 </div>
               </CardHeader>
               <CardContent>
+                <div className="flex flex-wrap items-center gap-2 mb-4">
+                  <span className="text-xs font-medium">Keputusan unit (wajib pilih salah satu):</span>
+                  {(["layak_pakai", "usul_hapus"] as const).map((k) => (
+                    <Button key={k} size="sm" type="button"
+                      variant={keputusanByUnit[u.id] === k ? "default" : "outline"}
+                      className={keputusanByUnit[u.id] === k ? (k === "layak_pakai" ? "bg-emerald-600 hover:bg-emerald-600" : "bg-red-600 hover:bg-red-600") : ""}
+                      onClick={() => setKeputusanByUnit((prev) => ({ ...prev, [u.id]: keputusanByUnit[u.id] === k ? "" : k }))}>
+                      {KEPUTUSAN_LABEL[k]}
+                    </Button>
+                  ))}
+                  {!keputusanByUnit[u.id] && <span className="text-xs text-destructive">belum dipilih</span>}
+                </div>
                 {labels.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Unit ini tanpa item pemeriksaan.</p>
                 ) : (

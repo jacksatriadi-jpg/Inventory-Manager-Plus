@@ -28,6 +28,8 @@ export const returUnitTable = pgTable("retur_unit", {
   id: serial("id").primaryKey(),
   dokumenId: integer("dokumen_id").notNull().references(() => returDokumenTable.id, { onDelete: "cascade" }),
   label: text("label").notNull(),
+  // keputusan = disposisi gudang per unit (diisi saat verifikasi): 'layak_pakai' | 'usul_hapus'; NULL = belum diverifikasi.
+  keputusan: text("keputusan"), // CHECK di DDL runtime app.ts
   sn: text("sn"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
