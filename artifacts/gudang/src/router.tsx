@@ -14,6 +14,7 @@ import MaterialBekas from "@/pages/material-bekas";
 import Retur from "@/pages/retur";
 import KasGudang from "@/pages/kas-gudang";
 import Absensi from "@/pages/absensi";
+import { shouldLandOnRetur } from "@/components/retur/shared";
 
 function ProtectedRoute({ component: Component, roles = ["user", "master", "guest"] }: { component: any, roles?: string[] }) {
   const { user, isLoading } = useAuth();
@@ -33,19 +34,33 @@ function ProtectedRoute({ component: Component, roles = ["user", "master", "gues
   return <Component />;
 }
 
+// Halaman awal: user yang di-assign khusus Retur langsung ke /retur, bukan Dashboard.
+function HomeRedirect() {
+  const { user, isLoading } = useAuth();
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+  return <Redirect to={shouldLandOnRetur(user) ? "/retur" : "/dashboard"} />;
+}
+
+function DashboardRoute() {
+  const { user, isLoading } = useAuth();
+  if (isLoading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
+  if (shouldLandOnRetur(user)) return <Redirect to="/retur" />;
+  return <ProtectedRoute component={Dashboard} roles={["user", "master", "guest"]} />;
+}
+
 export default function AppRouter() {
   return (
     <Switch>
       <Route path="/login" component={Login} />
       
       <Route path="/">
-        <Redirect to="/dashboard" />
+        <HomeRedirect />
       </Route>
 
       <Route path="/:path*">
         <Layout>
           <Switch>
-            <Route path="/dashboard" component={() => <ProtectedRoute component={Dashboard} roles={["user", "master", "guest"]} />} />
+            <Route path="/dashboard" component={DashboardRoute} />
             <Route path="/scan" component={() => <ProtectedRoute component={Scan} roles={["user", "master"]} />} />
             <Route path="/material-masuk" component={() => <ProtectedRoute component={MaterialMasuk} roles={["user", "master"]} />} />
             <Route path="/material-keluar" component={() => <ProtectedRoute component={MaterialKeluar} roles={["user", "master"]} />} />

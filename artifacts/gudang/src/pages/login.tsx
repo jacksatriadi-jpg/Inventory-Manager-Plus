@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { PackageOpen, Loader2, Eye } from "lucide-react";
+import { shouldLandOnRetur } from "@/components/retur/shared";
 
 export default function Login() {
   const [username, setUsername] = useState("");
@@ -28,7 +29,7 @@ export default function Login() {
       {
         onSuccess: (data) => {
           login(data.token, data.user);
-          setLocation("/dashboard");
+          setLocation(shouldLandOnRetur(data.user) ? "/retur" : "/dashboard");
         },
         onError: () => {
           toast({ title: "Login gagal", description: "Username atau password salah", variant: "destructive" });

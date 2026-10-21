@@ -110,6 +110,17 @@ export function isReturUser(user: { role?: string; menuAccess?: unknown } | null
   return ma.includes("/retur") || ma.includes("retur:gudang");
 }
 
+// Halaman awal user yang DIASSIGN khusus untuk Retur: non-master, menuAccess eksplisit
+// memuat "/retur"/"retur:gudang", dan Dashboard tidak diberikan eksplisit.
+// (menuAccess kosong = user reguler semua menu -> tetap Dashboard seperti biasa.)
+export function shouldLandOnRetur(user: { role?: string; menuAccess?: unknown } | null | undefined): boolean {
+  if (!user) return false;
+  if (user.role === "master" || user.role === "guest") return false;
+  const ma = menuAccessList(user);
+  if (ma.length === 0) return false;
+  return (ma.includes("/retur") || ma.includes("retur:gudang")) && !ma.includes("/dashboard");
+}
+
 // "Gudang retur": role master ATAU menuAccess mengandung "retur:gudang".
 // MenuAccess KOSONG bukan petugas gudang (verifikasi/riwayat khusus penugasan eksplisit).
 export function isReturGudang(user: { role?: string; menuAccess?: unknown } | null | undefined): boolean {
