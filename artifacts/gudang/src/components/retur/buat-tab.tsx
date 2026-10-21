@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Camera, FileText, ImageOff, Loader2, PackageX, Plus, Trash2 } from "lucide-react";
 import { Hasil, ReturTemplateItem, isNonScanMaterial, readFileCompressed, returApi } from "./shared";
+import { MaterialPicker } from "./material-picker";
 
 interface ItemForm {
   label: string;
@@ -170,17 +171,7 @@ export function BuatTab() {
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label>Material (non-scan)</Label>
-              <Select value={materialId || undefined} onValueChange={setMaterialId}>
-                <SelectTrigger><SelectValue placeholder="Pilih material" /></SelectTrigger>
-                <SelectContent className="max-h-[50vh] overflow-y-auto">
-                  {materials?.filter(isNonScanMaterial).map((m) => (
-                    <SelectItem key={m.id} value={m.id.toString()}>
-                      <span className="font-mono text-xs mr-2 text-muted-foreground">{m.code}</span>
-                      {m.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <MaterialPicker materials={materials?.filter(isNonScanMaterial)} value={materialId} onChange={setMaterialId} />
               {templateLoading && <p className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Memuat template pemeriksaan...</p>}
             </div>
             <div className="space-y-2">

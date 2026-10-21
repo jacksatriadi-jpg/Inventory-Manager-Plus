@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CloudUpload, Link2, Link2Off, Loader2, ListChecks, Save } from "lucide-react";
+import { MaterialPicker } from "./material-picker";
 import { ReturTemplateItem, isNonScanMaterial, returApi } from "./shared";
 
 interface DriveStatus {
@@ -145,17 +145,7 @@ function TemplateEditor() {
       <CardContent className="space-y-4">
         <div className="space-y-2">
           <Label>Material (non-scan)</Label>
-          <Select value={materialId || undefined} onValueChange={setMaterialId}>
-            <SelectTrigger><SelectValue placeholder="Pilih material" /></SelectTrigger>
-            <SelectContent className="max-h-[50vh] overflow-y-auto">
-              {materials?.filter(isNonScanMaterial).map((m) => (
-                <SelectItem key={m.id} value={m.id.toString()}>
-                  <span className="font-mono text-xs mr-2 text-muted-foreground">{m.code}</span>
-                  {m.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <MaterialPicker materials={materials?.filter(isNonScanMaterial)} value={materialId} onChange={setMaterialId} />
         </div>
         <div className="space-y-2">
           <Label>Daftar komponen</Label>
