@@ -205,9 +205,15 @@ export function BuatTab() {
               </p>
             ) : (
               <div className="space-y-2">
+                <p className="text-xs text-muted-foreground">Komponen bertanda <span className="text-red-600 font-bold">*</span> wajib difoto (dokumen ditolak bila hasil diisi tanpa foto).</p>
                 {unit.items.map((it, ii) => (
                   <div key={ii} className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_140px_minmax(0,1fr)_auto] gap-2 items-center border-b border-border/50 pb-2 last:border-0">
-                    <span className="text-sm">{it.label}</span>
+                    <span className="text-sm">
+                      {it.label}
+                      {cfgFor(it.label).fotoWajib && (
+                        <span className="text-red-600 font-bold ml-1" title="Foto komponen ini wajib">*</span>
+                      )}
+                    </span>
                     <Select value={it.hasil || "skip"} onValueChange={(v) => setItem(ui, ii, { hasil: v === "skip" ? "" : v })}>
                       <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Lewati" /></SelectTrigger>
                       <SelectContent>

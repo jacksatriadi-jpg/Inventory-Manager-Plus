@@ -243,6 +243,8 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                 {labels.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Unit ini tanpa item pemeriksaan.</p>
                 ) : (
+                  <>
+                  <p className="text-xs text-muted-foreground mb-2">Komponen bertanda <span className="text-red-600 font-bold">*</span> wajib difoto (verifikasi ditolak bila hasil diisi tanpa foto).</p>
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -260,7 +262,12 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                         const f = itemForms[u.id]?.[label] ?? emptyForm;
                         return (
                           <TableRow key={label}>
-                            <TableCell className="text-sm max-w-[220px]">{label}</TableCell>
+                            <TableCell className="text-sm max-w-[220px]">
+                              {label}
+                              {cfgFor(label).fotoWajib && (
+                                <span className="text-red-600 font-bold ml-1" title="Foto komponen ini wajib">*</span>
+                              )}
+                            </TableCell>
                             <TableCell>
                               {pw
                                 ? (
@@ -301,6 +308,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                       })}
                     </TableBody>
                   </Table>
+                  </>
                 )}
               </CardContent>
             </Card>
