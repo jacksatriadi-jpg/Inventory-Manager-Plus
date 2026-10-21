@@ -122,16 +122,29 @@ function extFromDataUrl(dataUrl: string): string {
   return sub === "jpeg" ? "jpg" : sub;
 }
 
+export const DEFAULT_RESULT_OPTIONS = ["Lengkap", "Hilang", "Rusak"];
+const HASIL_CODE_TO_LABEL: Record<string, string> = { ada: "Lengkap", hilang: "Hilang", rusak: "Rusak" };
+const HASIL_LABEL_TO_CODE: Record<string, string> = { lengkap: "ada", hilang: "hilang", rusak: "rusak" };
+
+// Opsi kustom material; null = default (hasil lama 'ada'/'hilang'/'rusak' dipakai apa adanya).
+async function getTemplateOptions(materialId: number): Promise<string[] | null> {
+  const r = await pool.query("SELECT options FROM retur_template_option WHERE material_id = $1", [materialId]);
+  const row = r.rows[0] as { options: unknown } | undefined; // kolom sesuai SELECT
+  if (!row || !Array.isArray(row.options)) return null;
+  const opts = (row.options as unknown[]).filter((o): o is string => typeof o === "string" && o.trim() !== "");
+  return opts.length > 0 ? opts : null;
+}
+
 interface ValidItem {
   label: string;
-  hasil: "ada" | "hilang" | "rusak";
+  hasil: string;
   catatan: string | null;
   foto: string;
 }
 
 type ItemsResult = { ok: true; items: ValidItem[] } | { ok: false; error: string };
 
-function validateCekItems(itemsRaw: unknown): ItemsResult {
+function validateCekItems(itemsRaw: unknown, allowed: string[] | null): ItemsResult {
   if (!Array.isArray(itemsRaw)) return { ok: true, items: [] };
   const items: ValidItem[] = [];
   for (const entry of itemsRaw as unknown[]) {
@@ -141,16 +154,27 @@ function validateCekItems(itemsRaw: unknown): ItemsResult {
     const it = entry as Record<string, unknown>; // fields parsed via typeof guards below
     const label = typeof it.label === "string" ? it.label.trim() : "";
     if (!label) return { ok: false, error: "Label item ceklist wajib diisi" };
-    const hasil = it.hasil;
-    if (hasil !== "ada" && hasil !== "hilang" && hasil !== "rusak") {
-      return { ok: false, error: `Hasil untuk item "${label}" harus 'ada', 'hilang', atau 'rusak'` };
+    const hasil = typeof it.hasil === "string" ? it.hasil.trim() : "";
+    let hasilStored: string;
+    if (allowed === null) {
+      // Material default: terima label bawaan ATAU kode lama; disimpan sebagai kode lama.
+      const code = HASIL_LABEL_TO_CODE[hasil.toLowerCase()] ?? hasil;
+      if (!(code in HASIL_CODE_TO_LABEL)) {
+        return { ok: false, error: `Hasil untuk item "${label}" harus salah satu: ${DEFAULT_RESULT_OPTIONS.join(", ")}` };
+      }
+      hasilStored = code;
+    } else {
+      if (!allowed.includes(hasil)) {
+        return { ok: false, error: `Hasil untuk item "${label}" harus salah satu: ${allowed.join(", ")}` };
+      }
+      hasilStored = hasil;
     }
     if (!isImageDataUrl(it.foto)) {
       return { ok: false, error: `Foto wajib untuk item "${label}" (format image)` };
     }
     items.push({
       label,
-      hasil,
+      hasil: hasilStored,
       catatan: typeof it.catatan === "string" && it.catatan.trim() ? it.catatan.trim() : null,
       foto: it.foto,
     });
@@ -407,15 +431,24 @@ router.get("/retur/template/:materialId", async (req, res): Promise<void> => {
     "SELECT id, label FROM retur_template_item WHERE material_id = $1 ORDER BY urut, id",
     [materialId],
   );
+  const opts = await getTemplateOptions(materialId);
   if (rows.rows.length > 0) {
-    res.json({ items: (rows.rows as TemplateRow[]).map((r) => ({ id: r.id, label: r.label })) });
+    res.json({
+      items: (rows.rows as TemplateRow[]).map((r) => ({ id: r.id, label: r.label })),
+      options: opts ?? DEFAULT_RESULT_OPTIONS,
+      isDefault: opts === null,
+    });
     return;
   }
 
   const mat = await pool.query("SELECT name FROM materials WHERE id = $1", [materialId]);
   const matRow = mat.rows[0] as { name: string } | undefined; // kolom sesuai SELECT
   const name = matRow ? matRow.name : "";
-  res.json({ items: presetForMaterialName(name).map((label) => ({ id: null, label })) });
+  res.json({
+    items: presetForMaterialName(name).map((label) => ({ id: null, label })),
+    options: opts ?? DEFAULT_RESULT_OPTIONS,
+    isDefault: opts === null,
+  });
 });
 
 // ─── PUT /api/retur/template/:materialId (gudang) — replace template ────────────
@@ -424,12 +457,37 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
   const materialId = Number(req.params.materialId);
   if (!Number.isInteger(materialId)) { res.status(400).json({ error: "materialId tidak valid" }); return; }
 
-  const labels = bodyObject(req).labels;
+  const body = bodyObject(req);
+  const labels = body.labels;
   if (!Array.isArray(labels)) { res.status(400).json({ error: "labels harus array string" }); return; }
   const cleaned: string[] = [];
   for (const l of labels) {
     if (typeof l !== "string" || !l.trim()) { res.status(400).json({ error: "Setiap label harus string tidak kosong" }); return; }
     cleaned.push(l.trim());
+  }
+
+  // options opsional: tidak dikirim = opsi hasil tidak diubah; set == bawaan = balik default.
+  let optionsOp: "keep" | "default" | { store: string[] } = "keep";
+  const optionsRaw = body.options;
+  if (optionsRaw !== undefined && optionsRaw !== null) {
+    if (!Array.isArray(optionsRaw) || optionsRaw.length === 0 || optionsRaw.length > 6) {
+      res.status(400).json({ error: "options harus array berisi 1-6 string" }); return;
+    }
+    const opts: string[] = [];
+    const seen = new Set<string>();
+    for (const o of optionsRaw) {
+      if (typeof o !== "string" || !o.trim()) { res.status(400).json({ error: "Setiap opsi harus string tidak kosong" }); return; }
+      const t = o.trim();
+      if (t.length > 30) { res.status(400).json({ error: "Setiap opsi maksimal 30 karakter" }); return; }
+      if (t in HASIL_CODE_TO_LABEL) { res.status(400).json({ error: `Opsi tidak boleh memakai kode bawaan: "${t}"` }); return; }
+      if (seen.has(t.toLowerCase())) { res.status(400).json({ error: `Opsi duplikat: "${t}"` }); return; }
+      seen.add(t.toLowerCase());
+      opts.push(t);
+    }
+    const norm = opts.map((o) => HASIL_LABEL_TO_CODE[o.toLowerCase()] ?? o);
+    const isDefaultSet = opts.length === DEFAULT_RESULT_OPTIONS.length
+      && norm.every((n) => n in HASIL_CODE_TO_LABEL) && new Set(norm).size === norm.length;
+    optionsOp = isDefaultSet ? "default" : { store: opts };
   }
 
   const mat = await pool.query("SELECT id FROM materials WHERE id = $1", [materialId]);
@@ -443,6 +501,15 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
       await client.query(
         "INSERT INTO retur_template_item (material_id, label, urut) VALUES ($1, $2, $3)",
         [materialId, cleaned[i], i],
+      );
+    }
+    if (optionsOp === "default") {
+      await client.query("DELETE FROM retur_template_option WHERE material_id = $1", [materialId]);
+    } else if (optionsOp !== "keep") {
+      await client.query(
+        `INSERT INTO retur_template_option (material_id, options) VALUES ($1, $2)
+         ON CONFLICT (material_id) DO UPDATE SET options = $2`,
+        [materialId, JSON.stringify(optionsOp.store)],
       );
     }
     await client.query("COMMIT");
@@ -459,7 +526,12 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
     "SELECT id, label FROM retur_template_item WHERE material_id = $1 ORDER BY urut, id",
     [materialId],
   );
-  res.json({ items: (rows.rows as TemplateRow[]).map((r) => ({ id: r.id, label: r.label })) });
+  const savedOpts = await getTemplateOptions(materialId);
+  res.json({
+    items: (rows.rows as TemplateRow[]).map((r) => ({ id: r.id, label: r.label })),
+    options: savedOpts ?? DEFAULT_RESULT_OPTIONS,
+    isDefault: savedOpts === null,
+  });
 });
 
 // ─── GET /api/retur/notifications — notifikasi unread milik user ────────────────
@@ -571,13 +643,14 @@ router.post("/retur", async (req, res): Promise<void> => {
   const matRow = mat.rows[0] as { id: number; name: string }; // kolom sesuai SELECT
   const materialName = matRow.name;
 
+  const resultOptions = await getTemplateOptions(materialId as number); // sudah lolos guard Number.isInteger
   const units: ValidUnit[] = [];
   for (let i = 0; i < unitsRaw.length; i++) {
     const entry = unitsRaw[i];
     if (!entry || typeof entry !== "object") { res.status(400).json({ error: `Unit ${i + 1} tidak valid` }); return; }
     const u = entry as Record<string, unknown>; // fields parsed via typeof guards below
     const label = typeof u.label === "string" && u.label.trim() ? u.label.trim() : `Unit ${i + 1}`;
-    const v = validateCekItems(u.items);
+    const v = validateCekItems(u.items, resultOptions);
     if (!v.ok) { res.status(400).json({ error: `Unit "${label}": ${v.error}` }); return; }
     units.push({ label, items: v.items });
   }
@@ -830,9 +903,9 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
 
-  const doc = await pool.query("SELECT id, status, folder_file_id FROM retur_dokumen WHERE id = $1", [id]);
+  const doc = await pool.query("SELECT id, status, folder_file_id, material_id FROM retur_dokumen WHERE id = $1", [id]);
   if (doc.rows.length === 0) { res.status(404).json({ error: "Dokumen retur tidak ditemukan" }); return; }
-  const docRow = doc.rows[0] as { id: number; status: string; folder_file_id: string | null }; // kolom sesuai SELECT
+  const docRow = doc.rows[0] as { id: number; status: string; folder_file_id: string | null; material_id: number }; // kolom sesuai SELECT
   if (docRow.status !== "checked_supervisor") {
     res.status(400).json({ error: "Dokumen sudah selesai diverifikasi" });
     return;
@@ -850,6 +923,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   const docUnits = docUnitsRes.rows as { id: number; label: string; folder_file_id: string | null }[];
   const docUnitIds = new Set<number>(docUnits.map((u) => u.id));
 
+  const resultOptions = await getTemplateOptions(docRow.material_id);
   const verifyUnits: VerifyUnit[] = [];
   const payloadUnitIds = new Set<number>();
   for (const entry of unitsRaw as unknown[]) {
@@ -872,7 +946,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
       res.status(400).json({ error: `Unit "${docUnits.find((du) => du.id === unitId)?.label}" wajib diputuskan: pilih "Layak Pakai (Standby)" atau "Tidak Layak Pakai (Usul Hapus)"` });
       return;
     }
-    const v = validateCekItems(u.items);
+    const v = validateCekItems(u.items, resultOptions);
     if (!v.ok) { res.status(400).json({ error: `SN "${sn}": ${v.error}` }); return; }
     verifyUnits.push({ unitId, sn, keputusan: keputusanRaw, items: v.items });
   }

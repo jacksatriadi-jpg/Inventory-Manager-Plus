@@ -29,7 +29,7 @@ export interface ReturDokumen {
 export interface ReturItemCek {
   stage: "pengawas" | "gudang";
   itemLabel: string;
-  hasil: "ada" | "hilang" | "rusak";
+  hasil: string; // kode bawaan 'ada'/'hilang'/'rusak' atau string opsi kustom
   catatan: string | null;
   fotoFileId: string;
   fotoLink: string | null;
@@ -67,6 +67,18 @@ export const HASIL_BADGE: Record<Hasil, string> = {
   hilang: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
   rusak: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
 };
+
+// Opsi hasil bawaan; material bisa punya opsi kustom (dari GET /template/:id -> options).
+export const DEFAULT_RESULT_OPTIONS = ["Lengkap", "Hilang", "Rusak"];
+
+// Kode bawaan dipetakan ke labelnya; opsi kustom tampil apa adanya.
+export function hasilDisplay(h: string): string {
+  return HASIL_LABEL[h as Hasil] ?? h;
+}
+
+export function hasilBadgeClass(h: string): string {
+  return HASIL_BADGE[h as Hasil] ?? "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300";
+}
 
 // Disposisi gudang per unit (wajib dipilih saat verifikasi). 'campur' = ringkasan dokumen
 // ber-keputusan beda antar unit — hanya muncul di level dokumen, bukan per unit.

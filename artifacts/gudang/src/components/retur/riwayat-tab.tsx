@@ -25,7 +25,7 @@ import { useAuth } from "@/lib/auth";
 import { CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Search, Trash2 } from "lucide-react";
 import { DriveImg } from "./drive-img";
 import {
-  HASIL_LABEL, ReturDetail, ReturDokumen,
+  hasilDisplay, ReturDetail, ReturDokumen,
   KEPUTUSAN_BADGE, KEPUTUSAN_LABEL, Keputusan,
   downloadBlob, fetchReturFile, fmtTanggal, notifyReturChanged, returApi,
 } from "./shared";
@@ -178,9 +178,9 @@ export function RiwayatTab() {
             const gw = u.items.find((i) => i.stage === "gudang" && i.itemLabel === label);
             ws.getRow(r).values = [
               label,
-              pw ? HASIL_LABEL[pw.hasil] : "-",
+              pw ? hasilDisplay(pw.hasil) : "-",
               pw?.catatan ?? "",
-              gw ? HASIL_LABEL[gw.hasil] : "-",
+              gw ? hasilDisplay(gw.hasil) : "-",
               gw?.catatan ?? "",
             ];
             r += 1;
@@ -307,9 +307,9 @@ export function RiwayatTab() {
             const gw = u.items.find((i) => i.stage === "gudang" && i.itemLabel === label);
             drawRow([
               label,
-              pw ? HASIL_LABEL[pw.hasil] : "-",
+              pw ? hasilDisplay(pw.hasil) : "-",
               pw?.catatan ?? "",
-              gw ? HASIL_LABEL[gw.hasil] : "-",
+              gw ? hasilDisplay(gw.hasil) : "-",
               gw?.catatan ?? "",
             ], false);
           }

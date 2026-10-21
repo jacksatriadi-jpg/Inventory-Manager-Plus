@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, jsonb, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { isNotNull } from "drizzle-orm";
 import { usersTable } from "./users";
 import { materialsTable } from "./materials";
@@ -49,6 +49,14 @@ export const returTemplateItemTable = pgTable("retur_template_item", {
 });
 
 export type ReturTemplateItem = typeof returTemplateItemTable.$inferSelect;
+
+// ─── Opsi hasil ceklist per material; tanpa baris = default Lengkap/Hilang/Rusak ────────
+export const returTemplateOptionTable = pgTable("retur_template_option", {
+  materialId: integer("material_id").primaryKey().references(() => materialsTable.id, { onDelete: "cascade" }),
+  options: jsonb("options").$type<string[]>().notNull(),
+});
+
+export type ReturTemplateOption = typeof returTemplateOptionTable.$inferSelect;
 
 // ─── Hasil ceklist per item per unit per tahap ────────────────────────────────────
 // stage: 'pengawas' | 'gudang' ; hasil: 'ada' | 'hilang' | 'rusak'

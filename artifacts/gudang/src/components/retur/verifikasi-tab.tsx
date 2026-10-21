@@ -14,13 +14,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ArrowLeft, Camera, ImageOff, Loader2, PackageX } from "lucide-react";
 import { DriveImg } from "./drive-img";
 import {
-  HASIL_BADGE, HASIL_LABEL, Hasil, ReturDetail, ReturDokumen, ReturItemCek,
+  hasilBadgeClass, hasilDisplay, DEFAULT_RESULT_OPTIONS, ReturDetail, ReturDokumen, ReturItemCek,
   KEPUTUSAN_LABEL, Keputusan,
   fmtTanggal, notifyReturChanged, readFileCompressed, returApi,
 } from "./shared";
 
 interface GudangItemForm {
-  hasil: "" | Hasil;
+  hasil: string; // "" = dilewati; selain itu = salah satu nilai dari resultOptions
   catatan: string;
   foto: string;
 }
@@ -39,6 +39,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
   const [keputusanByUnit, setKeputusanByUnit] = useState<Record<number, Keputusan | "">>({});
   const [gudangCatatan, setGudangCatatan] = useState("");
   const [itemForms, setItemForms] = useState<Record<number, Record<string, GudangItemForm>>>({});
+  const [resultOptions, setResultOptions] = useState<string[]>(DEFAULT_RESULT_OPTIONS);
 
   const itemFileRef = useRef<HTMLInputElement>(null);
   const photoTarget = useRef<{ unitId: number; label: string } | null>(null);
@@ -61,6 +62,15 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
     setShowTug10(false);
     try {
       const d = await returApi<ReturDetail>(`/${id}`);
+      let opts: string[] = DEFAULT_RESULT_OPTIONS;
+      try {
+        const materialId = docs.find((x) => x.id === id)?.materialId;
+        if (materialId != null) {
+          const t = await returApi<{ options?: string[] }>(`/template/${materialId}`);
+          if (Array.isArray(t.options) && t.options.length > 0) opts = t.options;
+        }
+      } catch { /* material tanpa template/opsi = pakai bawaan */ }
+      setResultOptions(opts);
       const sn: Record<number, string> = {};
       const keputusan: Record<number, Keputusan | ""> = {};
       const forms: Record<number, Record<string, GudangItemForm>> = {};
@@ -251,7 +261,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                               {pw
                                 ? (
                                   <div className="space-y-1">
-                                    <Badge className={HASIL_BADGE[pw.hasil]}>{HASIL_LABEL[pw.hasil]}</Badge>
+                                    <Badge className={hasilBadgeClass(pw.hasil)}>{hasilDisplay(pw.hasil)}</Badge>
                                     {pw.catatan && <p className="text-xs text-muted-foreground">{pw.catatan}</p>}
                                   </div>
                                 )
@@ -261,13 +271,11 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                               {pw ? <DriveImg fileId={pw.fotoFileId} alt={`Foto pengawas: ${label}`} /> : <ImageOff className="h-4 w-4 text-muted-foreground/50" />}
                             </TableCell>
                             <TableCell>
-                              <Select value={f.hasil || "skip"} onValueChange={(v) => setItem(u.id, label, { hasil: v === "skip" ? "" : (v as Hasil) })}>
+                              <Select value={f.hasil || "skip"} onValueChange={(v) => setItem(u.id, label, { hasil: v === "skip" ? "" : v })}>
                                 <SelectTrigger className="h-8 w-28 text-xs"><SelectValue placeholder="Lewati" /></SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="skip">Kosong (lewati)</SelectItem>
-                                  <SelectItem value="ada">Lengkap</SelectItem>
-                                  <SelectItem value="hilang">Hilang</SelectItem>
-                                  <SelectItem value="rusak">Rusak</SelectItem>
+                                  {resultOptions.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
                                 </SelectContent>
                               </Select>
                             </TableCell>

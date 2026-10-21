@@ -244,6 +244,12 @@ async function setupDatabase() {
       );
     `);
     await pool.query(`
+      CREATE TABLE IF NOT EXISTS retur_template_option (
+        material_id INTEGER PRIMARY KEY REFERENCES materials(id) ON DELETE CASCADE,
+        options JSONB NOT NULL
+      );
+    `);
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS retur_item_cek (
         id SERIAL PRIMARY KEY,
         unit_id INTEGER NOT NULL REFERENCES retur_unit(id) ON DELETE CASCADE,

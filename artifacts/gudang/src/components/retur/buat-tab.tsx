@@ -10,12 +10,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Camera, FileText, ImageOff, Loader2, PackageX, Plus, Trash2 } from "lucide-react";
-import { Hasil, ReturTemplateItem, isNonScanMaterial, readFileCompressed, returApi } from "./shared";
+import { DEFAULT_RESULT_OPTIONS, ReturTemplateItem, isNonScanMaterial, readFileCompressed, returApi } from "./shared";
 import { MaterialPicker } from "./material-picker";
 
 interface ItemForm {
   label: string;
-  hasil: "" | Hasil;
+  hasil: string; // "" = dilewati; selain itu = salah satu nilai dari resultOptions
   catatan: string;
   foto: string;
 }
@@ -38,6 +38,7 @@ export function BuatTab() {
   const [materialId, setMaterialId] = useState("");
   const [catatan, setCatatan] = useState("");
   const [labels, setLabels] = useState<string[]>([]);
+  const [resultOptions, setResultOptions] = useState<string[]>(DEFAULT_RESULT_OPTIONS);
   const [units, setUnits] = useState<UnitForm[]>([]);
   const [templateLoading, setTemplateLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -47,14 +48,15 @@ export function BuatTab() {
   const photoTarget = useRef<{ unit: number; item: number } | null>(null);
 
   useEffect(() => {
-    if (!materialId) { setLabels([]); setUnits([]); return; }
+    if (!materialId) { setLabels([]); setUnits([]); setResultOptions(DEFAULT_RESULT_OPTIONS); return; }
     let alive = true;
     setTemplateLoading(true);
-    returApi<{ items: ReturTemplateItem[] }>(`/template/${materialId}`)
+    returApi<{ items: ReturTemplateItem[]; options?: string[] }>(`/template/${materialId}`)
       .then((d) => {
         if (!alive) return;
         const ls = (d.items ?? []).map((i) => i.label);
         setLabels(ls);
+        setResultOptions(Array.isArray(d.options) && d.options.length > 0 ? d.options : DEFAULT_RESULT_OPTIONS);
         // Unit lama tetap ada; item lama dipertahankan utk label yang sama.
         setUnits((prev) => prev.length === 0
           ? [makeUnit(1, ls)]
@@ -202,13 +204,11 @@ export function BuatTab() {
                 {unit.items.map((it, ii) => (
                   <div key={ii} className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_140px_minmax(0,1fr)_auto] gap-2 items-center border-b border-border/50 pb-2 last:border-0">
                     <span className="text-sm">{it.label}</span>
-                    <Select value={it.hasil || "skip"} onValueChange={(v) => setItem(ui, ii, { hasil: v === "skip" ? "" : (v as Hasil) })}>
+                    <Select value={it.hasil || "skip"} onValueChange={(v) => setItem(ui, ii, { hasil: v === "skip" ? "" : v })}>
                       <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Lewati" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="skip">Kosong (lewati)</SelectItem>
-                        <SelectItem value="ada">Lengkap</SelectItem>
-                        <SelectItem value="hilang">Hilang</SelectItem>
-                        <SelectItem value="rusak">Rusak</SelectItem>
+                        {resultOptions.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
                       </SelectContent>
                     </Select>
                     <Input className="h-8 text-xs" placeholder="Catatan (opsional)" value={it.catatan}
