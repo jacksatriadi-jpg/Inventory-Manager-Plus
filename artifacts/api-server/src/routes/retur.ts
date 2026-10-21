@@ -9,6 +9,7 @@ import {
   getReturDriveStatus,
   uploadReturDataUrl,
   downloadReturFile,
+  deleteReturFile,
 } from "../lib/retur-drive";
 
 const router: IRouter = Router();
@@ -734,6 +735,55 @@ router.get("/retur/:id", async (req, res): Promise<void> => {
   const detail = await buildReturDetail(id);
   if (!detail) { res.status(404).json({ error: "Dokumen retur tidak ditemukan" }); return; }
   res.json(detail);
+});
+
+// ─── DELETE /api/retur/:id (master) — hapus dokumen + unit + ceklist + notifikasi ─
+router.delete("/retur/:id", async (req, res): Promise<void> => {
+  const actor = await requireReturMaster(req, res);
+  if (!actor) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
+
+  const doc = await pool.query("SELECT tug10_file_id FROM retur_dokumen WHERE id = $1", [id]);
+  if (doc.rows.length === 0) { res.status(404).json({ error: "Dokumen retur tidak ditemukan" }); return; }
+  const docRow = doc.rows[0] as { tug10_file_id: string | null }; // kolom sesuai SELECT
+  const fotos = await pool.query(
+    "SELECT foto_file_id FROM retur_item_cek WHERE unit_id IN (SELECT id FROM retur_unit WHERE dokumen_id = $1)",
+    [id]
+  );
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM retur_notifikasi WHERE dokumen_id = $1", [id]);
+    await client.query("DELETE FROM retur_item_cek WHERE unit_id IN (SELECT id FROM retur_unit WHERE dokumen_id = $1)", [id]);
+    await client.query("DELETE FROM retur_unit WHERE dokumen_id = $1", [id]);
+    await client.query("DELETE FROM retur_dokumen WHERE id = $1", [id]);
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error({ err, docId: id }, "Retur: gagal hapus dokumen");
+    res.status(500).json({ error: "Gagal menghapus dokumen" });
+    return;
+  } finally {
+    client.release();
+  }
+
+  // Foto di Drive ikut dihapus; best-effort — kegagalan Drive tidak membatalkan
+  // penghapusan DB (baris file bisa saja sudah dipindah/dihapus manual di Drive).
+  const fotoRows = fotos.rows as { foto_file_id: string | null }[];
+  const fileIds = [docRow.tug10_file_id, ...fotoRows.map((r) => r.foto_file_id)]
+    .filter((f): f is string => typeof f === "string" && f.length > 0);
+  for (const fileId of fileIds) {
+    try {
+      await deleteReturFile(fileId);
+    } catch (err) {
+      logger.warn({ err, fileId, docId: id }, "Retur: gagal hapus file Drive (dokumen sudah dihapus dari DB)");
+    }
+  }
+
+  logger.info({ docId: id, actor: actor.username }, "Retur: dokumen dihapus oleh master");
+  res.json({ ok: true, id });
 });
 
 // ─── POST /api/retur/:id/verify (gudang) — verifikasi + SN + ceklist gudang ─────

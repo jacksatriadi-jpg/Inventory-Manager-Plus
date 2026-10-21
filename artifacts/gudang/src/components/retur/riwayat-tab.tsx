@@ -1,6 +1,7 @@
 // Tab RIWAYAT (gudang): dokumen selesai (completed), tabel checkable, Export Excel & PDF
 // sepenuhnya CLIENT-SIDE (exceljs + jspdf). Bytes foto diambil via GET /api/retur/file/:fileId.
-import { useEffect, useState } from "react";
+// Master dapat menghapus dokumen (DELETE /api/retur/:id) — tombol + dialog konfirmasi per baris.
+import { useCallback, useEffect, useState } from "react";
 import * as exceljsNs from "exceljs";
 // d.ts exceljs memakai named exports tetapi Vite pre-bundel build UMD-nya, jadi anggota
 // modul bisa berada di bawah `default`; bundel boundary ini diberi tipe sekali di sini.
@@ -16,12 +17,17 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Search } from "lucide-react";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog";
+import { useAuth } from "@/lib/auth";
+import { CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Search, Trash2 } from "lucide-react";
 import { DriveImg } from "./drive-img";
 import {
   HASIL_LABEL, ReturDetail, ReturDokumen,
   KEPUTUSAN_BADGE, KEPUTUSAN_LABEL, Keputusan,
-  downloadBlob, fetchReturFile, fmtTanggal, returApi,
+  downloadBlob, fetchReturFile, fmtTanggal, notifyReturChanged, returApi,
 } from "./shared";
 
 interface DocFiles {
@@ -46,20 +52,26 @@ export function RiwayatTab() {
   const [exporting, setExporting] = useState<"excel" | "pdf" | null>(null);
   const [q, setQ] = useState("");
   const [keputusanF, setKeputusanF] = useState<"semua" | Keputusan>("semua");
+  const { user } = useAuth();
+  const canDelete = user?.role === "master";
+  const [toDelete, setToDelete] = useState<ReturDokumen | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   // Filter server-side (status=completed wajib utk riwayat); q didebounce 300 ms.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      const params = new URLSearchParams({ status: "completed" });
-      if (q.trim()) params.set("q", q.trim());
-      if (keputusanF !== "semua") params.set("keputusan", keputusanF);
-      returApi<ReturDokumen[]>(`?${params.toString()}`)
-        .then(setDocs)
-        .catch((e) => toast({ title: "Gagal memuat riwayat", description: (e as Error).message, variant: "destructive" }))
-        .finally(() => setLoading(false));
-    }, 300);
-    return () => clearTimeout(t);
+  const loadDocs = useCallback(() => {
+    const params = new URLSearchParams({ status: "completed" });
+    if (q.trim()) params.set("q", q.trim());
+    if (keputusanF !== "semua") params.set("keputusan", keputusanF);
+    returApi<ReturDokumen[]>(`?${params.toString()}`)
+      .then(setDocs)
+      .catch((e) => toast({ title: "Gagal memuat riwayat", description: (e as Error).message, variant: "destructive" }))
+      .finally(() => setLoading(false));
   }, [q, keputusanF, toast]);
+
+  useEffect(() => {
+    const t = setTimeout(loadDocs, 300);
+    return () => clearTimeout(t);
+  }, [loadDocs]);
 
   const toggle = (id: number) => {
     setSelected((prev) => {
@@ -69,6 +81,26 @@ export function RiwayatTab() {
     });
   };
 
+  const handleDelete = async () => {
+    if (!toDelete) return;
+    setDeleting(true);
+    try {
+      await returApi(`/${toDelete.id}`, { method: "DELETE" });
+      toast({ title: `Dokumen #${toDelete.id} dihapus`, description: "Data DB dan foto di Google Drive ikut dihapus." });
+      setToDelete(null);
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(toDelete.id);
+        return next;
+      });
+      notifyReturChanged();
+      loadDocs();
+    } catch (e) {
+      toast({ title: "Gagal menghapus dokumen", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setDeleting(false);
+    }
+  };
   const toggleAll = () => {
     setSelected((prev) => prev.size === docs.length ? new Set<number>() : new Set(docs.map((d) => d.id)));
   };
@@ -320,6 +352,7 @@ export function RiwayatTab() {
   };
 
   return (
+    <>
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
         <CardTitle className="text-base flex items-center gap-2"><CheckCircle2 className="h-4 w-4" /> Dokumen selesai ({docs.length})</CardTitle>
@@ -371,6 +404,7 @@ export function RiwayatTab() {
                 <TableHead>Keputusan</TableHead>
                 <TableHead>Selesai</TableHead>
                 <TableHead>TUG10</TableHead>
+                {canDelete && <TableHead className="w-10">Aksi</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -393,6 +427,14 @@ export function RiwayatTab() {
                   <TableCell>
                     <DriveImg fileId={d.tug10FileId} alt={`TUG10 #${d.id}`} />
                   </TableCell>
+                  {canDelete && (
+                    <TableCell>
+                      <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
+                        onClick={() => setToDelete(d)} aria-label={`Hapus dokumen ${d.id}`}>
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </TableCell>
+                  )}
                 </TableRow>
               ))}
             </TableBody>
@@ -405,6 +447,25 @@ export function RiwayatTab() {
         )}
       </CardContent>
     </Card>
+    <AlertDialog open={toDelete !== null} onOpenChange={(open) => { if (!open) setToDelete(null); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Hapus dokumen retur #{toDelete?.id}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Dokumen <b>{toDelete?.materialName}</b> beserta unit, hasil ceklist, dan notifikasinya akan
+            dihapus permanen dari database. Foto TUG10 dan foto ceklist di Google Drive juga ikut dihapus.
+            Tindakan ini tidak bisa dibatalkan.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Batal</AlertDialogCancel>
+          <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={handleDelete}>
+            {deleting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Hapus
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
 

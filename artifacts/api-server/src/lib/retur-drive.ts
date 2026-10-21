@@ -44,12 +44,33 @@ async function getReturConfigRow(): Promise<ReturGdriveRow | null> {
   return result.rows[0] ?? null;
 }
 
-function driveAuthed(config: ReturGdriveRow) {
+// Client Drive utk akun retur. Access token Google berumur ~1 jam dan googleapis
+// TIDAK me-refresh otomatis utk client Drive biasa (header disisipkan apa adanya),
+// jadi tiap ~1 jam setelah connect semua upload/gagal 401 "Invalid Credentials"
+// (gejala di frontend: simpan retur -> 502). Dengan expiry_date di credentials,
+// getAccessToken() me-refresh otomatis saat token lewat; token baru disimpan ke DB.
+async function driveAuthed(config: ReturGdriveRow) {
   const client = getReturClient();
   client.setCredentials({
     access_token: config.access_token ?? undefined,
     refresh_token: config.refresh_token ?? undefined,
+    expiry_date: config.token_expiry ? new Date(config.token_expiry).getTime() : undefined,
   });
+  const { token } = await client.getAccessToken();
+  const access = token ?? config.access_token;
+  if (access && access !== config.access_token) {
+    const expiryMs = client.credentials.expiry_date;
+    await pool.query(
+      "UPDATE retur_gdrive_config SET access_token = $1, refresh_token = $2, token_expiry = $3, updated_at = now() WHERE id = $4",
+      [
+        access,
+        client.credentials.refresh_token ?? config.refresh_token,
+        expiryMs ? new Date(expiryMs) : null,
+        config.id,
+      ]
+    );
+    logger.info({ account: config.account_email }, "Retur Drive: access token di-refresh");
+  }
   return google.drive({ version: "v3", auth: client });
 }
 
@@ -134,7 +155,7 @@ export async function ensureReturFolder(): Promise<string> {
   }
   if (config.folder_id) return config.folder_id;
 
-  const drive = driveAuthed(config);
+  const drive = await driveAuthed(config);
 
   const folderRes = await drive.files.list({
     q: `mimeType='application/vnd.google-apps.folder' and name='${FOLDER_NAME}' and trashed=false`,
@@ -176,7 +197,7 @@ export async function uploadReturDataUrl(
   if (!config?.access_token) {
     throw new Error("Akun Google Drive Retur belum terhubung");
   }
-  const drive = driveAuthed(config);
+  const drive = await driveAuthed(config);
   const folderId = await ensureReturFolder();
 
   const response = await drive.files.create({
@@ -209,7 +230,7 @@ export async function downloadReturFile(
   if (!config?.access_token) {
     throw new Error("Akun Google Drive Retur belum terhubung");
   }
-  const drive = driveAuthed(config);
+  const drive = await driveAuthed(config);
 
   const response = await drive.files.get(
     { fileId, alt: "media" },
@@ -226,4 +247,24 @@ export async function downloadReturFile(
     contentType: response.headers["content-type"] || "application/octet-stream",
     buffer: Buffer.concat(chunks),
   };
+}
+
+// Hapus satu file dari folder Retur. 404 dianggap sudah terhapus (pangilan best-effort
+// dari penghapusan dokumen: foto bisa saja sudah dipindah/dihapus manual di Drive).
+export async function deleteReturFile(fileId: string): Promise<void> {
+  const config = await getReturConfigRow();
+  if (!config?.access_token) {
+    throw new Error("Akun Google Drive Retur belum terhubung");
+  }
+  const drive = await driveAuthed(config);
+  try {
+    await drive.files.delete({ fileId });
+  } catch (err) {
+    const code =
+      typeof err === "object" && err !== null && "code" in err && typeof err.code === "number"
+        ? err.code
+        : undefined;
+    if (code === 404) return;
+    throw err;
+  }
 }
