@@ -8,9 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CloudUpload, Link2, Link2Off, Loader2, ListChecks, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CloudUpload, Copy, Link2, Link2Off, Loader2, ListChecks, Plus, Save, Trash2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MaterialPicker } from "./material-picker";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DEFAULT_RESULT_OPTIONS, ReturTemplateItem, isNonScanMaterial, returApi } from "./shared";
 
 interface DriveStatus {
@@ -120,6 +121,10 @@ function TemplateEditor() {
   const [isPreset, setIsPreset] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copyQ, setCopyQ] = useState("");
+  const [copyTargets, setCopyTargets] = useState<Set<string>>(new Set());
+  const [copying, setCopying] = useState(false);
 
   useEffect(() => {
     if (!materialId) { setRows([]); setIsPreset(false); setOpenRow(null); return; }
@@ -161,18 +166,18 @@ function TemplateEditor() {
     return { ...r, options: copy };
   }));
 
+  const buildItems = () => rows
+    .map((r) => ({ ...r, label: r.label.trim(), options: r.options ? r.options.map((o) => o.trim()).filter((o) => o.length > 0) : null }))
+    .filter((r) => r.label.length > 0)
+    .map((r) => ({ label: r.label, options: r.options, fotoWajibPengawas: r.fwP, fotoWajibGudang: r.fwG }));
+
   const save = async () => {
     if (!materialId) { toast({ title: "Pilih material terlebih dahulu", variant: "destructive" }); return; }
-    const cleaned = rows
-      .map((r) => ({ ...r, label: r.label.trim(), options: r.options ? r.options.map((o) => o.trim()).filter((o) => o.length > 0) : null }))
-      .filter((r) => r.label.length > 0);
     setSaving(true);
     try {
       const d = await returApi<{ items: ReturTemplateItem[] }>(`/template/${materialId}`, {
         method: "PUT",
-        body: JSON.stringify({
-          items: cleaned.map((r) => ({ label: r.label, options: r.options, fotoWajibPengawas: r.fwP, fotoWajibGudang: r.fwG })),
-        }),
+        body: JSON.stringify({ items: buildItems() }),
       });
       setRows(mapTemplateRows(d.items ?? []));
       setIsPreset(false);
@@ -190,8 +195,40 @@ function TemplateEditor() {
     }
   };
 
+  // Duplikasi = PUT template yg sama ke tiap target; bukan operasi batch server (jumlah target kecil).
+  const copyTo = async () => {
+    const items = buildItems();
+    if (items.length === 0) { toast({ title: "Daftar komponen kosong — tidak ada yang diduplikatkan", variant: "destructive" }); return; }
+    const targets = (materials ?? []).filter((m) => copyTargets.has(String(m.id)));
+    setCopying(true);
+    let ok = 0;
+    const gagal: string[] = [];
+    for (const t of targets) {
+      try {
+        await returApi(`/template/${t.id}`, { method: "PUT", body: JSON.stringify({ items }) });
+        ok += 1;
+      } catch {
+        gagal.push(t.name);
+      }
+    }
+    setCopying(false);
+    if (ok > 0) {
+      toast({
+        title: `Template diduplikatkan ke ${ok} material`,
+        description: `${items.length} komponen per material${gagal.length ? `; gagal: ${gagal.join(", ")}` : ""}`,
+        variant: gagal.length ? "destructive" : "default",
+      });
+      setCopyOpen(false);
+      setCopyTargets(new Set());
+      setCopyQ("");
+    } else {
+      toast({ title: "Semua duplikasi gagal", description: gagal.join(", "), variant: "destructive" });
+    }
+  };
+
   return (
-    <Card>
+    <>
+      <Card>
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2"><ListChecks className="h-4 w-4" /> Template Komponen Pemeriksaan</CardTitle>
         <CardDescription>Edit label, opsi hasil, dan aturan wajib foto per komponen. Simpan daftar kosong untuk kembali ke preset otomatis.</CardDescription>
@@ -304,10 +341,59 @@ function TemplateEditor() {
           )}
         </div>
 
-        <Button onClick={save} disabled={!materialId || loading || saving}>
-          {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />} Simpan Template
-        </Button>
+        <div className="flex flex-wrap gap-3">
+          <Button onClick={save} disabled={!materialId || loading || saving}>
+            {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />} Simpan Template
+          </Button>
+          <Button variant="outline" onClick={() => setCopyOpen(true)} disabled={!materialId || loading || rows.length === 0}>
+            <Copy className="h-4 w-4 mr-2" /> Duplikatkan ke Material Lain
+          </Button>
+        </div>
       </CardContent>
     </Card>
+
+    <Dialog open={copyOpen} onOpenChange={(o) => { setCopyOpen(o); if (!o) { setCopyTargets(new Set()); setCopyQ(""); } }}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle className="text-base">Duplikatkan template ke material lain</DialogTitle>
+          <DialogDescription className="text-xs">
+            {rows.length} komponen beserta opsi hasil &amp; aturan wajib foto akan MENGGANTI template material yang dipilih.
+            Material yang sudah punya template akan tertimpa.
+          </DialogDescription>
+        </DialogHeader>
+        <Input value={copyQ} onChange={(e) => setCopyQ(e.target.value)} placeholder="Cari nama / kode material..." className="h-8 text-sm" />
+        <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
+          {(materials ?? [])
+            .filter(isNonScanMaterial)
+            .filter((m) => String(m.id) !== materialId)
+            .filter((m) => {
+              const q = copyQ.trim().toLowerCase();
+              return !q || `${m.id} ${m.code ?? ""} ${m.name}`.toLowerCase().includes(q);
+            })
+            .map((m) => (
+              <label key={m.id} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted">
+                <Checkbox
+                  checked={copyTargets.has(String(m.id))}
+                  onCheckedChange={(c) => setCopyTargets((prev) => {
+                    const n = new Set(prev);
+                    if (c === true) n.add(String(m.id)); else n.delete(String(m.id));
+                    return n;
+                  })}
+                />
+                <span className="font-mono text-xs text-muted-foreground">{m.code}</span>
+                <span className="truncate">{m.name}</span>
+              </label>
+            ))}
+        </div>
+        <DialogFooter className="items-center gap-2">
+          <span className="mr-auto text-xs text-muted-foreground">{copyTargets.size} material dipilih</span>
+          <Button variant="outline" size="sm" onClick={() => setCopyOpen(false)}>Batal</Button>
+          <Button size="sm" onClick={copyTo} disabled={copying || copyTargets.size === 0}>
+            {copying ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Copy className="h-4 w-4 mr-2" />} Duplikatkan ({copyTargets.size})
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
