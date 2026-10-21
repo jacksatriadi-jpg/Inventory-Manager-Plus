@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, jsonb, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, jsonb, boolean, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 import { isNotNull } from "drizzle-orm";
 import { usersTable } from "./users";
 import { materialsTable } from "./materials";
@@ -46,20 +46,16 @@ export const returTemplateItemTable = pgTable("retur_template_item", {
   materialId: integer("material_id").notNull().references(() => materialsTable.id, { onDelete: "cascade" }),
   label: text("label").notNull(),
   urut: integer("urut").notNull().default(0),
+  // options = opsi hasil penilaian komponen ini; null = default Lengkap/Hilang/Rusak.
+  options: jsonb("options").$type<string[] | null>(),
+  fotoWajibPengawas: boolean("foto_wajib_pengawas").notNull().default(true),
+  fotoWajibGudang: boolean("foto_wajib_gudang").notNull().default(true),
 });
 
 export type ReturTemplateItem = typeof returTemplateItemTable.$inferSelect;
 
-// ─── Opsi hasil ceklist per material; tanpa baris = default Lengkap/Hilang/Rusak ────────
-export const returTemplateOptionTable = pgTable("retur_template_option", {
-  materialId: integer("material_id").primaryKey().references(() => materialsTable.id, { onDelete: "cascade" }),
-  options: jsonb("options").$type<string[]>().notNull(),
-});
-
-export type ReturTemplateOption = typeof returTemplateOptionTable.$inferSelect;
-
 // ─── Hasil ceklist per item per unit per tahap ────────────────────────────────────
-// stage: 'pengawas' | 'gudang' ; hasil: 'ada' | 'hilang' | 'rusak'
+// stage: 'pengawas' | 'gudang' ; hasil: kode bawaan atau string opsi kustom komponen
 export const returItemCekTable = pgTable("retur_item_cek", {
   id: serial("id").primaryKey(),
   unitId: integer("unit_id").notNull().references(() => returUnitTable.id, { onDelete: "cascade" }),
@@ -67,7 +63,7 @@ export const returItemCekTable = pgTable("retur_item_cek", {
   itemLabel: text("item_label").notNull(),
   hasil: text("hasil").notNull(),
   catatan: text("catatan"),
-  fotoFileId: text("foto_file_id").notNull(), // Google Drive Retur file id
+  fotoFileId: text("foto_file_id"), // Google Drive Retur file id; null = tidak wajib foto
   fotoLink: text("foto_link"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

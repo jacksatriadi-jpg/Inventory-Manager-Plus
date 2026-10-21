@@ -14,13 +14,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ArrowLeft, Camera, ImageOff, Loader2, PackageX } from "lucide-react";
 import { DriveImg } from "./drive-img";
 import {
-  hasilBadgeClass, hasilDisplay, DEFAULT_RESULT_OPTIONS, ReturDetail, ReturDokumen, ReturItemCek,
+  hasilBadgeClass, hasilDisplay, DEFAULT_RESULT_OPTIONS, ReturDetail, ReturDokumen, ReturItemCek, ReturTemplateItem,
   KEPUTUSAN_LABEL, Keputusan,
   fmtTanggal, notifyReturChanged, readFileCompressed, returApi,
 } from "./shared";
 
 interface GudangItemForm {
-  hasil: string; // "" = dilewati; selain itu = salah satu nilai dari resultOptions
+  hasil: string; // "" = dilewati; selain itu = salah satu nilai opsi komponen tsb
   catatan: string;
   foto: string;
 }
@@ -39,10 +39,14 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
   const [keputusanByUnit, setKeputusanByUnit] = useState<Record<number, Keputusan | "">>({});
   const [gudangCatatan, setGudangCatatan] = useState("");
   const [itemForms, setItemForms] = useState<Record<number, Record<string, GudangItemForm>>>({});
-  const [resultOptions, setResultOptions] = useState<string[]>(DEFAULT_RESULT_OPTIONS);
+  const [cfgByLabel, setCfgByLabel] = useState<Record<string, { options: string[] | null; fotoWajib: boolean }>>({});
 
   const itemFileRef = useRef<HTMLInputElement>(null);
   const photoTarget = useRef<{ unitId: number; label: string } | null>(null);
+
+  // Komponen tanpa entri config (dokumen lama/preset) = opsi bawaan + foto wajib.
+  const cfgFor = (label: string) => cfgByLabel[label] ?? { options: null as string[] | null, fotoWajib: true };
+  const optionsFor = (label: string) => cfgFor(label).options ?? DEFAULT_RESULT_OPTIONS;
 
   const loadDocs = async () => {
     try {
@@ -62,15 +66,15 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
     setShowTug10(false);
     try {
       const d = await returApi<ReturDetail>(`/${id}`);
-      let opts: string[] = DEFAULT_RESULT_OPTIONS;
+      let cfg: Record<string, { options: string[] | null; fotoWajib: boolean }> = {};
       try {
         const materialId = docs.find((x) => x.id === id)?.materialId;
         if (materialId != null) {
-          const t = await returApi<{ options?: string[] }>(`/template/${materialId}`);
-          if (Array.isArray(t.options) && t.options.length > 0) opts = t.options;
+          const t = await returApi<{ items: ReturTemplateItem[] }>(`/template/${materialId}`);
+          cfg = Object.fromEntries((t.items ?? []).map((i) => [i.label, { options: i.options, fotoWajib: i.fotoWajibGudang !== false }]));
         }
-      } catch { /* material tanpa template/opsi = pakai bawaan */ }
-      setResultOptions(opts);
+      } catch { /* material tanpa template = pakai bawaan */ }
+      setCfgByLabel(cfg);
       const sn: Record<number, string> = {};
       const keputusan: Record<number, Keputusan | ""> = {};
       const forms: Record<number, Record<string, GudangItemForm>> = {};
@@ -142,11 +146,11 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
     const tanpaFoto: string[] = [];
     for (const u of detail.units) {
       for (const [label, f] of Object.entries(itemForms[u.id] ?? {})) {
-        if (f.hasil && !f.foto) tanpaFoto.push(`${u.label} — ${label}`);
+        if (f.hasil && !f.foto && cfgFor(label).fotoWajib) tanpaFoto.push(`${u.label} — ${label}`);
       }
     }
     if (tanpaFoto.length > 0) {
-      toast({ title: "Item dengan hasil wajib difoto", description: tanpaFoto.join("; "), variant: "destructive" });
+      toast({ title: "Item wajib foto belum difoto", description: tanpaFoto.join("; "), variant: "destructive" });
       return;
     }
     setSubmitting(true);
@@ -268,14 +272,14 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                                 : <span className="text-xs text-muted-foreground">dilewati</span>}
                             </TableCell>
                             <TableCell>
-                              {pw ? <DriveImg fileId={pw.fotoFileId} alt={`Foto pengawas: ${label}`} /> : <ImageOff className="h-4 w-4 text-muted-foreground/50" />}
+                              {pw?.fotoFileId ? <DriveImg fileId={pw.fotoFileId} alt={`Foto pengawas: ${label}`} /> : <ImageOff className="h-4 w-4 text-muted-foreground/50" />}
                             </TableCell>
                             <TableCell>
                               <Select value={f.hasil || "skip"} onValueChange={(v) => setItem(u.id, label, { hasil: v === "skip" ? "" : v })}>
                                 <SelectTrigger className="h-8 w-28 text-xs"><SelectValue placeholder="Lewati" /></SelectTrigger>
                                 <SelectContent>
                                   <SelectItem value="skip">Kosong (lewati)</SelectItem>
-                                  {resultOptions.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                                  {optionsFor(label).map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
                                 </SelectContent>
                               </Select>
                             </TableCell>
@@ -285,7 +289,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                             </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2">
-                                <Button size="sm" variant={f.hasil && !f.foto ? "destructive" : "outline"}
+                                <Button size="sm" variant={f.hasil && !f.foto && cfgFor(label).fotoWajib ? "destructive" : "outline"}
                                   onClick={() => { photoTarget.current = { unitId: u.id, label }; itemFileRef.current?.click(); }}>
                                   <Camera className="h-3.5 w-3.5 mr-1" /> {f.foto ? "Ganti" : "Foto"}
                                 </Button>

@@ -1,6 +1,7 @@
 // Tab RIWAYAT (gudang): dokumen selesai (completed), tabel checkable, Export Excel & PDF
 // sepenuhnya CLIENT-SIDE (exceljs + jspdf). Bytes foto diambil via GET /api/retur/file/:fileId.
-// Master dapat menghapus dokumen (DELETE /api/retur/:id) — tombol + dialog konfirmasi per baris.
+// Master dapat mengoreksi hasil verifikasi (PUT /api/retur/:id/verify-items) dan menghapus
+// dokumen (DELETE /api/retur/:id) — tombol aksi per baris + dialog konfirmasi hapus.
 import { useCallback, useEffect, useState } from "react";
 import * as exceljsNs from "exceljs";
 // d.ts exceljs memakai named exports tetapi Vite pre-bundel build UMD-nya, jadi anggota
@@ -21,11 +22,14 @@ import {
   AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
   AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { useAuth } from "@/lib/auth";
-import { CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Search, Trash2 } from "lucide-react";
+import { CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Pencil, Search, Trash2 } from "lucide-react";
 import { DriveImg } from "./drive-img";
 import {
-  hasilDisplay, ReturDetail, ReturDokumen,
+  hasilDisplay, ReturDetail, ReturDokumen, ReturTemplateItem,
   KEPUTUSAN_BADGE, KEPUTUSAN_LABEL, Keputusan,
   downloadBlob, fetchReturFile, fmtTanggal, notifyReturChanged, returApi,
 } from "./shared";
@@ -45,6 +49,7 @@ const bytesToBase64 = (bytes: ArrayBuffer): string => {
 };
 
 export function RiwayatTab() {
+  const [editDoc, setEditDoc] = useState<ReturDokumen | null>(null);
   const { toast } = useToast();
   const [docs, setDocs] = useState<ReturDokumen[]>([]);
   const [loading, setLoading] = useState(true);
@@ -112,7 +117,7 @@ export function RiwayatTab() {
       const fileIds = new Set<string>([
         detail.tug10FileId,
         ...detail.units.flatMap((u) => u.items.map((i) => i.fotoFileId)),
-      ]);
+      ].filter((x): x is string => x !== null));
       const files = new Map<string, { bytes: ArrayBuffer; contentType: string }>();
       await Promise.all([...fileIds].map(async (fid) => {
         try {
@@ -189,6 +194,7 @@ export function RiwayatTab() {
           // Foto: 2 per baris grid; 150x110px ≈ 6 baris tinggi sel.
           let col = 1;
           for (const it of u.items) {
+            if (!it.fotoFileId) continue; // komponen tanpa kewajiban foto: tidak ada yang diekspor
             ws.getCell(r, col).value = `${it.stage} — ${it.itemLabel}`;
             ws.getCell(r, col).font = { size: 9, italic: true };
             const f = files.get(it.fotoFileId);
@@ -315,7 +321,7 @@ export function RiwayatTab() {
           }
           y += 2;
           // Foto grid 2 kolom ±45mm, tiap foto berlabel stage+item.
-          const photos = u.items.map((it) => ({ label: `${it.stage} — ${it.itemLabel}`, fileId: it.fotoFileId }));
+          const photos = u.items.filter((it) => it.fotoFileId !== null).map((it) => ({ label: `${it.stage} — ${it.itemLabel}`, fileId: it.fotoFileId as string }));
           for (let p = 0; p < photos.length; p += 2) {
             const pair = photos.slice(p, p + 2);
             const dims = await Promise.all(pair.map((ph) => {
@@ -404,7 +410,7 @@ export function RiwayatTab() {
                 <TableHead>Keputusan</TableHead>
                 <TableHead>Selesai</TableHead>
                 <TableHead>TUG10</TableHead>
-                {canDelete && <TableHead className="w-10">Aksi</TableHead>}
+                {canDelete && <TableHead className="w-16">Aksi</TableHead>}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -429,10 +435,15 @@ export function RiwayatTab() {
                   </TableCell>
                   {canDelete && (
                     <TableCell>
-                      <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
-                        onClick={() => setToDelete(d)} aria-label={`Hapus dokumen ${d.id}`}>
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      <div className="flex items-center gap-1">
+                        <Button size="sm" variant="ghost" onClick={() => setEditDoc(d)} aria-label={`Koreksi hasil verifikasi dokumen ${d.id}`}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
+                          onClick={() => setToDelete(d)} aria-label={`Hapus dokumen ${d.id}`}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </TableCell>
                   )}
                 </TableRow>
@@ -465,7 +476,153 @@ export function RiwayatTab() {
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+    <EditVerifyDialog
+      doc={editDoc}
+      onClose={(saved) => { setEditDoc(null); if (saved) { notifyReturChanged(); loadDocs(); } }}
+    />
     </>
+  );
+}
+
+// ─── Dialog koreksi hasil verifikasi gudang oleh master (PUT /retur/:id/verify-items) ──
+interface EditItemForm { hasil: string; catatan: string }
+
+function EditVerifyDialog({ doc, onClose }: { doc: ReturDokumen | null; onClose: (saved: boolean) => void }) {
+  const { toast } = useToast();
+  const [detail, setDetail] = useState<ReturDetail | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // opsi per label dari template saat ini; null/absen = bawaan (pilihan = kode ada/hilang/rusak).
+  const [cfgByLabel, setCfgByLabel] = useState<Record<string, string[] | null>>({});
+  const [forms, setForms] = useState<Record<number, Record<string, EditItemForm>>>({});
+
+  useEffect(() => {
+    if (!doc) { setDetail(null); return; }
+    let alive = true;
+    setLoading(true);
+    (async () => {
+      const d = await returApi<ReturDetail>(`/${doc.id}`);
+      let cfg: Record<string, string[] | null> = {};
+      try {
+        const t = await returApi<{ items: ReturTemplateItem[] }>(`/template/${doc.materialId}`);
+        cfg = Object.fromEntries((t.items ?? []).map((i) => [i.label, i.options]));
+      } catch { /* material tanpa template = opsi bawaan */ }
+      if (!alive) return;
+      const fs: Record<number, Record<string, EditItemForm>> = {};
+      for (const u of d.units) {
+        const labels: string[] = [];
+        for (const it of u.items) if (!labels.includes(it.itemLabel)) labels.push(it.itemLabel);
+        fs[u.id] = Object.fromEntries(labels.map((l) => {
+          const gw = u.items.find((it) => it.stage === "gudang" && it.itemLabel === l);
+          return [l, { hasil: gw?.hasil ?? "", catatan: gw?.catatan ?? "" }];
+        }));
+      }
+      setDetail(d);
+      setCfgByLabel(cfg);
+      setForms(fs);
+    })()
+      .catch((e) => { if (alive) toast({ title: "Gagal memuat dokumen", description: (e as Error).message, variant: "destructive" }); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [doc, toast]);
+
+  const choicesFor = (label: string): { value: string; display: string }[] => {
+    const opts = cfgByLabel[label] ?? null;
+    if (opts) return opts.map((o) => ({ value: o, display: o }));
+    return [
+      { value: "ada", display: "Lengkap" },
+      { value: "hilang", display: "Hilang" },
+      { value: "rusak", display: "Rusak" },
+    ];
+  };
+
+  const setF = (unitId: number, label: string, p: Partial<EditItemForm>) =>
+    setForms((prev) => ({ ...prev, [unitId]: { ...prev[unitId], [label]: { ...prev[unitId][label], ...p } } }));
+
+  const save = async () => {
+    if (!detail) return;
+    setSaving(true);
+    try {
+      await returApi(`/${detail.id}/verify-items`, {
+        method: "PUT",
+        body: JSON.stringify({
+          units: detail.units.map((u) => ({
+            unitId: u.id,
+            items: Object.entries(forms[u.id] ?? {}).map(([itemLabel, f]) => ({ itemLabel, hasil: f.hasil, catatan: f.catatan })),
+          })),
+        }),
+      });
+      toast({ title: `Hasil verifikasi dokumen #${detail.id} dikoreksi` });
+      onClose(true);
+    } catch (e) {
+      toast({ title: "Gagal mengoreksi hasil", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={doc !== null} onOpenChange={(open) => { if (!open) onClose(false); }}>
+      <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="text-base">Koreksi hasil verifikasi — dokumen #{doc?.id}</DialogTitle>
+          <DialogDescription className="text-xs">
+            {doc?.materialName} — ubah hasil &amp; catatan tahap gudang. Mengosongkan hasil menghapus hasil gudang komponen itu; foto tidak diubah.
+          </DialogDescription>
+        </DialogHeader>
+        {loading || !detail ? (
+          <p className="text-sm text-muted-foreground flex items-center gap-2 py-6"><Loader2 className="h-4 w-4 animate-spin" /> Memuat dokumen...</p>
+        ) : (
+          <div className="space-y-4">
+            {detail.units.map((u) => (
+              <div key={u.id} className="space-y-2">
+                <div className="text-sm font-medium">{u.label}{u.sn ? <> — SN <span className="font-mono">{u.sn}</span></> : null}</div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-xs">Komponen</TableHead>
+                      <TableHead className="text-xs">Pengawas</TableHead>
+                      <TableHead className="text-xs w-36">Hasil gudang</TableHead>
+                      <TableHead className="text-xs">Catatan</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {Object.entries(forms[u.id] ?? {}).map(([label, f]) => {
+                      const pw = u.items.find((it) => it.stage === "pengawas" && it.itemLabel === label);
+                      return (
+                        <TableRow key={label}>
+                          <TableCell className="text-xs">{label}</TableCell>
+                          <TableCell className="text-xs">{pw ? hasilDisplay(pw.hasil) : "-"}</TableCell>
+                          <TableCell>
+                            <Select value={f.hasil || "skip"} onValueChange={(v) => setF(u.id, label, { hasil: v === "skip" ? "" : v })}>
+                              <SelectTrigger className="h-8 w-32 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="skip">Kosongkan</SelectItem>
+                                {choicesFor(label).map((c) => <SelectItem key={c.value} value={c.value}>{c.display}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
+                          <TableCell>
+                            <Input className="h-8 text-xs" placeholder="Catatan" value={f.catatan}
+                              onChange={(e) => setF(u.id, label, { catatan: e.target.value })} />
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            ))}
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => onClose(false)}>Batal</Button>
+          <Button size="sm" onClick={save} disabled={loading || saving || !detail}>
+            {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null} Simpan koreksi
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

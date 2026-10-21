@@ -4,6 +4,9 @@
 export interface ReturTemplateItem {
   id: number | null;
   label: string;
+  options: string[] | null; // null = opsi bawaan
+  fotoWajibPengawas: boolean;
+  fotoWajibGudang: boolean;
 }
 
 export interface ReturDokumen {
@@ -31,7 +34,7 @@ export interface ReturItemCek {
   itemLabel: string;
   hasil: string; // kode bawaan 'ada'/'hilang'/'rusak' atau string opsi kustom
   catatan: string | null;
-  fotoFileId: string;
+  fotoFileId: string | null; // null = komponen tidak wajib foto
   fotoLink: string | null;
 }
 
@@ -68,7 +71,7 @@ export const HASIL_BADGE: Record<Hasil, string> = {
   rusak: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
 };
 
-// Opsi hasil bawaan; material bisa punya opsi kustom (dari GET /template/:id -> options).
+// Opsi hasil bawaan; tiap komponen bisa punya opsi kustom (GET /template/:id -> items[].options).
 export const DEFAULT_RESULT_OPTIONS = ["Lengkap", "Hilang", "Rusak"];
 
 // Kode bawaan dipetakan ke labelnya; opsi kustom tampil apa adanya.

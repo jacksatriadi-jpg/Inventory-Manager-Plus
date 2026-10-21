@@ -244,12 +244,6 @@ async function setupDatabase() {
       );
     `);
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS retur_template_option (
-        material_id INTEGER PRIMARY KEY REFERENCES materials(id) ON DELETE CASCADE,
-        options JSONB NOT NULL
-      );
-    `);
-    await pool.query(`
       CREATE TABLE IF NOT EXISTS retur_item_cek (
         id SERIAL PRIMARY KEY,
         unit_id INTEGER NOT NULL REFERENCES retur_unit(id) ON DELETE CASCADE,
@@ -257,11 +251,19 @@ async function setupDatabase() {
         item_label TEXT NOT NULL,
         hasil TEXT NOT NULL,
         catatan TEXT,
-        foto_file_id TEXT NOT NULL,
+        foto_file_id TEXT,
         foto_link TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
+    // Migrasi: opsi hasil + flag wajib foto pindah ke per komponen; opsi per material (tabel terpisah) dihapus.
+    await pool.query(`
+      ALTER TABLE retur_template_item ADD COLUMN IF NOT EXISTS options JSONB,
+        ADD COLUMN IF NOT EXISTS foto_wajib_pengawas BOOLEAN NOT NULL DEFAULT true,
+        ADD COLUMN IF NOT EXISTS foto_wajib_gudang BOOLEAN NOT NULL DEFAULT true;
+    `);
+    await pool.query(`ALTER TABLE retur_item_cek ALTER COLUMN foto_file_id DROP NOT NULL;`);
+    await pool.query(`DROP TABLE IF EXISTS retur_template_option;`);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS retur_notifikasi (
         id SERIAL PRIMARY KEY,

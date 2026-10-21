@@ -1,5 +1,5 @@
 // Tab BUAT: pengawas membuat dokumen retur — foto TUG10 (mandatori, kompresi 1280/0.72),
-// material non-scan, units repeater, checklist per unit dari template, foto wajib per item ber-hasil.
+// material non-scan, units repeater, ceklist per unit dari template (opsi + wajib foto per komponen).
 import { useEffect, useRef, useState } from "react";
 import { useListMaterials } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
@@ -38,7 +38,7 @@ export function BuatTab() {
   const [materialId, setMaterialId] = useState("");
   const [catatan, setCatatan] = useState("");
   const [labels, setLabels] = useState<string[]>([]);
-  const [resultOptions, setResultOptions] = useState<string[]>(DEFAULT_RESULT_OPTIONS);
+  const [cfgByLabel, setCfgByLabel] = useState<Record<string, { options: string[] | null; fotoWajib: boolean }>>({});
   const [units, setUnits] = useState<UnitForm[]>([]);
   const [templateLoading, setTemplateLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -48,15 +48,15 @@ export function BuatTab() {
   const photoTarget = useRef<{ unit: number; item: number } | null>(null);
 
   useEffect(() => {
-    if (!materialId) { setLabels([]); setUnits([]); setResultOptions(DEFAULT_RESULT_OPTIONS); return; }
+    if (!materialId) { setLabels([]); setUnits([]); setCfgByLabel({}); return; }
     let alive = true;
     setTemplateLoading(true);
-    returApi<{ items: ReturTemplateItem[]; options?: string[] }>(`/template/${materialId}`)
+    returApi<{ items: ReturTemplateItem[] }>(`/template/${materialId}`)
       .then((d) => {
         if (!alive) return;
         const ls = (d.items ?? []).map((i) => i.label);
         setLabels(ls);
-        setResultOptions(Array.isArray(d.options) && d.options.length > 0 ? d.options : DEFAULT_RESULT_OPTIONS);
+        setCfgByLabel(Object.fromEntries((d.items ?? []).map((i) => [i.label, { options: i.options, fotoWajib: i.fotoWajibPengawas !== false }])));
         // Unit lama tetap ada; item lama dipertahankan utk label yang sama.
         setUnits((prev) => prev.length === 0
           ? [makeUnit(1, ls)]
@@ -70,6 +70,10 @@ export function BuatTab() {
       .finally(() => { if (alive) setTemplateLoading(false); });
     return () => { alive = false; };
   }, [materialId, toast]);
+
+  // Komponen tanpa entri config (mis. preset) = opsi bawaan + foto wajib.
+  const cfgFor = (label: string) => cfgByLabel[label] ?? { options: null as string[] | null, fotoWajib: true };
+  const optionsFor = (label: string) => cfgFor(label).options ?? DEFAULT_RESULT_OPTIONS;
 
   const setItem = (unitIdx: number, itemIdx: number, patch: Partial<ItemForm>) => {
     setUnits((prev) => prev.map((u, ui) => ui !== unitIdx ? u
@@ -104,10 +108,10 @@ export function BuatTab() {
     if (units.length === 0) { toast({ title: "Tambahkan minimal satu unit", variant: "destructive" }); return; }
     const tanpaFoto: string[] = [];
     units.forEach((u, ui) => u.items.forEach((it) => {
-      if (it.hasil && !it.foto) tanpaFoto.push(`Unit ${ui + 1} — ${it.label}`);
+      if (it.hasil && !it.foto && cfgFor(it.label).fotoWajib) tanpaFoto.push(`Unit ${ui + 1} — ${it.label}`);
     }));
     if (tanpaFoto.length > 0) {
-      toast({ title: "Item dengan hasil wajib difoto", description: tanpaFoto.join("; "), variant: "destructive" });
+      toast({ title: "Item wajib foto belum difoto", description: tanpaFoto.join("; "), variant: "destructive" });
       return;
     }
     setSaving(true);
@@ -208,13 +212,13 @@ export function BuatTab() {
                       <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Lewati" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="skip">Kosong (lewati)</SelectItem>
-                        {resultOptions.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                        {optionsFor(it.label).map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
                       </SelectContent>
                     </Select>
                     <Input className="h-8 text-xs" placeholder="Catatan (opsional)" value={it.catatan}
                       onChange={(e) => setItem(ui, ii, { catatan: e.target.value })} />
                     <div className="flex items-center gap-2">
-                      <Button size="sm" variant={it.hasil && !it.foto ? "destructive" : "outline"}
+                      <Button size="sm" variant={it.hasil && !it.foto && cfgFor(it.label).fotoWajib ? "destructive" : "outline"}
                         onClick={() => { photoTarget.current = { unit: ui, item: ii }; itemFileRef.current?.click(); }}>
                         <Camera className="h-3.5 w-3.5 mr-1" /> {it.foto ? "Ganti" : "Foto"}
                       </Button>

@@ -126,14 +126,6 @@ export const DEFAULT_RESULT_OPTIONS = ["Lengkap", "Hilang", "Rusak"];
 const HASIL_CODE_TO_LABEL: Record<string, string> = { ada: "Lengkap", hilang: "Hilang", rusak: "Rusak" };
 const HASIL_LABEL_TO_CODE: Record<string, string> = { lengkap: "ada", hilang: "hilang", rusak: "rusak" };
 
-// Opsi kustom material; null = default (hasil lama 'ada'/'hilang'/'rusak' dipakai apa adanya).
-async function getTemplateOptions(materialId: number): Promise<string[] | null> {
-  const r = await pool.query("SELECT options FROM retur_template_option WHERE material_id = $1", [materialId]);
-  const row = r.rows[0] as { options: unknown } | undefined; // kolom sesuai SELECT
-  if (!row || !Array.isArray(row.options)) return null;
-  const opts = (row.options as unknown[]).filter((o): o is string => typeof o === "string" && o.trim() !== "");
-  return opts.length > 0 ? opts : null;
-}
 
 interface ValidItem {
   label: string;
@@ -144,7 +136,53 @@ interface ValidItem {
 
 type ItemsResult = { ok: true; items: ValidItem[] } | { ok: false; error: string };
 
-function validateCekItems(itemsRaw: unknown, allowed: string[] | null): ItemsResult {
+// Config per komponen (label -> opsi hasil + flag wajib foto per tahap). Material tanpa template = map kosong -> semua default.
+interface ItemCfg {
+  options: string[] | null; // null = default Lengkap/Hilang/Rusak (kode lama dipakai apa adanya)
+  fotoWajibPengawas: boolean;
+  fotoWajibGudang: boolean;
+}
+const DEFAULT_ITEM_CFG: ItemCfg = { options: null, fotoWajibPengawas: true, fotoWajibGudang: true };
+
+async function getTemplateConfig(materialId: number): Promise<Map<string, ItemCfg>> {
+  const r = await pool.query(
+    "SELECT label, options, foto_wajib_pengawas, foto_wajib_gudang FROM retur_template_item WHERE material_id = $1",
+    [materialId],
+  );
+  const map = new Map<string, ItemCfg>();
+  for (const row of r.rows as { label: string; options: unknown; foto_wajib_pengawas: boolean; foto_wajib_gudang: boolean }[]) {
+    const opts = Array.isArray(row.options)
+      ? (row.options as unknown[]).filter((o): o is string => typeof o === "string" && o.trim() !== "")
+      : null;
+    map.set(row.label, {
+      options: opts && opts.length > 0 ? opts : null,
+      fotoWajibPengawas: row.foto_wajib_pengawas !== false,
+      fotoWajibGudang: row.foto_wajib_gudang !== false,
+    });
+  }
+  return map;
+}
+
+function cfgFor(cfg: Map<string, ItemCfg>, label: string): ItemCfg {
+  return cfg.get(label) ?? DEFAULT_ITEM_CFG;
+}
+
+// Validasi nilai hasil thd opsi komponen; default = terima label bawaan ATAU kode lama, simpan kode lama.
+function validateHasil(label: string, hasil: string, options: string[] | null): { ok: true; value: string } | { ok: false; error: string } {
+  if (options === null) {
+    const code = HASIL_LABEL_TO_CODE[hasil.toLowerCase()] ?? hasil;
+    if (!(code in HASIL_CODE_TO_LABEL)) {
+      return { ok: false, error: `Hasil untuk item "${label}" harus salah satu: ${DEFAULT_RESULT_OPTIONS.join(", ")}` };
+    }
+    return { ok: true, value: code };
+  }
+  if (!options.includes(hasil)) {
+    return { ok: false, error: `Hasil untuk item "${label}" harus salah satu: ${options.join(", ")}` };
+  }
+  return { ok: true, value: hasil };
+}
+
+function validateCekItems(itemsRaw: unknown, cfg: Map<string, ItemCfg>, stage: "pengawas" | "gudang"): ItemsResult {
   if (!Array.isArray(itemsRaw)) return { ok: true, items: [] };
   const items: ValidItem[] = [];
   for (const entry of itemsRaw as unknown[]) {
@@ -155,28 +193,18 @@ function validateCekItems(itemsRaw: unknown, allowed: string[] | null): ItemsRes
     const label = typeof it.label === "string" ? it.label.trim() : "";
     if (!label) return { ok: false, error: "Label item ceklist wajib diisi" };
     const hasil = typeof it.hasil === "string" ? it.hasil.trim() : "";
-    let hasilStored: string;
-    if (allowed === null) {
-      // Material default: terima label bawaan ATAU kode lama; disimpan sebagai kode lama.
-      const code = HASIL_LABEL_TO_CODE[hasil.toLowerCase()] ?? hasil;
-      if (!(code in HASIL_CODE_TO_LABEL)) {
-        return { ok: false, error: `Hasil untuk item "${label}" harus salah satu: ${DEFAULT_RESULT_OPTIONS.join(", ")}` };
-      }
-      hasilStored = code;
-    } else {
-      if (!allowed.includes(hasil)) {
-        return { ok: false, error: `Hasil untuk item "${label}" harus salah satu: ${allowed.join(", ")}` };
-      }
-      hasilStored = hasil;
-    }
-    if (!isImageDataUrl(it.foto)) {
+    const c = cfgFor(cfg, label);
+    const hv = validateHasil(label, hasil, c.options);
+    if (!hv.ok) return { ok: false, error: hv.error };
+    const foto = isImageDataUrl(it.foto) ? (it.foto as string) : "";
+    if (!foto && (stage === "pengawas" ? c.fotoWajibPengawas : c.fotoWajibGudang)) {
       return { ok: false, error: `Foto wajib untuk item "${label}" (format image)` };
     }
     items.push({
       label,
-      hasil: hasilStored,
+      hasil: hv.value,
       catatan: typeof it.catatan === "string" && it.catatan.trim() ? it.catatan.trim() : null,
-      foto: it.foto,
+      foto,
     });
   }
   return { ok: true, items };
@@ -217,7 +245,7 @@ interface ReturItemDetail {
   itemLabel: string;
   hasil: string;
   catatan: string | null;
-  fotoFileId: string;
+  fotoFileId: string | null;
   fotoLink: string | null;
 }
 
@@ -254,7 +282,7 @@ interface ItemCekRow {
   item_label: string;
   hasil: string;
   catatan: string | null;
-  foto_file_id: string;
+  foto_file_id: string | null;
   foto_link: string | null;
 }
 
@@ -380,6 +408,22 @@ function presetForMaterialName(name: string): string[] {
 interface TemplateRow {
   id: number;
   label: string;
+  options: unknown;
+  foto_wajib_pengawas: boolean;
+  foto_wajib_gudang: boolean;
+}
+
+function mapTemplateRow(r: TemplateRow) {
+  const opts = Array.isArray(r.options)
+    ? (r.options as unknown[]).filter((o): o is string => typeof o === "string" && o.trim() !== "")
+    : null;
+  return {
+    id: r.id,
+    label: r.label,
+    options: opts && opts.length > 0 ? opts : null,
+    fotoWajibPengawas: r.foto_wajib_pengawas !== false,
+    fotoWajibGudang: r.foto_wajib_gudang !== false,
+  };
 }
 
 // ═══ ROUTE STATIS DULU — Express 5: sebelum "/retur/:id" ═══════════════════════
@@ -428,16 +472,11 @@ router.get("/retur/template/:materialId", async (req, res): Promise<void> => {
   if (!Number.isInteger(materialId)) { res.status(400).json({ error: "materialId tidak valid" }); return; }
 
   const rows = await pool.query(
-    "SELECT id, label FROM retur_template_item WHERE material_id = $1 ORDER BY urut, id",
+    "SELECT id, label, options, foto_wajib_pengawas, foto_wajib_gudang FROM retur_template_item WHERE material_id = $1 ORDER BY urut, id",
     [materialId],
   );
-  const opts = await getTemplateOptions(materialId);
   if (rows.rows.length > 0) {
-    res.json({
-      items: (rows.rows as TemplateRow[]).map((r) => ({ id: r.id, label: r.label })),
-      options: opts ?? DEFAULT_RESULT_OPTIONS,
-      isDefault: opts === null,
-    });
+    res.json({ items: (rows.rows as TemplateRow[]).map(mapTemplateRow) });
     return;
   }
 
@@ -445,9 +484,7 @@ router.get("/retur/template/:materialId", async (req, res): Promise<void> => {
   const matRow = mat.rows[0] as { name: string } | undefined; // kolom sesuai SELECT
   const name = matRow ? matRow.name : "";
   res.json({
-    items: presetForMaterialName(name).map((label) => ({ id: null, label })),
-    options: opts ?? DEFAULT_RESULT_OPTIONS,
-    isDefault: opts === null,
+    items: presetForMaterialName(name).map((label) => ({ id: null, label, options: null, fotoWajibPengawas: true, fotoWajibGudang: true })),
   });
 });
 
@@ -458,36 +495,36 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
   if (!Number.isInteger(materialId)) { res.status(400).json({ error: "materialId tidak valid" }); return; }
 
   const body = bodyObject(req);
-  const labels = body.labels;
-  if (!Array.isArray(labels)) { res.status(400).json({ error: "labels harus array string" }); return; }
-  const cleaned: string[] = [];
-  for (const l of labels) {
-    if (typeof l !== "string" || !l.trim()) { res.status(400).json({ error: "Setiap label harus string tidak kosong" }); return; }
-    cleaned.push(l.trim());
-  }
-
-  // options opsional: tidak dikirim = opsi hasil tidak diubah; set == bawaan = balik default.
-  let optionsOp: "keep" | "default" | { store: string[] } = "keep";
-  const optionsRaw = body.options;
-  if (optionsRaw !== undefined && optionsRaw !== null) {
-    if (!Array.isArray(optionsRaw) || optionsRaw.length === 0 || optionsRaw.length > 6) {
-      res.status(400).json({ error: "options harus array berisi 1-6 string" }); return;
+  const itemsRaw = body.items;
+  if (!Array.isArray(itemsRaw)) { res.status(400).json({ error: "items harus array" }); return; }
+  const cleaned: { label: string; options: string[] | null; fwP: boolean; fwG: boolean }[] = [];
+  for (const entry of itemsRaw as unknown[]) {
+    if (!entry || typeof entry !== "object") { res.status(400).json({ error: "Setiap item harus objek" }); return; }
+    const it = entry as Record<string, unknown>; // fields parsed via typeof guards below
+    const label = typeof it.label === "string" ? it.label.trim() : "";
+    if (!label) { res.status(400).json({ error: "Setiap label harus string tidak kosong" }); return; }
+    // options: tidak dikirim/kosong = default; kalau isinya == set bawaan -> simpan null.
+    let options: string[] | null = null;
+    const optionsRaw = it.options;
+    if (Array.isArray(optionsRaw) && optionsRaw.length > 0) {
+      if (optionsRaw.length > 6) { res.status(400).json({ error: `options untuk item "${label}" maksimal 6` }); return; }
+      const opts: string[] = [];
+      const seen = new Set<string>();
+      for (const o of optionsRaw) {
+        if (typeof o !== "string" || !o.trim()) { res.status(400).json({ error: "Setiap opsi harus string tidak kosong" }); return; }
+        const t = o.trim();
+        if (t.length > 30) { res.status(400).json({ error: "Setiap opsi maksimal 30 karakter" }); return; }
+        if (t in HASIL_CODE_TO_LABEL) { res.status(400).json({ error: `Opsi tidak boleh memakai kode bawaan: "${t}"` }); return; }
+        if (seen.has(t.toLowerCase())) { res.status(400).json({ error: `Opsi duplikat: "${t}"` }); return; }
+        seen.add(t.toLowerCase());
+        opts.push(t);
+      }
+      const norm = opts.map((o) => HASIL_LABEL_TO_CODE[o.toLowerCase()] ?? o);
+      const isDefaultSet = opts.length === DEFAULT_RESULT_OPTIONS.length
+        && norm.every((n) => n in HASIL_CODE_TO_LABEL) && new Set(norm).size === norm.length;
+      options = isDefaultSet ? null : opts;
     }
-    const opts: string[] = [];
-    const seen = new Set<string>();
-    for (const o of optionsRaw) {
-      if (typeof o !== "string" || !o.trim()) { res.status(400).json({ error: "Setiap opsi harus string tidak kosong" }); return; }
-      const t = o.trim();
-      if (t.length > 30) { res.status(400).json({ error: "Setiap opsi maksimal 30 karakter" }); return; }
-      if (t in HASIL_CODE_TO_LABEL) { res.status(400).json({ error: `Opsi tidak boleh memakai kode bawaan: "${t}"` }); return; }
-      if (seen.has(t.toLowerCase())) { res.status(400).json({ error: `Opsi duplikat: "${t}"` }); return; }
-      seen.add(t.toLowerCase());
-      opts.push(t);
-    }
-    const norm = opts.map((o) => HASIL_LABEL_TO_CODE[o.toLowerCase()] ?? o);
-    const isDefaultSet = opts.length === DEFAULT_RESULT_OPTIONS.length
-      && norm.every((n) => n in HASIL_CODE_TO_LABEL) && new Set(norm).size === norm.length;
-    optionsOp = isDefaultSet ? "default" : { store: opts };
+    cleaned.push({ label, options, fwP: it.fotoWajibPengawas !== false, fwG: it.fotoWajibGudang !== false });
   }
 
   const mat = await pool.query("SELECT id FROM materials WHERE id = $1", [materialId]);
@@ -499,17 +536,9 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
     await client.query("DELETE FROM retur_template_item WHERE material_id = $1", [materialId]);
     for (let i = 0; i < cleaned.length; i++) {
       await client.query(
-        "INSERT INTO retur_template_item (material_id, label, urut) VALUES ($1, $2, $3)",
-        [materialId, cleaned[i], i],
-      );
-    }
-    if (optionsOp === "default") {
-      await client.query("DELETE FROM retur_template_option WHERE material_id = $1", [materialId]);
-    } else if (optionsOp !== "keep") {
-      await client.query(
-        `INSERT INTO retur_template_option (material_id, options) VALUES ($1, $2)
-         ON CONFLICT (material_id) DO UPDATE SET options = $2`,
-        [materialId, JSON.stringify(optionsOp.store)],
+        `INSERT INTO retur_template_item (material_id, label, urut, options, foto_wajib_pengawas, foto_wajib_gudang)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [materialId, cleaned[i].label, i, cleaned[i].options === null ? null : JSON.stringify(cleaned[i].options)],
       );
     }
     await client.query("COMMIT");
@@ -523,15 +552,10 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
   }
 
   const rows = await pool.query(
-    "SELECT id, label FROM retur_template_item WHERE material_id = $1 ORDER BY urut, id",
+    "SELECT id, label, options, foto_wajib_pengawas, foto_wajib_gudang FROM retur_template_item WHERE material_id = $1 ORDER BY urut, id",
     [materialId],
   );
-  const savedOpts = await getTemplateOptions(materialId);
-  res.json({
-    items: (rows.rows as TemplateRow[]).map((r) => ({ id: r.id, label: r.label })),
-    options: savedOpts ?? DEFAULT_RESULT_OPTIONS,
-    isDefault: savedOpts === null,
-  });
+  res.json({ items: (rows.rows as TemplateRow[]).map(mapTemplateRow) });
 });
 
 // ─── GET /api/retur/notifications — notifikasi unread milik user ────────────────
@@ -643,14 +667,14 @@ router.post("/retur", async (req, res): Promise<void> => {
   const matRow = mat.rows[0] as { id: number; name: string }; // kolom sesuai SELECT
   const materialName = matRow.name;
 
-  const resultOptions = await getTemplateOptions(materialId as number); // sudah lolos guard Number.isInteger
+  const cfg = await getTemplateConfig(materialId as number); // sudah lolos guard Number.isInteger
   const units: ValidUnit[] = [];
   for (let i = 0; i < unitsRaw.length; i++) {
     const entry = unitsRaw[i];
     if (!entry || typeof entry !== "object") { res.status(400).json({ error: `Unit ${i + 1} tidak valid` }); return; }
     const u = entry as Record<string, unknown>; // fields parsed via typeof guards below
     const label = typeof u.label === "string" && u.label.trim() ? u.label.trim() : `Unit ${i + 1}`;
-    const v = validateCekItems(u.items, resultOptions);
+    const v = validateCekItems(u.items, cfg, "pengawas");
     if (!v.ok) { res.status(400).json({ error: `Unit "${label}": ${v.error}` }); return; }
     units.push({ label, items: v.items });
   }
@@ -663,7 +687,7 @@ router.post("/retur", async (req, res): Promise<void> => {
   const stamp = Date.now();
   let docFolderId = "";
   let tug10File: DriveFile;
-  const unitFiles: DriveFile[][] = [];
+  const unitFiles: (DriveFile | null)[][] = [];
   const unitFolderIds: string[] = [];
   try {
     const root = await ensureReturFolder();
@@ -678,9 +702,13 @@ router.post("/retur", async (req, res): Promise<void> => {
         docFolderId,
       );
       unitFolderIds.push(unitFolder);
-      const files: DriveFile[] = [];
+      const files: (DriveFile | null)[] = [];
       for (let ii = 0; ii < units[ui].items.length; ii++) {
-        files.push(await uploadReturDataUrl(units[ui].items[ii].foto, `U${ui + 1}-I${ii + 1}-${stamp}.${extFromDataUrl(units[ui].items[ii].foto)}`, unitFolder));
+        const it = units[ui].items[ii];
+        // Item tanpa foto (komponen tidak wajib foto) -> tidak ada file Drive, fileId null.
+        files.push(it.foto
+          ? await uploadReturDataUrl(it.foto, `U${ui + 1}-I${ii + 1}-${stamp}.${extFromDataUrl(it.foto)}`, unitFolder)
+          : null);
       }
       unitFiles.push(files);
     }
@@ -721,7 +749,7 @@ router.post("/retur", async (req, res): Promise<void> => {
         await client.query(
           `INSERT INTO retur_item_cek (unit_id, stage, item_label, hasil, catatan, foto_file_id, foto_link)
            VALUES ($1, 'pengawas', $2, $3, $4, $5, $6)`,
-          [unitId, it.label, it.hasil, it.catatan, unitFiles[ui][ii].fileId, unitFiles[ui][ii].webViewLink || null],
+          [unitId, it.label, it.hasil, it.catatan, unitFiles[ui][ii]?.fileId ?? null, unitFiles[ui][ii]?.webViewLink ?? null],
         );
       }
     }
@@ -923,7 +951,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   const docUnits = docUnitsRes.rows as { id: number; label: string; folder_file_id: string | null }[];
   const docUnitIds = new Set<number>(docUnits.map((u) => u.id));
 
-  const resultOptions = await getTemplateOptions(docRow.material_id);
+  const cfg = await getTemplateConfig(docRow.material_id);
   const verifyUnits: VerifyUnit[] = [];
   const payloadUnitIds = new Set<number>();
   for (const entry of unitsRaw as unknown[]) {
@@ -946,7 +974,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
       res.status(400).json({ error: `Unit "${docUnits.find((du) => du.id === unitId)?.label}" wajib diputuskan: pilih "Layak Pakai (Standby)" atau "Tidak Layak Pakai (Usul Hapus)"` });
       return;
     }
-    const v = validateCekItems(u.items, resultOptions);
+    const v = validateCekItems(u.items, cfg, "gudang");
     if (!v.ok) { res.status(400).json({ error: `SN "${sn}": ${v.error}` }); return; }
     verifyUnits.push({ unitId, sn, keputusan: keputusanRaw, items: v.items });
   }
@@ -982,7 +1010,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   // Foto gudang masuk ke folder unit yang sama dg foto pengawas (dibuat di verify
   // pertama bila dokumen lama belum punya struktur folder).
   const stamp = Date.now();
-  const unitFiles: DriveFile[][] = [];
+  const unitFiles: (DriveFile | null)[][] = [];
   try {
     const root = await ensureReturFolder();
     let docFolder = docRow.folder_file_id;
@@ -998,10 +1026,12 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
         unitFolder = await ensureChildFolder(`Unit ${duIndex + 1} - ${sanitizeFolderName(du.label)}`, docFolder);
         await pool.query("UPDATE retur_unit SET folder_file_id = $1 WHERE id = $2", [unitFolder, du.id]);
       }
-      const files: DriveFile[] = [];
+      const files: (DriveFile | null)[] = [];
       for (let ii = 0; ii < verifyUnits[ui].items.length; ii++) {
         const it = verifyUnits[ui].items[ii];
-        files.push(await uploadReturDataUrl(it.foto, `GUDANG-U${duIndex + 1}-I${ii + 1}-${stamp}.${extFromDataUrl(it.foto)}`, unitFolder));
+        files.push(it.foto
+          ? await uploadReturDataUrl(it.foto, `GUDANG-U${duIndex + 1}-I${ii + 1}-${stamp}.${extFromDataUrl(it.foto)}`, unitFolder)
+          : null);
       }
       unitFiles.push(files);
     }
@@ -1021,7 +1051,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
         await client.query(
           `INSERT INTO retur_item_cek (unit_id, stage, item_label, hasil, catatan, foto_file_id, foto_link)
            VALUES ($1, 'gudang', $2, $3, $4, $5, $6)`,
-          [verifyUnits[ui].unitId, it.label, it.hasil, it.catatan, unitFiles[ui][ii].fileId, unitFiles[ui][ii].webViewLink || null],
+          [verifyUnits[ui].unitId, it.label, it.hasil, it.catatan, unitFiles[ui][ii]?.fileId ?? null, unitFiles[ui][ii]?.webViewLink ?? null],
         );
       }
     }
@@ -1059,4 +1089,80 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   res.json(detail);
 });
 
+// ─── PUT /api/retur/:id/verify-items (master) — koreksi hasil cek gudang pada dokumen selesai ──
+router.put("/retur/:id/verify-items", async (req, res): Promise<void> => {
+  if (!(await requireReturMaster(req, res))) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "id tidak valid" }); return; }
+
+  const docRes = await pool.query("SELECT id, status, material_id FROM retur_dokumen WHERE id = $1", [id]);
+  const docRow = docRes.rows[0] as { id: number; status: string; material_id: number } | undefined; // kolom sesuai SELECT
+  if (!docRow) { res.status(404).json({ error: "Dokumen tidak ditemukan" }); return; }
+  if (docRow.status !== "completed") { res.status(400).json({ error: "Dokumen belum selesai — gunakan menu Verifikasi" }); return; }
+
+  const body = bodyObject(req);
+  const unitsRaw = body.units;
+  if (!Array.isArray(unitsRaw)) { res.status(400).json({ error: "units harus array" }); return; }
+
+  const unitRes = await pool.query("SELECT id FROM retur_unit WHERE dokumen_id = $1", [id]);
+  const docUnitIds = new Set<number>((unitRes.rows as { id: number }[]).map((u) => u.id));
+
+  const cfg = await getTemplateConfig(docRow.material_id);
+
+  interface Edit { unitId: number; label: string; hasil: string | null; catatan: string | null }
+  const edits: Edit[] = [];
+  for (const entry of unitsRaw as unknown[]) {
+    if (!entry || typeof entry !== "object") { res.status(400).json({ error: "Unit tidak valid" }); return; }
+    const u = entry as Record<string, unknown>; // fields parsed via typeof guards below
+    const unitId = typeof u.unitId === "number" ? u.unitId : NaN;
+    if (!Number.isInteger(unitId) || !docUnitIds.has(unitId)) { res.status(400).json({ error: "Unit bukan milik dokumen ini" }); return; }
+    const itemsRaw = u.items;
+    if (!Array.isArray(itemsRaw)) { res.status(400).json({ error: "items harus array" }); return; }
+    for (const eRaw of itemsRaw as unknown[]) {
+      if (!eRaw || typeof eRaw !== "object") { res.status(400).json({ error: "Item tidak valid" }); return; }
+      const e = eRaw as Record<string, unknown>;
+      const label = typeof e.itemLabel === "string" ? e.itemLabel.trim() : "";
+      if (!label) { res.status(400).json({ error: "itemLabel wajib diisi" }); return; }
+      const hasil = typeof e.hasil === "string" ? e.hasil.trim() : "";
+      const catatan = typeof e.catatan === "string" && e.catatan.trim() ? e.catatan.trim() : null;
+      if (!hasil) { edits.push({ unitId, label, hasil: null, catatan: null }); continue; } // hasil kosong = kosongkan baris gudang
+      const hv = validateHasil(label, hasil, cfgFor(cfg, label).options);
+      if (!hv.ok) { res.status(400).json({ error: hv.error }); return; }
+      edits.push({ unitId, label, hasil: hv.value, catatan });
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    for (const ed of edits) {
+      if (ed.hasil === null) {
+        await client.query("DELETE FROM retur_item_cek WHERE unit_id = $1 AND stage = 'gudang' AND item_label = $2", [ed.unitId, ed.label]);
+        continue;
+      }
+      const up = await client.query(
+        "UPDATE retur_item_cek SET hasil = $1, catatan = $2 WHERE unit_id = $3 AND stage = 'gudang' AND item_label = $4",
+        [ed.hasil, ed.catatan, ed.unitId, ed.label],
+      );
+      if (up.rowCount === 0) {
+        await client.query(
+          `INSERT INTO retur_item_cek (unit_id, stage, item_label, hasil, catatan, foto_file_id, foto_link)
+           VALUES ($1, 'gudang', $2, $3, $4, NULL, NULL)`,
+          [ed.unitId, ed.label, ed.hasil, ed.catatan],
+        );
+      }
+    }
+    await client.query("COMMIT");
+  } catch (err: unknown) {
+    await client.query("ROLLBACK");
+    logger.error({ err }, "Retur verify-items: koreksi gagal");
+    res.status(500).json({ error: "Gagal mengoreksi hasil verifikasi" });
+    return;
+  } finally {
+    client.release();
+  }
+
+  const detail = await buildReturDetail(id);
+  res.json(detail);
+});
 export default router;

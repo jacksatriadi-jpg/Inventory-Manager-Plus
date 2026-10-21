@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { ArrowDown, ArrowUp, CloudUpload, Link2, Link2Off, Loader2, ListChecks, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CloudUpload, Link2, Link2Off, Loader2, ListChecks, Plus, Save, Trash2 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { MaterialPicker } from "./material-picker";
 import { DEFAULT_RESULT_OPTIONS, ReturTemplateItem, isNonScanMaterial, returApi } from "./shared";
 
@@ -99,75 +100,86 @@ function DrivePanel() {
   );
 }
 
+// Baris editor: label + opsi hasil kustom (null = bawaan) + flag wajib foto per tahap.
+interface TemplateRowUi {
+  label: string;
+  options: string[] | null;
+  fwP: boolean;
+  fwG: boolean;
+}
+const mapTemplateRows = (items: ReturTemplateItem[]): TemplateRowUi[] =>
+  items.map((i) => ({ label: i.label, options: i.options, fwP: i.fotoWajibPengawas !== false, fwG: i.fotoWajibGudang !== false }));
+
 function TemplateEditor() {
   const { toast } = useToast();
   const { data: materials } = useListMaterials();
   const [materialId, setMaterialId] = useState("");
-  const [labels, setLabels] = useState<string[]>([]);
-  const [options, setOptions] = useState<string[]>(DEFAULT_RESULT_OPTIONS);
-  const [optionsIsDefault, setOptionsIsDefault] = useState(true);
+  const [rows, setRows] = useState<TemplateRowUi[]>([]);
+  const [openRow, setOpenRow] = useState<number | null>(null);
   // true bila daftar yg tampil masih preset otomatis server (belum tersimpan di DB).
   const [isPreset, setIsPreset] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!materialId) { setLabels([]); setIsPreset(false); setOptions(DEFAULT_RESULT_OPTIONS); setOptionsIsDefault(true); return; }
+    if (!materialId) { setRows([]); setIsPreset(false); setOpenRow(null); return; }
     let alive = true;
     setLoading(true);
-    returApi<{ items: ReturTemplateItem[]; options?: string[]; isDefault?: boolean }>(`/template/${materialId}`)
+    returApi<{ items: ReturTemplateItem[] }>(`/template/${materialId}`)
       .then((d) => {
         if (!alive) return;
         const items = d.items ?? [];
-        setLabels(items.map((i) => i.label));
+        setRows(mapTemplateRows(items));
         setIsPreset(items.length > 0 && items.every((i) => i.id === null));
-        setOptions(Array.isArray(d.options) && d.options.length > 0 ? d.options : DEFAULT_RESULT_OPTIONS);
-        setOptionsIsDefault(d.isDefault !== false);
+        setOpenRow(null);
       })
       .catch((e) => { if (alive) toast({ title: "Gagal memuat template", description: (e as Error).message, variant: "destructive" }); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [materialId, toast]);
 
-  const setLabel = (i: number, v: string) => setLabels((ls) => ls.map((l, j) => (j === i ? v : l)));
-  const removeRow = (i: number) => setLabels((ls) => ls.filter((_, j) => j !== i));
-  const addRow = () => setLabels((ls) => [...ls, ""]);
-  const move = (i: number, dir: -1 | 1) => setLabels((ls) => {
+  const patchRow = (i: number, p: Partial<TemplateRowUi>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...p } : r)));
+  const removeRow = (i: number) => { setRows((rs) => rs.filter((_, j) => j !== i)); setOpenRow(null); };
+  const addRow = () => setRows((rs) => [...rs, { label: "", options: null, fwP: true, fwG: true }]);
+  const move = (i: number, dir: -1 | 1) => setRows((rs) => {
     const j = i + dir;
-    if (j < 0 || j >= ls.length) return ls;
-    const copy = [...ls];
+    if (j < 0 || j >= rs.length) return rs;
+    const copy = [...rs];
     [copy[i], copy[j]] = [copy[j], copy[i]];
     return copy;
   });
 
-  const setOpt = (i: number, v: string) => setOptions((os) => os.map((o, j) => (j === i ? v : o)));
-  const removeOpt = (i: number) => setOptions((os) => os.filter((_, j) => j !== i));
-  const addOpt = () => setOptions((os) => [...os, ""]);
-  const moveOpt = (i: number, dir: -1 | 1) => setOptions((os) => {
-    const j = i + dir;
-    if (j < 0 || j >= os.length) return os;
-    const copy = [...os];
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-    return copy;
-  });
+  const setOpt = (i: number, k: number, v: string) => setRows((rs) => rs.map((r, j) => (j !== i || !r.options) ? r : { ...r, options: r.options.map((o, m) => (m === k ? v : o)) }));
+  const removeOpt = (i: number, k: number) => setRows((rs) => rs.map((r, j) => (j !== i || !r.options) ? r : { ...r, options: r.options.filter((_, m) => m !== k) }));
+  const addOpt = (i: number) => setRows((rs) => rs.map((r, j) => (j !== i || !r.options) ? r : { ...r, options: [...r.options, ""] }));
+  const moveOpt = (i: number, k: number, dir: -1 | 1) => setRows((rs) => rs.map((r, j) => {
+    if (j !== i || !r.options) return r;
+    const m = k + dir;
+    if (m < 0 || m >= r.options.length) return r;
+    const copy = [...r.options];
+    [copy[k], copy[m]] = [copy[m], copy[k]];
+    return { ...r, options: copy };
+  }));
 
   const save = async () => {
     if (!materialId) { toast({ title: "Pilih material terlebih dahulu", variant: "destructive" }); return; }
-    const cleaned = labels.map((l) => l.trim()).filter((l) => l.length > 0);
+    const cleaned = rows
+      .map((r) => ({ ...r, label: r.label.trim(), options: r.options ? r.options.map((o) => o.trim()).filter((o) => o.length > 0) : null }))
+      .filter((r) => r.label.length > 0);
     setSaving(true);
     try {
-      const cleanedOpts = options.map((o) => o.trim()).filter((o) => o.length > 0);
-      const d = await returApi<{ items: ReturTemplateItem[]; options?: string[]; isDefault?: boolean }>(`/template/${materialId}`, {
+      const d = await returApi<{ items: ReturTemplateItem[] }>(`/template/${materialId}`, {
         method: "PUT",
-        body: JSON.stringify({ labels: cleaned, options: cleanedOpts }),
+        body: JSON.stringify({
+          items: cleaned.map((r) => ({ label: r.label, options: r.options, fotoWajibPengawas: r.fwP, fotoWajibGudang: r.fwG })),
+        }),
       });
-      setLabels((d.items ?? []).map((i) => i.label));
+      setRows(mapTemplateRows(d.items ?? []));
       setIsPreset(false);
-      setOptions(Array.isArray(d.options) && d.options.length > 0 ? d.options : DEFAULT_RESULT_OPTIONS);
-      setOptionsIsDefault(d.isDefault !== false);
+      setOpenRow(null);
       toast({
         title: "Template tersimpan",
-        description: cleaned.length === 0
+        description: (d.items ?? []).length === 0
           ? "Template dikosongkan — pemeriksaan material ini kembali memakai preset otomatis."
           : `${(d.items ?? []).length} komponen untuk material ini.`,
       });
@@ -182,7 +194,7 @@ function TemplateEditor() {
     <Card>
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2"><ListChecks className="h-4 w-4" /> Template Komponen Pemeriksaan</CardTitle>
-        <CardDescription>Edit label per baris, tambah/hapus, dan atur urutan. Simpan daftar kosong untuk kembali ke preset otomatis. Opsi hasil (Lengkap/Hilang/Rusak) dapat diganti per material.</CardDescription>
+        <CardDescription>Edit label, opsi hasil, dan aturan wajib foto per komponen. Simpan daftar kosong untuk kembali ke preset otomatis.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
@@ -198,70 +210,96 @@ function TemplateEditor() {
         )}
 
         <div className="space-y-2">
-          <Label>Daftar komponen ({labels.length})</Label>
+          <Label>Daftar komponen ({rows.length})</Label>
           {loading && <p className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Memuat template...</p>}
           {!materialId && !loading && <p className="text-xs text-muted-foreground">Pilih material untuk memuat daftar komponennya.</p>}
-          {materialId && !loading && labels.length === 0 && (
+          {materialId && !loading && rows.length === 0 && (
             <p className="text-xs text-muted-foreground">Daftar kosong — pemeriksaan memakai preset otomatis. Tambah komponen untuk menentukan daftar sendiri.</p>
           )}
-          {labels.map((label, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <span className="w-6 shrink-0 text-right text-xs text-muted-foreground">{i + 1}.</span>
-              <Input
-                value={label}
-                onChange={(e) => setLabel(i, e.target.value)}
-                placeholder={`Komponen ${i + 1}`}
-                className="text-sm"
-              />
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Naikkan komponen">
-                <ArrowUp className="h-4 w-4" />
-              </Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => move(i, 1)} disabled={i === labels.length - 1} aria-label="Turunkan komponen">
-                <ArrowDown className="h-4 w-4" />
-              </Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-destructive" onClick={() => removeRow(i)} aria-label="Hapus komponen">
-                <Trash2 className="h-4 w-4" />
-              </Button>
+          {rows.map((row, i) => (
+            <div key={i} className="space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="w-6 shrink-0 text-right text-xs text-muted-foreground">{i + 1}.</span>
+                <Input
+                  value={row.label}
+                  onChange={(e) => patchRow(i, { label: e.target.value })}
+                  placeholder={`Komponen ${i + 1}`}
+                  className="text-sm"
+                />
+                <label className="flex items-center gap-1.5 shrink-0 text-xs text-muted-foreground" title="Foto wajib saat pengawas mengisi hasil komponen ini">
+                  <Checkbox className="h-4 w-4" checked={row.fwP} onCheckedChange={(v) => patchRow(i, { fwP: v === true })} />
+                  Foto&nbsp;PW
+                </label>
+                <label className="flex items-center gap-1.5 shrink-0 text-xs text-muted-foreground" title="Foto wajib saat gudang memverifikasi komponen ini">
+                  <Checkbox className="h-4 w-4" checked={row.fwG} onCheckedChange={(v) => patchRow(i, { fwG: v === true })} />
+                  Foto&nbsp;GD
+                </label>
+                <Button variant="ghost" size="sm" className="h-8 shrink-0 text-xs" onClick={() => setOpenRow(openRow === i ? null : i)}>
+                  {openRow === i ? <ChevronDown className="h-4 w-4 mr-1" /> : <ChevronRight className="h-4 w-4 mr-1" />}
+                  Opsi{row.options ? ` (${row.options.length})` : ""}
+                </Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Naikkan komponen">
+                  <ArrowUp className="h-4 w-4" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => move(i, 1)} disabled={i === rows.length - 1} aria-label="Turunkan komponen">
+                  <ArrowDown className="h-4 w-4" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-destructive" onClick={() => removeRow(i)} aria-label="Hapus komponen">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+              {openRow === i && (
+                <div className="ml-8 space-y-2 rounded-md border border-dashed p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium">Opsi hasil komponen ini</span>
+                    {!row.options && <Badge variant="secondary">Bawaan</Badge>}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Pilihan status komponen ini saat Buat/Verifikasi. Bawaan: {DEFAULT_RESULT_OPTIONS.join(" / ")}. Maks 6 opsi; kosongkan semua opsi untuk kembali ke bawaan.
+                  </p>
+                  {row.options === null ? (
+                    <Button variant="outline" size="sm" onClick={() => patchRow(i, { options: [...DEFAULT_RESULT_OPTIONS] })}>
+                      <Plus className="h-4 w-4 mr-1" /> Buat opsi kustom
+                    </Button>
+                  ) : (
+                    <>
+                      {row.options.map((opt, k) => (
+                        <div key={k} className="flex items-center gap-2">
+                          <span className="w-6 shrink-0 text-right text-xs text-muted-foreground">{k + 1}.</span>
+                          <Input
+                            value={opt}
+                            onChange={(e) => setOpt(i, k, e.target.value)}
+                            placeholder={`Opsi ${k + 1}`}
+                            className="max-w-xs text-sm"
+                          />
+                          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => moveOpt(i, k, -1)} disabled={k === 0} aria-label="Naikkan opsi">
+                            <ArrowUp className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => moveOpt(i, k, 1)} disabled={k === row.options!.length - 1} aria-label="Turunkan opsi">
+                            <ArrowDown className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-destructive" onClick={() => removeOpt(i, k)} aria-label="Hapus opsi">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      ))}
+                      <div className="flex items-center gap-2">
+                        {row.options.length < 6 && (
+                          <Button variant="outline" size="sm" onClick={() => addOpt(i)}>
+                            <Plus className="h-4 w-4 mr-1" /> Tambah opsi
+                          </Button>
+                        )}
+                        <Button variant="ghost" size="sm" className="text-xs" onClick={() => patchRow(i, { options: null })}>Kembalikan ke bawaan</Button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           ))}
           {materialId && !loading && (
             <Button variant="outline" size="sm" onClick={addRow}>
               <Plus className="h-4 w-4 mr-1" /> Tambah komponen
-            </Button>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <Label>Opsi hasil penilaian ({options.length})</Label>
-            {optionsIsDefault && <Badge variant="secondary">Bawaan</Badge>}
-          </div>
-          <p className="text-xs text-muted-foreground">
-            Pilihan status tiap komponen saat Buat/Verifikasi (bawaan: Lengkap / Hilang / Rusak). Maks 6 opsi; simpan set bawaan untuk kembali ke default.
-          </p>
-          {options.map((opt, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <span className="w-6 shrink-0 text-right text-xs text-muted-foreground">{i + 1}.</span>
-              <Input
-                value={opt}
-                onChange={(e) => setOpt(i, e.target.value)}
-                placeholder={`Opsi ${i + 1}`}
-                className="max-w-xs text-sm"
-              />
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => moveOpt(i, -1)} disabled={i === 0} aria-label="Naikkan opsi">
-                <ArrowUp className="h-4 w-4" />
-              </Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => moveOpt(i, 1)} disabled={i === options.length - 1} aria-label="Turunkan opsi">
-                <ArrowDown className="h-4 w-4" />
-              </Button>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-destructive" onClick={() => removeOpt(i)} aria-label="Hapus opsi">
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </div>
-          ))}
-          {materialId && !loading && options.length < 6 && (
-            <Button variant="outline" size="sm" onClick={addOpt}>
-              <Plus className="h-4 w-4 mr-1" /> Tambah opsi
             </Button>
           )}
         </div>
