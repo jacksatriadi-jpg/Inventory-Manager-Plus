@@ -538,7 +538,7 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
       await client.query(
         `INSERT INTO retur_template_item (material_id, label, urut, options, foto_wajib_pengawas, foto_wajib_gudang)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [materialId, cleaned[i].label, i, cleaned[i].options === null ? null : JSON.stringify(cleaned[i].options)],
+        [materialId, cleaned[i].label, i, cleaned[i].options === null ? null : JSON.stringify(cleaned[i].options), cleaned[i].fwP, cleaned[i].fwG],
       );
     }
     await client.query("COMMIT");
