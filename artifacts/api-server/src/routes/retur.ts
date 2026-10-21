@@ -10,6 +10,9 @@ import {
   uploadReturDataUrl,
   downloadReturFile,
   deleteReturFile,
+  ensureReturFolder,
+  ensureChildFolder,
+  sanitizeFolderName,
 } from "../lib/retur-drive";
 
 const router: IRouter = Router();
@@ -545,6 +548,10 @@ interface DriveFile {
   webViewLink: string;
 }
 
+// Stempel nama folder Drive dokumen: yyyyMMdd-HHmm (waktu server) — urut & terbaca manusia.
+const formatFolderStamp = (d: Date): string =>
+  `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}-${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}`;
+
 router.post("/retur", async (req, res): Promise<void> => {
   const actor = await requireReturUser(req, res);
   if (!actor) return;
@@ -578,16 +585,29 @@ router.post("/retur", async (req, res): Promise<void> => {
   const drive = await getReturDriveStatus();
   if (!drive.connected) { res.status(400).json({ error: DRIVE_NOT_CONNECTED_MSG }); return; }
 
-  // Upload semua foto ke Drive Retur; gagal → 502
+  // Foto ditata per folder: Retur/RETUR-<tanggal>-<material>/Unit <n> - <label>/.
+  // Gagal upload → 502; tidak ada baris DB yang ditulis sebelum upload selesai.
   const stamp = Date.now();
+  let docFolderId = "";
   let tug10File: DriveFile;
   const unitFiles: DriveFile[][] = [];
+  const unitFolderIds: string[] = [];
   try {
-    tug10File = await uploadReturDataUrl(tug10Photo, `RETUR-TUG10-${materialId}-${stamp}.${extFromDataUrl(tug10Photo)}`);
+    const root = await ensureReturFolder();
+    docFolderId = await ensureChildFolder(
+      `RETUR-${formatFolderStamp(new Date())}-${sanitizeFolderName(materialName)}`,
+      root,
+    );
+    tug10File = await uploadReturDataUrl(tug10Photo, `TUG10.${extFromDataUrl(tug10Photo)}`, docFolderId);
     for (let ui = 0; ui < units.length; ui++) {
+      const unitFolder = await ensureChildFolder(
+        `Unit ${ui + 1} - ${sanitizeFolderName(units[ui].label)}`,
+        docFolderId,
+      );
+      unitFolderIds.push(unitFolder);
       const files: DriveFile[] = [];
       for (let ii = 0; ii < units[ui].items.length; ii++) {
-        files.push(await uploadReturDataUrl(units[ui].items[ii].foto, `RETUR-U${ui + 1}-I${ii + 1}-${stamp}.${extFromDataUrl(units[ui].items[ii].foto)}`));
+        files.push(await uploadReturDataUrl(units[ui].items[ii].foto, `U${ui + 1}-I${ii + 1}-${stamp}.${extFromDataUrl(units[ui].items[ii].foto)}`, unitFolder));
       }
       unitFiles.push(files);
     }
@@ -602,12 +622,13 @@ router.post("/retur", async (req, res): Promise<void> => {
   try {
     await client.query("BEGIN");
     const docRes = await client.query(
-      `INSERT INTO retur_dokumen (material_id, tug10_file_id, tug10_link, catatan, pengawas_id)
-       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      `INSERT INTO retur_dokumen (material_id, tug10_file_id, tug10_link, folder_file_id, catatan, pengawas_id)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
       [
         materialId,
         tug10File.fileId,
         tug10File.webViewLink || null,
+        docFolderId,
         typeof catatan === "string" && catatan.trim() ? catatan.trim() : null,
         actor.id,
       ],
@@ -617,8 +638,8 @@ router.post("/retur", async (req, res): Promise<void> => {
 
     for (let ui = 0; ui < units.length; ui++) {
       const unitRes = await client.query(
-        "INSERT INTO retur_unit (dokumen_id, label) VALUES ($1, $2) RETURNING id",
-        [dokumenId, units[ui].label],
+        "INSERT INTO retur_unit (dokumen_id, label, folder_file_id) VALUES ($1, $2, $3) RETURNING id",
+        [dokumenId, units[ui].label, unitFolderIds[ui]],
       );
       const unitRow = unitRes.rows[0] as { id: number }; // RETURNING id
       const unitId = unitRow.id;
@@ -744,13 +765,9 @@ router.delete("/retur/:id", async (req, res): Promise<void> => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
 
-  const doc = await pool.query("SELECT tug10_file_id FROM retur_dokumen WHERE id = $1", [id]);
+  const doc = await pool.query("SELECT tug10_file_id, folder_file_id FROM retur_dokumen WHERE id = $1", [id]);
   if (doc.rows.length === 0) { res.status(404).json({ error: "Dokumen retur tidak ditemukan" }); return; }
-  const docRow = doc.rows[0] as { tug10_file_id: string | null }; // kolom sesuai SELECT
-  const fotos = await pool.query(
-    "SELECT foto_file_id FROM retur_item_cek WHERE unit_id IN (SELECT id FROM retur_unit WHERE dokumen_id = $1)",
-    [id]
-  );
+  const docRow = doc.rows[0] as { tug10_file_id: string | null; folder_file_id: string | null }; // kolom sesuai SELECT
 
   const client = await pool.connect();
   try {
@@ -769,16 +786,29 @@ router.delete("/retur/:id", async (req, res): Promise<void> => {
     client.release();
   }
 
-  // Foto di Drive ikut dihapus; best-effort — kegagalan Drive tidak membatalkan
-  // penghapusan DB (baris file bisa saja sudah dipindah/dihapus manual di Drive).
-  const fotoRows = fotos.rows as { foto_file_id: string | null }[];
-  const fileIds = [docRow.tug10_file_id, ...fotoRows.map((r) => r.foto_file_id)]
-    .filter((f): f is string => typeof f === "string" && f.length > 0);
-  for (const fileId of fileIds) {
+  // Drive ikut dihapus; best-effort — kegagalan Drive tidak membatalkan penghapusan
+  // DB. Dokumen baru: cukup hapus folder dokumennya, Drive otomatis membuang seluruh
+  // isi (TUG10 + subfolder unit). Dokumen lama (pra struktur folder): hapus per file.
+  if (docRow.folder_file_id) {
     try {
-      await deleteReturFile(fileId);
+      await deleteReturFile(docRow.folder_file_id);
     } catch (err) {
-      logger.warn({ err, fileId, docId: id }, "Retur: gagal hapus file Drive (dokumen sudah dihapus dari DB)");
+      logger.warn({ err, fileId: docRow.folder_file_id, docId: id }, "Retur: gagal hapus folder Drive (dokumen sudah dihapus dari DB)");
+    }
+  } else {
+    const fotos = await pool.query(
+      "SELECT foto_file_id FROM retur_item_cek WHERE unit_id IN (SELECT id FROM retur_unit WHERE dokumen_id = $1)",
+      [id]
+    );
+    const fotoRows = fotos.rows as { foto_file_id: string | null }[];
+    const fileIds = [docRow.tug10_file_id, ...fotoRows.map((r) => r.foto_file_id)]
+      .filter((f): f is string => typeof f === "string" && f.length > 0);
+    for (const fileId of fileIds) {
+      try {
+        await deleteReturFile(fileId);
+      } catch (err) {
+        logger.warn({ err, fileId, docId: id }, "Retur: gagal hapus file Drive (dokumen sudah dihapus dari DB)");
+      }
     }
   }
 
@@ -800,9 +830,9 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
 
-  const doc = await pool.query("SELECT id, status FROM retur_dokumen WHERE id = $1", [id]);
+  const doc = await pool.query("SELECT id, status, folder_file_id FROM retur_dokumen WHERE id = $1", [id]);
   if (doc.rows.length === 0) { res.status(404).json({ error: "Dokumen retur tidak ditemukan" }); return; }
-  const docRow = doc.rows[0] as { id: number; status: string }; // kolom sesuai SELECT
+  const docRow = doc.rows[0] as { id: number; status: string; folder_file_id: string | null }; // kolom sesuai SELECT
   if (docRow.status !== "checked_supervisor") {
     res.status(400).json({ error: "Dokumen sudah selesai diverifikasi" });
     return;
@@ -814,10 +844,10 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   if (!Array.isArray(unitsRaw)) { res.status(400).json({ error: "units harus array" }); return; }
 
   const docUnitsRes = await pool.query(
-    "SELECT id, label FROM retur_unit WHERE dokumen_id = $1 ORDER BY id",
+    "SELECT id, label, folder_file_id FROM retur_unit WHERE dokumen_id = $1 ORDER BY id",
     [id],
   );
-  const docUnits = docUnitsRes.rows as { id: number; label: string }[];
+  const docUnits = docUnitsRes.rows as { id: number; label: string; folder_file_id: string | null }[];
   const docUnitIds = new Set<number>(docUnits.map((u) => u.id));
 
   const verifyUnits: VerifyUnit[] = [];
@@ -875,14 +905,29 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   const drive = await getReturDriveStatus();
   if (!drive.connected) { res.status(400).json({ error: DRIVE_NOT_CONNECTED_MSG }); return; }
 
+  // Foto gudang masuk ke folder unit yang sama dg foto pengawas (dibuat di verify
+  // pertama bila dokumen lama belum punya struktur folder).
   const stamp = Date.now();
   const unitFiles: DriveFile[][] = [];
   try {
+    const root = await ensureReturFolder();
+    let docFolder = docRow.folder_file_id;
+    if (!docFolder) {
+      docFolder = await ensureChildFolder(`RETUR-DOK-${id}`, root);
+      await pool.query("UPDATE retur_dokumen SET folder_file_id = $1 WHERE id = $2", [docFolder, id]);
+    }
     for (let ui = 0; ui < verifyUnits.length; ui++) {
+      const duIndex = docUnits.findIndex((du) => du.id === verifyUnits[ui].unitId);
+      const du = docUnits[duIndex];
+      let unitFolder = du.folder_file_id;
+      if (!unitFolder) {
+        unitFolder = await ensureChildFolder(`Unit ${duIndex + 1} - ${sanitizeFolderName(du.label)}`, docFolder);
+        await pool.query("UPDATE retur_unit SET folder_file_id = $1 WHERE id = $2", [unitFolder, du.id]);
+      }
       const files: DriveFile[] = [];
       for (let ii = 0; ii < verifyUnits[ui].items.length; ii++) {
         const it = verifyUnits[ui].items[ii];
-        files.push(await uploadReturDataUrl(it.foto, `RETUR-DOK${id}-U${ui + 1}-I${ii + 1}-GUDANG-${stamp}.${extFromDataUrl(it.foto)}`));
+        files.push(await uploadReturDataUrl(it.foto, `GUDANG-U${duIndex + 1}-I${ii + 1}-${stamp}.${extFromDataUrl(it.foto)}`, unitFolder));
       }
       unitFiles.push(files);
     }

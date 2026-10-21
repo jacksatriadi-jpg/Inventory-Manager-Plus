@@ -183,10 +183,46 @@ export async function ensureReturFolder(): Promise<string> {
   return folderId;
 }
 
-// Upload gambar (dataURL) ke folder Retur → { fileId, webViewLink }
+// Nama folder Drive yg aman: buang '/' + karakter kontrol, trim, max 80 char.
+export function sanitizeFolderName(raw: string): string {
+  const cleaned = raw
+    .replace(/[\u0000-\u001f/]/g, " ")
+    .replace(/^[\s.']+|[\s.']+$/g, "");
+  return cleaned.slice(0, 80) || "Tanpa Nama";
+}
+
+// Cari atau buat subfolder `name` di dalam `parentId`. Pemanggil bertanggung jawab
+// menyimpan id hasil (retur_dokumen/retur_unit.folder_file_id) supaya stabil.
+export async function ensureChildFolder(name: string, parentId: string): Promise<string> {
+  const config = await getReturConfigRow();
+  if (!config?.access_token) {
+    throw new Error("Akun Google Drive Retur belum terhubung");
+  }
+  const drive = await driveAuthed(config);
+  const safeName = name.replace(/'/g, "\\'");
+  const folderRes = await drive.files.list({
+    q: `mimeType='application/vnd.google-apps.folder' and name='${safeName}' and parents in '${parentId}' and trashed=false`,
+    fields: "files(id, name)",
+  });
+  const foundId = (folderRes.data.files ?? [])[0]?.id;
+  if (foundId) return foundId;
+  const folder = await drive.files.create({
+    requestBody: {
+      name,
+      mimeType: "application/vnd.google-apps.folder",
+      parents: [parentId],
+    },
+    fields: "id",
+  });
+  if (!folder.data.id) throw new Error("Gagal membuat subfolder Drive Retur");
+  return folder.data.id;
+}
+
+// Upload gambar (dataURL) ke folder Drive tertentu → { fileId, webViewLink }
 export async function uploadReturDataUrl(
   dataUrl: string,
-  name: string
+  name: string,
+  folderId: string
 ): Promise<{ fileId: string; webViewLink: string }> {
   const match = /^data:([^;,]+);base64,(.+)$/s.exec(dataUrl);
   if (!match) throw new Error("Format data URL tidak valid");
@@ -198,7 +234,6 @@ export async function uploadReturDataUrl(
     throw new Error("Akun Google Drive Retur belum terhubung");
   }
   const drive = await driveAuthed(config);
-  const folderId = await ensureReturFolder();
 
   const response = await drive.files.create({
     requestBody: {

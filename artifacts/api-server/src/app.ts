@@ -224,6 +224,12 @@ async function setupDatabase() {
         CHECK (keputusan IS NULL OR keputusan IN ('layak_pakai','usul_hapus'));
     `);
     await pool.query(`
+      ALTER TABLE retur_dokumen ADD COLUMN IF NOT EXISTS folder_file_id TEXT;
+    `);
+    await pool.query(`
+      ALTER TABLE retur_unit ADD COLUMN IF NOT EXISTS folder_file_id TEXT;
+    `);
+    await pool.query(`
       CREATE INDEX IF NOT EXISTS retur_item_cek_unit_idx ON retur_item_cek (unit_id);
     `);
     await pool.query(`

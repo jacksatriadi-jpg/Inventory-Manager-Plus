@@ -11,6 +11,7 @@ export const returDokumenTable = pgTable("retur_dokumen", {
   materialId: integer("material_id").notNull().references(() => materialsTable.id),
   tug10FileId: text("tug10_file_id").notNull(), // Google Drive Retur file id (bukan bytes)
   tug10Link: text("tug10_link"),
+  folderFileId: text("folder_file_id"), // id folder Drive dokumen (RETUR-...); NULL = dokumen lama
   status: text("status").notNull().default("checked_supervisor"),
   catatan: text("catatan"),
   gudangCatatan: text("gudang_catatan"),
@@ -31,6 +32,7 @@ export const returUnitTable = pgTable("retur_unit", {
   // keputusan = disposisi gudang per unit (diisi saat verifikasi): 'layak_pakai' | 'usul_hapus'; NULL = belum diverifikasi.
   keputusan: text("keputusan"), // CHECK di DDL runtime app.ts
   sn: text("sn"),
+  folderFileId: text("folder_file_id"), // id folder Drive unit ("Unit n - label"); NULL = lama
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("retur_unit_sn_unique").on(table.sn).where(isNotNull(table.sn)),
