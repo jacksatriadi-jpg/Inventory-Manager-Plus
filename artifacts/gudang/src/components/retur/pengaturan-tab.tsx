@@ -6,9 +6,9 @@ import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { CloudUpload, Link2, Link2Off, Loader2, ListChecks, Save } from "lucide-react";
+import { ArrowDown, ArrowUp, CloudUpload, Link2, Link2Off, Loader2, ListChecks, Plus, Save, Trash2 } from "lucide-react";
 import { MaterialPicker } from "./material-picker";
 import { ReturTemplateItem, isNonScanMaterial, returApi } from "./shared";
 
@@ -103,32 +103,56 @@ function TemplateEditor() {
   const { toast } = useToast();
   const { data: materials } = useListMaterials();
   const [materialId, setMaterialId] = useState("");
-  const [labelsText, setLabelsText] = useState("");
+  const [labels, setLabels] = useState<string[]>([]);
+  // true bila daftar yg tampil masih preset otomatis server (belum tersimpan di DB).
+  const [isPreset, setIsPreset] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!materialId) { setLabelsText(""); return; }
+    if (!materialId) { setLabels([]); setIsPreset(false); return; }
     let alive = true;
     setLoading(true);
     returApi<{ items: ReturTemplateItem[] }>(`/template/${materialId}`)
-      .then((d) => { if (alive) setLabelsText((d.items ?? []).map((i) => i.label).join("\n")); })
+      .then((d) => {
+        if (!alive) return;
+        const items = d.items ?? [];
+        setLabels(items.map((i) => i.label));
+        setIsPreset(items.length > 0 && items.every((i) => i.id === null));
+      })
       .catch((e) => { if (alive) toast({ title: "Gagal memuat template", description: (e as Error).message, variant: "destructive" }); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, [materialId, toast]);
 
+  const setLabel = (i: number, v: string) => setLabels((ls) => ls.map((l, j) => (j === i ? v : l)));
+  const removeRow = (i: number) => setLabels((ls) => ls.filter((_, j) => j !== i));
+  const addRow = () => setLabels((ls) => [...ls, ""]);
+  const move = (i: number, dir: -1 | 1) => setLabels((ls) => {
+    const j = i + dir;
+    if (j < 0 || j >= ls.length) return ls;
+    const copy = [...ls];
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+    return copy;
+  });
+
   const save = async () => {
     if (!materialId) { toast({ title: "Pilih material terlebih dahulu", variant: "destructive" }); return; }
-    const labels = labelsText.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+    const cleaned = labels.map((l) => l.trim()).filter((l) => l.length > 0);
     setSaving(true);
     try {
       const d = await returApi<{ items: ReturTemplateItem[] }>(`/template/${materialId}`, {
         method: "PUT",
-        body: JSON.stringify({ labels }),
+        body: JSON.stringify({ labels: cleaned }),
       });
-      setLabelsText((d.items ?? []).map((i) => i.label).join("\n"));
-      toast({ title: "Template tersimpan", description: `${(d.items ?? []).length} komponen untuk material ini.` });
+      setLabels((d.items ?? []).map((i) => i.label));
+      setIsPreset(false);
+      toast({
+        title: "Template tersimpan",
+        description: cleaned.length === 0
+          ? "Template dikosongkan — pemeriksaan material ini kembali memakai preset otomatis."
+          : `${(d.items ?? []).length} komponen untuk material ini.`,
+      });
     } catch (e) {
       toast({ title: "Gagal menyimpan template", description: (e as Error).message, variant: "destructive" });
     } finally {
@@ -140,24 +164,55 @@ function TemplateEditor() {
     <Card>
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2"><ListChecks className="h-4 w-4" /> Template Komponen Pemeriksaan</CardTitle>
-        <CardDescription>Satu label komponen per baris. Kosongkan untuk memakai preset otomatis (2-line / 4-line / umum).</CardDescription>
+        <CardDescription>Edit label per baris, tambah/hapus, dan atur urutan. Simpan daftar kosong untuk kembali ke preset otomatis.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
           <Label>Material (non-scan)</Label>
           <MaterialPicker materials={materials?.filter(isNonScanMaterial)} value={materialId} onChange={setMaterialId} />
         </div>
+
+        {isPreset && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Badge variant="secondary">Preset otomatis</Badge>
+            Daftar ini bawaan sistem dari nama material — simpan untuk menjadikannya template khusus material ini.
+          </div>
+        )}
+
         <div className="space-y-2">
-          <Label>Daftar komponen</Label>
-          <Textarea
-            rows={14}
-            className="font-mono text-xs"
-            placeholder={"MCB utama (incoming)\nMCB line 1\nBusbar tembaga\n..."}
-            value={labelsText}
-            onChange={(e) => setLabelsText(e.target.value)}
-            disabled={!materialId || loading}
-          />
+          <Label>Daftar komponen ({labels.length})</Label>
+          {loading && <p className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Memuat template...</p>}
+          {!materialId && !loading && <p className="text-xs text-muted-foreground">Pilih material untuk memuat daftar komponennya.</p>}
+          {materialId && !loading && labels.length === 0 && (
+            <p className="text-xs text-muted-foreground">Daftar kosong — pemeriksaan memakai preset otomatis. Tambah komponen untuk menentukan daftar sendiri.</p>
+          )}
+          {labels.map((label, i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="w-6 shrink-0 text-right text-xs text-muted-foreground">{i + 1}.</span>
+              <Input
+                value={label}
+                onChange={(e) => setLabel(i, e.target.value)}
+                placeholder={`Komponen ${i + 1}`}
+                className="text-sm"
+              />
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Naikkan komponen">
+                <ArrowUp className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => move(i, 1)} disabled={i === labels.length - 1} aria-label="Turunkan komponen">
+                <ArrowDown className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0 text-destructive" onClick={() => removeRow(i)} aria-label="Hapus komponen">
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+          {materialId && !loading && (
+            <Button variant="outline" size="sm" onClick={addRow}>
+              <Plus className="h-4 w-4 mr-1" /> Tambah komponen
+            </Button>
+          )}
         </div>
+
         <Button onClick={save} disabled={!materialId || loading || saving}>
           {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />} Simpan Template
         </Button>
