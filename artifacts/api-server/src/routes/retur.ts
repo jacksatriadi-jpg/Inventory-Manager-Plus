@@ -507,7 +507,7 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
     let options: string[] | null = null;
     const optionsRaw = it.options;
     if (Array.isArray(optionsRaw) && optionsRaw.length > 0) {
-      if (optionsRaw.length > 6) { res.status(400).json({ error: `options untuk item "${label}" maksimal 6` }); return; }
+      if (optionsRaw.length > 30) { res.status(400).json({ error: `options untuk item "${label}" maksimal 30` }); return; }
       const opts: string[] = [];
       const seen = new Set<string>();
       for (const o of optionsRaw) {

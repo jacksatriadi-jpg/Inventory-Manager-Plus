@@ -255,7 +255,7 @@ function TemplateEditor() {
                     {!row.options && <Badge variant="secondary">Bawaan</Badge>}
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    Pilihan status komponen ini saat Buat/Verifikasi. Bawaan: {DEFAULT_RESULT_OPTIONS.join(" / ")}. Maks 6 opsi; kosongkan semua opsi untuk kembali ke bawaan.
+                    Pilihan status komponen ini saat Buat/Verifikasi. Bawaan: {DEFAULT_RESULT_OPTIONS.join(" / ")}. Maks 30 opsi; kosongkan semua opsi untuk kembali ke bawaan.
                   </p>
                   {row.options === null ? (
                     <Button variant="outline" size="sm" onClick={() => patchRow(i, { options: [...DEFAULT_RESULT_OPTIONS] })}>
@@ -284,7 +284,7 @@ function TemplateEditor() {
                         </div>
                       ))}
                       <div className="flex items-center gap-2">
-                        {row.options.length < 6 && (
+                        {row.options.length < 30 && (
                           <Button variant="outline" size="sm" onClick={() => addOpt(i)}>
                             <Plus className="h-4 w-4 mr-1" /> Tambah opsi
                           </Button>
