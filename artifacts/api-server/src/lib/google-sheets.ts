@@ -1,44 +1,12 @@
 import { google } from "googleapis";
-import { pool } from "@workspace/db";
 import { logger } from "./logger";
-
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-
-function getSheetsClient() {
-  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
-    throw new Error(
-      "Google Sheets integration requires GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET environment variables."
-    );
-  }
-
-  const oauth2Client = new google.auth.OAuth2(
-    GOOGLE_CLIENT_ID,
-    GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URI || "http://localhost:3001/api/auto-backup/google/callback"
-  );
-
-  return oauth2Client;
-}
+import { getFreshOAuthClient } from "./google-drive";
 
 export async function getSheetStockMap(
   spreadsheetId: string,
   sheetName: string | null = null
 ): Promise<{ stockMap: Map<string, number>; fetchTimestamp: string | null }> {
-  const configResult = await pool.query(
-    "SELECT gdrive_access_token, gdrive_refresh_token FROM backup_config LIMIT 1"
-  );
-  const config = configResult.rows[0];
-
-  if (!config?.gdrive_access_token || !config?.gdrive_refresh_token) {
-    throw new Error("Google account belum terhubung. Hubungkan akun Google di tab Backup terlebih dahulu.");
-  }
-
-  const client = getSheetsClient();
-  client.setCredentials({
-    access_token: config.gdrive_access_token,
-    refresh_token: config.gdrive_refresh_token,
-  });
+  const client = await getFreshOAuthClient();
 
   const sheets = google.sheets({ version: "v4", auth: client });
 

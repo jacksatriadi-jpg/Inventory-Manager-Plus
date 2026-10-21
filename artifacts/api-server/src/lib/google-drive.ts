@@ -82,16 +82,40 @@ export async function disconnectGoogleDrive(): Promise<void> {
   logger.info("Google Drive: account disconnected");
 }
 
-export async function uploadBackupToDrive(
-  filepath: string,
-  filename: string,
-  config: any
-): Promise<{ fileId: string; webViewLink: string }> {
+// Selalu refresh aktif sebelum panggilan Drive/Sheets. Token access tersimpan di DB
+// tanpa expiry_date -> google-auth-library mengira masih valid -> 401 "token expired".
+// Token baru disimpan balik ke backup_config supaya semua pemanggil ikut segar.
+export async function getFreshOAuthClient(): Promise<InstanceType<typeof google.auth.OAuth2>> {
+  const configResult = await pool.query(
+    "SELECT gdrive_access_token, gdrive_refresh_token FROM backup_config LIMIT 1"
+  );
+  const config = configResult.rows[0];
+  if (!config?.gdrive_refresh_token) {
+    throw new Error("Google account belum terhubung. Hubungkan akun Google di tab Backup terlebih dahulu.");
+  }
   const client = getClient();
   client.setCredentials({
     access_token: config.gdrive_access_token,
     refresh_token: config.gdrive_refresh_token,
   });
+  const { credentials } = await client.refreshAccessToken();
+  if (!credentials.access_token) {
+    throw new Error("Gagal memperbarui token Google (refresh ditolak) — sambungkan ulang akun Google di tab Backup.");
+  }
+  await pool.query(
+    "UPDATE backup_config SET gdrive_access_token = $1, gdrive_refresh_token = $2 WHERE id = (SELECT id FROM backup_config LIMIT 1)",
+    [credentials.access_token, credentials.refresh_token ?? config.gdrive_refresh_token]
+  );
+  logger.info("Google Drive: access token di-refresh otomatis sebelum panggilan API");
+  return client;
+}
+
+export async function uploadBackupToDrive(
+  filepath: string,
+  filename: string,
+  config: any
+): Promise<{ fileId: string; webViewLink: string }> {
+  const client = await getFreshOAuthClient();
 
   const drive = google.drive({ version: "v3", auth: client });
 
