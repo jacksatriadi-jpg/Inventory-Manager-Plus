@@ -85,9 +85,12 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
         for (const it of u.items) if (!labels.includes(it.itemLabel)) labels.push(it.itemLabel);
         forms[u.id] = Object.fromEntries(labels.map((l) => {
           const gudangItem = u.items.find((it) => it.stage === "gudang" && it.itemLabel === l);
-          return [l, gudangItem
-            ? { hasil: gudangItem.hasil, catatan: gudangItem.catatan ?? "", foto: "" }
-            : { ...emptyForm }];
+          if (gudangItem) return [l, { hasil: gudangItem.hasil, catatan: gudangItem.catatan ?? "", foto: "" }];
+          // Default: hasil + catatan salinan cek pengawas (tetap bisa diedit). Nilai hanya
+          // disalin bila masih ada di opsi komponen (template berubah -> kosong).
+          const pw = u.items.find((it) => it.stage === "pengawas" && it.itemLabel === l);
+          const opts = cfg[l]?.options ?? DEFAULT_RESULT_OPTIONS;
+          return [l, { hasil: pw && opts.includes(pw.hasil) ? pw.hasil : "", catatan: pw?.catatan ?? "", foto: "" }];
         }));
       }
       setDetail(d);
@@ -244,7 +247,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                   <p className="text-sm text-muted-foreground">Unit ini tanpa item pemeriksaan.</p>
                 ) : (
                   <>
-                  <p className="text-xs text-muted-foreground mb-2">Komponen bertanda <span className="text-red-600 font-bold">*</span> wajib difoto (verifikasi ditolak bila hasil diisi tanpa foto).</p>
+                  <p className="text-xs text-muted-foreground mb-2">Komponen bertanda <span className="text-red-600 font-bold">*</span> wajib difoto (verifikasi ditolak bila hasil diisi tanpa foto). Hasil &amp; catatan gudang terisi otomatis mengikuti cek pengawas — ubah seperlunya bila hasil gudang berbeda.</p>
                   <Table>
                     <TableHeader>
                       <TableRow>
