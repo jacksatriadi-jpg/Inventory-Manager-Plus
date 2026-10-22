@@ -38,7 +38,7 @@ export function BuatTab() {
   const [materialId, setMaterialId] = useState("");
   const [catatan, setCatatan] = useState("");
   const [labels, setLabels] = useState<string[]>([]);
-  const [cfgByLabel, setCfgByLabel] = useState<Record<string, { options: string[] | null; fotoWajib: boolean }>>({});
+  const [cfgByLabel, setCfgByLabel] = useState<Record<string, { options: string[] | null; tipeInput: "opsi" | "teks"; fotoWajib: boolean }>>({});
   const [units, setUnits] = useState<UnitForm[]>([]);
   const [templateLoading, setTemplateLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -56,7 +56,7 @@ export function BuatTab() {
         if (!alive) return;
         const ls = (d.items ?? []).map((i) => i.label);
         setLabels(ls);
-        setCfgByLabel(Object.fromEntries((d.items ?? []).map((i) => [i.label, { options: i.options, fotoWajib: i.fotoWajibPengawas !== false }])));
+        setCfgByLabel(Object.fromEntries((d.items ?? []).map((i) => [i.label, { options: i.options, tipeInput: i.tipeInput ?? "opsi", fotoWajib: i.fotoWajibPengawas !== false }])));
         // Unit lama tetap ada; item lama dipertahankan utk label yang sama.
         setUnits((prev) => prev.length === 0
           ? [makeUnit(1, ls)]
@@ -72,7 +72,7 @@ export function BuatTab() {
   }, [materialId, toast]);
 
   // Komponen tanpa entri config (mis. preset) = opsi bawaan + foto wajib.
-  const cfgFor = (label: string) => cfgByLabel[label] ?? { options: null as string[] | null, fotoWajib: true };
+  const cfgFor = (label: string) => cfgByLabel[label] ?? { options: null as string[] | null, tipeInput: "opsi" as const, fotoWajib: true };
   const optionsFor = (label: string) => cfgFor(label).options ?? DEFAULT_RESULT_OPTIONS;
 
   const setItem = (unitIdx: number, itemIdx: number, patch: Partial<ItemForm>) => {
@@ -214,13 +214,18 @@ export function BuatTab() {
                         <span className="text-red-600 font-bold ml-1" title="Foto komponen ini wajib">*</span>
                       )}
                     </span>
-                    <Select value={it.hasil || "skip"} onValueChange={(v) => setItem(ui, ii, { hasil: v === "skip" ? "" : v })}>
-                      <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Lewati" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="skip">Kosong (lewati)</SelectItem>
-                        {optionsFor(it.label).map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                    {cfgFor(it.label).tipeInput === "teks" ? (
+                      <Input className="h-8 text-xs" placeholder="Ketik hasil..." value={it.hasil}
+                        onChange={(e) => setItem(ui, ii, { hasil: e.target.value })} />
+                    ) : (
+                      <Select value={it.hasil || "skip"} onValueChange={(v) => setItem(ui, ii, { hasil: v === "skip" ? "" : v })}>
+                        <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Lewati" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="skip">Kosong (lewati)</SelectItem>
+                          {optionsFor(it.label).map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    )}
                     <Input className="h-8 text-xs" placeholder="Catatan (opsional)" value={it.catatan}
                       onChange={(e) => setItem(ui, ii, { catatan: e.target.value })} />
                     <div className="flex items-center gap-2">

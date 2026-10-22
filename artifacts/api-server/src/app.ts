@@ -262,6 +262,19 @@ async function setupDatabase() {
         ADD COLUMN IF NOT EXISTS foto_wajib_pengawas BOOLEAN NOT NULL DEFAULT true,
         ADD COLUMN IF NOT EXISTS foto_wajib_gudang BOOLEAN NOT NULL DEFAULT true;
     `);
+    // Migrasi: tipe input per komponen — "opsi" = checklist, "teks" = input form bebas.
+    await pool.query(`
+      ALTER TABLE retur_template_item ADD COLUMN IF NOT EXISTS tipe_input TEXT NOT NULL DEFAULT 'opsi'
+        CHECK (tipe_input IN ('opsi','teks'));
+    `);
+    await pool.query(`
+      UPDATE retur_template_item
+      SET tipe_input = 'teks', options = NULL
+      WHERE tipe_input = 'opsi'
+        AND options IS NOT NULL
+        AND options #> '{0}' = 'ISI DI KOLOM CATATAN'::jsonb
+        AND jsonb_array_length(options) = 1;
+    `);
     await pool.query(`ALTER TABLE retur_item_cek ALTER COLUMN foto_file_id DROP NOT NULL;`);
     await pool.query(`DROP TABLE IF EXISTS retur_template_option;`);
     await pool.query(`

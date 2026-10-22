@@ -493,7 +493,7 @@ function EditVerifyDialog({ doc, onClose }: { doc: ReturDokumen | null; onClose:
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   // opsi per label dari template saat ini; null/absen = bawaan (pilihan = kode ada/hilang/rusak).
-  const [cfgByLabel, setCfgByLabel] = useState<Record<string, string[] | null>>({});
+  const [cfgByLabel, setCfgByLabel] = useState<Record<string, { options: string[] | null; tipeInput: "opsi" | "teks" }>>({});
   const [forms, setForms] = useState<Record<number, Record<string, EditItemForm>>>({});
 
   useEffect(() => {
@@ -502,10 +502,10 @@ function EditVerifyDialog({ doc, onClose }: { doc: ReturDokumen | null; onClose:
     setLoading(true);
     (async () => {
       const d = await returApi<ReturDetail>(`/${doc.id}`);
-      let cfg: Record<string, string[] | null> = {};
+      let cfg: Record<string, { options: string[] | null; tipeInput: "opsi" | "teks" }> = {};
       try {
         const t = await returApi<{ items: ReturTemplateItem[] }>(`/template/${doc.materialId}`);
-        cfg = Object.fromEntries((t.items ?? []).map((i) => [i.label, i.options]));
+        cfg = Object.fromEntries((t.items ?? []).map((i) => [i.label, { options: i.options, tipeInput: i.tipeInput ?? "opsi" }]));
       } catch { /* material tanpa template = opsi bawaan */ }
       if (!alive) return;
       const fs: Record<number, Record<string, EditItemForm>> = {};
@@ -527,7 +527,7 @@ function EditVerifyDialog({ doc, onClose }: { doc: ReturDokumen | null; onClose:
   }, [doc, toast]);
 
   const choicesFor = (label: string): { value: string; display: string }[] => {
-    const opts = cfgByLabel[label] ?? null;
+    const opts = cfgByLabel[label]?.options ?? null;
     if (opts) return opts.map((o) => ({ value: o, display: o }));
     return [
       { value: "ada", display: "Lengkap" },
@@ -594,13 +594,18 @@ function EditVerifyDialog({ doc, onClose }: { doc: ReturDokumen | null; onClose:
                           <TableCell className="text-xs">{label}</TableCell>
                           <TableCell className="text-xs">{pw ? hasilDisplay(pw.hasil) : "-"}</TableCell>
                           <TableCell>
-                            <Select value={f.hasil || "skip"} onValueChange={(v) => setF(u.id, label, { hasil: v === "skip" ? "" : v })}>
-                              <SelectTrigger className="h-8 w-32 text-xs"><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="skip">Kosongkan</SelectItem>
-                                {choicesFor(label).map((c) => <SelectItem key={c.value} value={c.value}>{c.display}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
+                            {cfgByLabel[label]?.tipeInput === "teks" ? (
+                              <Input className="h-8 w-32 text-xs" placeholder="Ketik hasil..." value={f.hasil}
+                                onChange={(e) => setF(u.id, label, { hasil: e.target.value })} />
+                            ) : (
+                              <Select value={f.hasil || "skip"} onValueChange={(v) => setF(u.id, label, { hasil: v === "skip" ? "" : v })}>
+                                <SelectTrigger className="h-8 w-32 text-xs"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="skip">Kosongkan</SelectItem>
+                                  {choicesFor(label).map((c) => <SelectItem key={c.value} value={c.value}>{c.display}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            )}
                           </TableCell>
                           <TableCell>
                             <Input className="h-8 text-xs" placeholder="Catatan" value={f.catatan}

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CloudUpload, Copy, Link2, Link2Off, Loader2, ListChecks, Plus, Save, Trash2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MaterialPicker } from "./material-picker";
@@ -101,15 +102,16 @@ function DrivePanel() {
   );
 }
 
-// Baris editor: label + opsi hasil kustom (null = bawaan) + flag wajib foto per tahap.
+// Baris editor: label + tipe input (opsi checklist / input form) + opsi hasil kustom (null = bawaan) + flag wajib foto per tahap.
 interface TemplateRowUi {
   label: string;
+  tipe: "opsi" | "teks";
   options: string[] | null;
   fwP: boolean;
   fwG: boolean;
 }
 const mapTemplateRows = (items: ReturTemplateItem[]): TemplateRowUi[] =>
-  items.map((i) => ({ label: i.label, options: i.options, fwP: i.fotoWajibPengawas !== false, fwG: i.fotoWajibGudang !== false }));
+  items.map((i) => ({ label: i.label, tipe: i.tipeInput ?? "opsi", options: i.options, fwP: i.fotoWajibPengawas !== false, fwG: i.fotoWajibGudang !== false }));
 
 function TemplateEditor() {
   const { toast } = useToast();
@@ -145,7 +147,7 @@ function TemplateEditor() {
 
   const patchRow = (i: number, p: Partial<TemplateRowUi>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...p } : r)));
   const removeRow = (i: number) => { setRows((rs) => rs.filter((_, j) => j !== i)); setOpenRow(null); };
-  const addRow = () => setRows((rs) => [...rs, { label: "", options: null, fwP: true, fwG: true }]);
+  const addRow = () => setRows((rs) => [...rs, { label: "", tipe: "opsi", options: null, fwP: true, fwG: true }]);
   const move = (i: number, dir: -1 | 1) => setRows((rs) => {
     const j = i + dir;
     if (j < 0 || j >= rs.length) return rs;
@@ -167,9 +169,9 @@ function TemplateEditor() {
   }));
 
   const buildItems = () => rows
-    .map((r) => ({ ...r, label: r.label.trim(), options: r.options ? r.options.map((o) => o.trim()).filter((o) => o.length > 0) : null }))
+    .map((r) => ({ ...r, label: r.label.trim(), options: r.tipe === "teks" ? null : r.options ? r.options.map((o) => o.trim()).filter((o) => o.length > 0) : null }))
     .filter((r) => r.label.length > 0)
-    .map((r) => ({ label: r.label, options: r.options, fotoWajibPengawas: r.fwP, fotoWajibGudang: r.fwG }));
+    .map((r) => ({ label: r.label, tipeInput: r.tipe, options: r.options, fotoWajibPengawas: r.fwP, fotoWajibGudang: r.fwG }));
 
   const save = async () => {
     if (!materialId) { toast({ title: "Pilih material terlebih dahulu", variant: "destructive" }); return; }
@@ -271,10 +273,23 @@ function TemplateEditor() {
                   <Checkbox className="h-4 w-4" checked={row.fwG} onCheckedChange={(v) => patchRow(i, { fwG: v === true })} />
                   Foto&nbsp;GD
                 </label>
-                <Button variant="ghost" size="sm" className="h-8 shrink-0 text-xs" onClick={() => setOpenRow(openRow === i ? null : i)}>
-                  {openRow === i ? <ChevronDown className="h-4 w-4 mr-1" /> : <ChevronRight className="h-4 w-4 mr-1" />}
-                  Opsi{row.options ? ` (${row.options.length})` : ""}
-                </Button>
+                <Select value={row.tipe} onValueChange={(v) => patchRow(i, { tipe: v as "opsi" | "teks" })}>
+                  <SelectTrigger className="h-8 w-[118px] shrink-0 text-xs" aria-label={`Tipe input komponen ${i + 1}`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="opsi">Checklist</SelectItem>
+                    <SelectItem value="teks">Input form</SelectItem>
+                  </SelectContent>
+                </Select>
+                {row.tipe === "opsi" ? (
+                  <Button variant="ghost" size="sm" className="h-8 shrink-0 text-xs" onClick={() => setOpenRow(openRow === i ? null : i)}>
+                    {openRow === i ? <ChevronDown className="h-4 w-4 mr-1" /> : <ChevronRight className="h-4 w-4 mr-1" />}
+                    Opsi{row.options ? ` (${row.options.length})` : ""}
+                  </Button>
+                ) : (
+                  <Badge variant="outline" className="shrink-0">input bebas</Badge>
+                )}
                 <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => move(i, -1)} disabled={i === 0} aria-label="Naikkan komponen">
                   <ArrowUp className="h-4 w-4" />
                 </Button>
@@ -285,7 +300,15 @@ function TemplateEditor() {
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
-              {openRow === i && (
+              {openRow === i && row.tipe === "teks" && (
+                <div className="ml-8 rounded-md border border-dashed p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Komponen ini memakai <b>input form bebas</b>: pengawas dan gudang mengetik hasil sendiri
+                    (mis. nomor seri, tahun produksi) — tidak ada pilihan checklist. Foto tetap mengikuti aturan wajib di atas.
+                  </p>
+                </div>
+              )}
+              {openRow === i && row.tipe === "opsi" && (
                 <div className="ml-8 space-y-2 rounded-md border border-dashed p-3">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-medium">Opsi hasil komponen ini</span>

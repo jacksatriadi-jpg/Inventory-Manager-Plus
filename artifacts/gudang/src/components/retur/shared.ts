@@ -5,6 +5,7 @@ export interface ReturTemplateItem {
   id: number | null;
   label: string;
   options: string[] | null; // null = opsi bawaan
+  tipeInput?: "opsi" | "teks"; // "teks" = input form bebas, bukan pilihan opsi
   fotoWajibPengawas: boolean;
   fotoWajibGudang: boolean;
 }

@@ -39,13 +39,13 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
   const [keputusanByUnit, setKeputusanByUnit] = useState<Record<number, Keputusan | "">>({});
   const [gudangCatatan, setGudangCatatan] = useState("");
   const [itemForms, setItemForms] = useState<Record<number, Record<string, GudangItemForm>>>({});
-  const [cfgByLabel, setCfgByLabel] = useState<Record<string, { options: string[] | null; fotoWajib: boolean }>>({});
+  const [cfgByLabel, setCfgByLabel] = useState<Record<string, { options: string[] | null; tipeInput: "opsi" | "teks"; fotoWajib: boolean }>>({});
 
   const itemFileRef = useRef<HTMLInputElement>(null);
   const photoTarget = useRef<{ unitId: number; label: string } | null>(null);
 
   // Komponen tanpa entri config (dokumen lama/preset) = opsi bawaan + foto wajib.
-  const cfgFor = (label: string) => cfgByLabel[label] ?? { options: null as string[] | null, fotoWajib: true };
+  const cfgFor = (label: string) => cfgByLabel[label] ?? { options: null as string[] | null, tipeInput: "opsi" as const, fotoWajib: true };
   const optionsFor = (label: string) => cfgFor(label).options ?? DEFAULT_RESULT_OPTIONS;
 
   const loadDocs = async () => {
@@ -66,12 +66,12 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
     setShowTug10(false);
     try {
       const d = await returApi<ReturDetail>(`/${id}`);
-      let cfg: Record<string, { options: string[] | null; fotoWajib: boolean }> = {};
+      let cfg: Record<string, { options: string[] | null; tipeInput: "opsi" | "teks"; fotoWajib: boolean }> = {};
       try {
         const materialId = docs.find((x) => x.id === id)?.materialId;
         if (materialId != null) {
           const t = await returApi<{ items: ReturTemplateItem[] }>(`/template/${materialId}`);
-          cfg = Object.fromEntries((t.items ?? []).map((i) => [i.label, { options: i.options, fotoWajib: i.fotoWajibGudang !== false }]));
+          cfg = Object.fromEntries((t.items ?? []).map((i) => [i.label, { options: i.options, tipeInput: i.tipeInput ?? "opsi", fotoWajib: i.fotoWajibGudang !== false }]));
         }
       } catch { /* material tanpa template = pakai bawaan */ }
       setCfgByLabel(cfg);
@@ -90,7 +90,10 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
           // disalin bila masih ada di opsi komponen (template berubah -> kosong).
           const pw = u.items.find((it) => it.stage === "pengawas" && it.itemLabel === l);
           const opts = cfg[l]?.options ?? DEFAULT_RESULT_OPTIONS;
-          return [l, { hasil: pw && opts.includes(pw.hasil) ? pw.hasil : "", catatan: pw?.catatan ?? "", foto: "" }];
+          const teks = (cfg[l]?.tipeInput ?? "opsi") === "teks";
+          // item input-form: salin nilai bebas pengawas (kecuali placeholder lama "ISI DI KOLOM CATATAN")
+          const salinTeks = teks && pw && pw.hasil && !/^isi di kolom catatan$/i.test(pw.hasil);
+          return [l, { hasil: salinTeks ? pw.hasil : pw && !teks && opts.includes(pw.hasil) ? pw.hasil : "", catatan: pw?.catatan ?? "", foto: "" }];
         }));
       }
       setDetail(d);
@@ -285,13 +288,18 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                               {pw?.fotoFileId ? <DriveImg fileId={pw.fotoFileId} alt={`Foto pengawas: ${label}`} /> : <ImageOff className="h-4 w-4 text-muted-foreground/50" />}
                             </TableCell>
                             <TableCell>
-                              <Select value={f.hasil || "skip"} onValueChange={(v) => setItem(u.id, label, { hasil: v === "skip" ? "" : v })}>
-                                <SelectTrigger className="h-8 w-28 text-xs"><SelectValue placeholder="Lewati" /></SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="skip">Kosong (lewati)</SelectItem>
-                                  {optionsFor(label).map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
-                                </SelectContent>
-                              </Select>
+                              {cfgFor(label).tipeInput === "teks" ? (
+                                <Input className="h-8 w-28 text-xs" placeholder="Ketik hasil..." value={f.hasil}
+                                  onChange={(e) => setItem(u.id, label, { hasil: e.target.value })} />
+                              ) : (
+                                <Select value={f.hasil || "skip"} onValueChange={(v) => setItem(u.id, label, { hasil: v === "skip" ? "" : v })}>
+                                  <SelectTrigger className="h-8 w-28 text-xs"><SelectValue placeholder="Lewati" /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="skip">Kosong (lewati)</SelectItem>
+                                    {optionsFor(label).map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                                  </SelectContent>
+                                </Select>
+                              )}
                             </TableCell>
                             <TableCell>
                               <Input className="h-8 text-xs" placeholder="Catatan" value={f.catatan}

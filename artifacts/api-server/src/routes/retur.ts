@@ -139,23 +139,27 @@ type ItemsResult = { ok: true; items: ValidItem[] } | { ok: false; error: string
 // Config per komponen (label -> opsi hasil + flag wajib foto per tahap). Material tanpa template = map kosong -> semua default.
 interface ItemCfg {
   options: string[] | null; // null = default Lengkap/Hilang/Rusak (kode lama dipakai apa adanya)
+  tipeInput: "opsi" | "teks"; // "teks" = input bebas (input form), bukan pilihan opsi
   fotoWajibPengawas: boolean;
   fotoWajibGudang: boolean;
 }
-const DEFAULT_ITEM_CFG: ItemCfg = { options: null, fotoWajibPengawas: true, fotoWajibGudang: true };
+const DEFAULT_ITEM_CFG: ItemCfg = { options: null, tipeInput: "opsi", fotoWajibPengawas: true, fotoWajibGudang: true };
 
 async function getTemplateConfig(materialId: number): Promise<Map<string, ItemCfg>> {
   const r = await pool.query(
-    "SELECT label, options, foto_wajib_pengawas, foto_wajib_gudang FROM retur_template_item WHERE material_id = $1",
+    "SELECT label, options, tipe_input, foto_wajib_pengawas, foto_wajib_gudang FROM retur_template_item WHERE material_id = $1",
     [materialId],
   );
   const map = new Map<string, ItemCfg>();
-  for (const row of r.rows as { label: string; options: unknown; foto_wajib_pengawas: boolean; foto_wajib_gudang: boolean }[]) {
+  for (const row of r.rows as { label: string; options: unknown; tipe_input: string | null; foto_wajib_pengawas: boolean; foto_wajib_gudang: boolean }[]) {
     const opts = Array.isArray(row.options)
       ? (row.options as unknown[]).filter((o): o is string => typeof o === "string" && o.trim() !== "")
       : null;
+    // kompatibilitas data lama: opsi tunggal "ISI DI KOLOM CATATAN" = input form
+    const legacyTeks = opts !== null && opts.length === 1 && /^isi\s+di\s+kolom\s+catatan$/i.test(opts[0]);
     map.set(row.label, {
-      options: opts && opts.length > 0 ? opts : null,
+      options: legacyTeks ? null : opts && opts.length > 0 ? opts : null,
+      tipeInput: row.tipe_input === "teks" || legacyTeks ? "teks" : "opsi",
       fotoWajibPengawas: row.foto_wajib_pengawas !== false,
       fotoWajibGudang: row.foto_wajib_gudang !== false,
     });
@@ -168,7 +172,13 @@ function cfgFor(cfg: Map<string, ItemCfg>, label: string): ItemCfg {
 }
 
 // Validasi nilai hasil thd opsi komponen; default = terima label bawaan ATAU kode lama, simpan kode lama.
-function validateHasil(label: string, hasil: string, options: string[] | null): { ok: true; value: string } | { ok: false; error: string } {
+// tipeInput "teks" = input form bebas (nilai diketik), hanya dibatasi panjang.
+function validateHasil(label: string, hasil: string, options: string[] | null, tipeInput: "opsi" | "teks" = "opsi"): { ok: true; value: string } | { ok: false; error: string } {
+  if (tipeInput === "teks") {
+    if (!hasil) return { ok: false, error: `Nilai untuk item "${label}" wajib diisi` };
+    if (hasil.length > 100) return { ok: false, error: `Nilai untuk item "${label}" maksimal 100 karakter` };
+    return { ok: true, value: hasil };
+  }
   if (options === null) {
     const code = HASIL_LABEL_TO_CODE[hasil.toLowerCase()] ?? hasil;
     if (!(code in HASIL_CODE_TO_LABEL)) {
@@ -194,7 +204,7 @@ function validateCekItems(itemsRaw: unknown, cfg: Map<string, ItemCfg>, stage: "
     if (!label) return { ok: false, error: "Label item ceklist wajib diisi" };
     const hasil = typeof it.hasil === "string" ? it.hasil.trim() : "";
     const c = cfgFor(cfg, label);
-    const hv = validateHasil(label, hasil, c.options);
+    const hv = validateHasil(label, hasil, c.options, c.tipeInput);
     if (!hv.ok) return { ok: false, error: hv.error };
     const foto = isImageDataUrl(it.foto) ? (it.foto as string) : "";
     if (!foto && (stage === "pengawas" ? c.fotoWajibPengawas : c.fotoWajibGudang)) {
@@ -409,6 +419,7 @@ interface TemplateRow {
   id: number;
   label: string;
   options: unknown;
+  tipe_input: string | null;
   foto_wajib_pengawas: boolean;
   foto_wajib_gudang: boolean;
 }
@@ -417,10 +428,12 @@ function mapTemplateRow(r: TemplateRow) {
   const opts = Array.isArray(r.options)
     ? (r.options as unknown[]).filter((o): o is string => typeof o === "string" && o.trim() !== "")
     : null;
+  const legacyTeks = opts !== null && opts.length === 1 && /^isi\s+di\s+kolom\s+catatan$/i.test(opts[0]);
   return {
     id: r.id,
     label: r.label,
-    options: opts && opts.length > 0 ? opts : null,
+    options: legacyTeks ? null : opts && opts.length > 0 ? opts : null,
+    tipeInput: ((r.tipe_input === "teks" || legacyTeks) ? "teks" : "opsi") as "teks" | "opsi",
     fotoWajibPengawas: r.foto_wajib_pengawas !== false,
     fotoWajibGudang: r.foto_wajib_gudang !== false,
   };
@@ -472,7 +485,7 @@ router.get("/retur/template/:materialId", async (req, res): Promise<void> => {
   if (!Number.isInteger(materialId)) { res.status(400).json({ error: "materialId tidak valid" }); return; }
 
   const rows = await pool.query(
-    "SELECT id, label, options, foto_wajib_pengawas, foto_wajib_gudang FROM retur_template_item WHERE material_id = $1 ORDER BY urut, id",
+    "SELECT id, label, options, tipe_input, foto_wajib_pengawas, foto_wajib_gudang FROM retur_template_item WHERE material_id = $1 ORDER BY urut, id",
     [materialId],
   );
   if (rows.rows.length > 0) {
@@ -484,7 +497,7 @@ router.get("/retur/template/:materialId", async (req, res): Promise<void> => {
   const matRow = mat.rows[0] as { name: string } | undefined; // kolom sesuai SELECT
   const name = matRow ? matRow.name : "";
   res.json({
-    items: presetForMaterialName(name).map((label) => ({ id: null, label, options: null, fotoWajibPengawas: true, fotoWajibGudang: true })),
+    items: presetForMaterialName(name).map((label) => ({ id: null, label, options: null, tipeInput: "opsi" as const, fotoWajibPengawas: true, fotoWajibGudang: true })),
   });
 });
 
@@ -497,12 +510,13 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
   const body = bodyObject(req);
   const itemsRaw = body.items;
   if (!Array.isArray(itemsRaw)) { res.status(400).json({ error: "items harus array" }); return; }
-  const cleaned: { label: string; options: string[] | null; fwP: boolean; fwG: boolean }[] = [];
+  const cleaned: { label: string; options: string[] | null; tipeInput: "opsi" | "teks"; fwP: boolean; fwG: boolean }[] = [];
   for (const entry of itemsRaw as unknown[]) {
     if (!entry || typeof entry !== "object") { res.status(400).json({ error: "Setiap item harus objek" }); return; }
     const it = entry as Record<string, unknown>; // fields parsed via typeof guards below
     const label = typeof it.label === "string" ? it.label.trim() : "";
     if (!label) { res.status(400).json({ error: "Setiap label harus string tidak kosong" }); return; }
+    const tipeInput: "opsi" | "teks" = it.tipeInput === "teks" ? "teks" : "opsi";
     // options: tidak dikirim/kosong = default; kalau isinya == set bawaan -> simpan null.
     let options: string[] | null = null;
     const optionsRaw = it.options;
@@ -524,7 +538,8 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
         && norm.every((n) => n in HASIL_CODE_TO_LABEL) && new Set(norm).size === norm.length;
       options = isDefaultSet ? null : opts;
     }
-    cleaned.push({ label, options, fwP: it.fotoWajibPengawas !== false, fwG: it.fotoWajibGudang !== false });
+    // tipe "teks" = input form bebas; opsi tidak relevan -> paksa null.
+    cleaned.push({ label, options: tipeInput === "teks" ? null : options, tipeInput, fwP: it.fotoWajibPengawas !== false, fwG: it.fotoWajibGudang !== false });
   }
 
   const mat = await pool.query("SELECT id FROM materials WHERE id = $1", [materialId]);
@@ -536,9 +551,9 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
     await client.query("DELETE FROM retur_template_item WHERE material_id = $1", [materialId]);
     for (let i = 0; i < cleaned.length; i++) {
       await client.query(
-        `INSERT INTO retur_template_item (material_id, label, urut, options, foto_wajib_pengawas, foto_wajib_gudang)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [materialId, cleaned[i].label, i, cleaned[i].options === null ? null : JSON.stringify(cleaned[i].options), cleaned[i].fwP, cleaned[i].fwG],
+        `INSERT INTO retur_template_item (material_id, label, urut, options, tipe_input, foto_wajib_pengawas, foto_wajib_gudang)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [materialId, cleaned[i].label, i, cleaned[i].options === null ? null : JSON.stringify(cleaned[i].options), cleaned[i].tipeInput, cleaned[i].fwP, cleaned[i].fwG],
       );
     }
     await client.query("COMMIT");
@@ -552,7 +567,7 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
   }
 
   const rows = await pool.query(
-    "SELECT id, label, options, foto_wajib_pengawas, foto_wajib_gudang FROM retur_template_item WHERE material_id = $1 ORDER BY urut, id",
+    "SELECT id, label, options, tipe_input, foto_wajib_pengawas, foto_wajib_gudang FROM retur_template_item WHERE material_id = $1 ORDER BY urut, id",
     [materialId],
   );
   res.json({ items: (rows.rows as TemplateRow[]).map(mapTemplateRow) });
