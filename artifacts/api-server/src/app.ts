@@ -271,8 +271,7 @@ async function setupDatabase() {
       UPDATE retur_template_item
       SET tipe_input = 'teks', options = NULL
       WHERE tipe_input = 'opsi'
-        AND options IS NOT NULL
-        AND options #> '{0}' = 'ISI DI KOLOM CATATAN'::jsonb
+        AND options @> '["ISI DI KOLOM CATATAN"]'::jsonb
         AND jsonb_array_length(options) = 1;
     `);
     await pool.query(`ALTER TABLE retur_item_cek ALTER COLUMN foto_file_id DROP NOT NULL;`);
