@@ -233,8 +233,11 @@ interface ReturDetail {
   gudangCatatan: string | null;
   pengawasId: number;
   pengawasName: string;
+  pengawasCompany: string | null; // nama perusahaan vendor pengawas (blok tanda tangan formulir)
   gudangId: number | null;
   gudangName: string | null;
+  gudangCompany: string | null;
+  formKey: string | null; // template formulir material ini (Cetak Formulir)
   unitCount: number;
   createdAt: string;
   checkedAt: string;
@@ -247,6 +250,8 @@ interface ReturUnitDetail {
   label: string;
   sn: string | null;
   keputusan: "layak_pakai" | "usul_hapus" | null; // disposisi gudang, diisi saat verifikasi
+  formData: Record<string, string> | null; // isian "A. DATA MATERIAL" utk cetak formulir
+  formKeputusan: { code: string; meterLayak?: string; meterTidakLayak?: string } | null; // kesimpulan K6/K7/K8
   items: ReturItemDetail[];
 }
 
@@ -270,8 +275,11 @@ interface DocJoinedRow {
   gudang_catatan: string | null;
   pengawas_id: number;
   pengawas_name: string;
+  pengawas_company: string | null;
   gudang_id: number | null;
   gudang_name: string | null;
+  gudang_company: string | null;
+  form_key: string | null;
   created_at: Date;
   checked_at: Date;
   completed_at: Date | null;
@@ -284,6 +292,8 @@ interface UnitRow {
   label: string;
   sn: string | null;
   keputusan: "layak_pakai" | "usul_hapus" | null; // dicegah CHECK constraint di DB
+  form_data: Record<string, string> | null;
+  form_keputusan: { code: string; meterLayak?: string; meterTidakLayak?: string } | null;
 }
 
 interface ItemCekRow {
@@ -298,10 +308,10 @@ interface ItemCekRow {
 
 async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> {
   const docRes = await pool.query(
-    `SELECT d.id, d.material_id, m.name AS material_name, d.status,
+    `SELECT d.id, d.material_id, m.name AS material_name, m.form_key, d.status,
             d.tug10_file_id, d.tug10_link, d.catatan, d.gudang_catatan,
-            d.pengawas_id, p.username AS pengawas_name,
-            d.gudang_id, g.username AS gudang_name,
+            d.pengawas_id, p.username AS pengawas_name, p.company_name AS pengawas_company,
+            d.gudang_id, g.username AS gudang_name, g.company_name AS gudang_company,
             d.created_at, d.checked_at, d.completed_at
      FROM retur_dokumen d
      JOIN materials m ON m.id = d.material_id
@@ -314,7 +324,7 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
   const d = docRes.rows[0] as DocJoinedRow; // kolom sesuai SELECT
 
   const unitsRes = await pool.query(
-    "SELECT id, label, sn, keputusan FROM retur_unit WHERE dokumen_id = $1 ORDER BY id",
+    "SELECT id, label, sn, keputusan, form_data, form_keputusan FROM retur_unit WHERE dokumen_id = $1 ORDER BY id",
     [dokumenId],
   );
   const unitRows = unitsRes.rows as UnitRow[];
@@ -334,6 +344,8 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
     label: u.label,
     sn: u.sn,
     keputusan: u.keputusan,
+    formData: u.form_data ?? null,
+    formKeputusan: u.form_keputusan ?? null,
     items: itemRows
       .filter((it) => it.unit_id === u.id)
       .map((it) => ({
@@ -357,8 +369,11 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
     gudangCatatan: d.gudang_catatan,
     pengawasId: d.pengawas_id,
     pengawasName: d.pengawas_name,
+    pengawasCompany: d.pengawas_company ?? null,
     gudangId: d.gudang_id,
     gudangName: d.gudang_name,
+    gudangCompany: d.gudang_company ?? null,
+    formKey: d.form_key ?? null,
     unitCount: unitRows.length,
     createdAt: new Date(d.created_at).toISOString(),
     checkedAt: new Date(d.checked_at).toISOString(),
@@ -573,6 +588,72 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
   res.json({ items: (rows.rows as TemplateRow[]).map(mapTemplateRow) });
 });
 
+// ─── Template Formulir Inspeksi Material Retur (Cetak Formulir 01-A..01-O) ──────
+// materials.form_key -> retur_form_template.form_key; definition JSONB didokumentasikan
+// di lib/db/src/schema/retur.ts. Renderer xlsx di frontend membaca definition mentah.
+async function getFormTemplate(materialId: number): Promise<{ formKey: string; definition: Record<string, unknown> } | null> {
+  const r = await pool.query(
+    `SELECT f.form_key, f.definition
+     FROM materials m JOIN retur_form_template f ON f.form_key = m.form_key
+     WHERE m.id = $1`,
+    [materialId],
+  );
+  if (r.rows.length === 0) return null;
+  const row = r.rows[0] as { form_key: string; definition: Record<string, unknown> }; // kolom sesuai SELECT
+  return { formKey: row.form_key, definition: row.definition ?? {} };
+}
+
+// Kunci field "A. DATA MATERIAL" yang valid utk definisi form (satu-satunya yang boleh disimpan).
+function formFieldKeys(definition: Record<string, unknown>): Set<string> {
+  const keys = new Set<string>();
+  const fields = (definition.fields ?? {}) as Record<string, unknown>;
+  for (const side of ["left", "right"]) {
+    const arr = Array.isArray(fields[side]) ? (fields[side] as unknown[]) : [];
+    for (const item of arr) {
+      if (item && typeof item === "object" && typeof (item as Record<string, unknown>).key === "string") {
+        keys.add((item as Record<string, string>).key);
+      }
+    }
+  }
+  return keys;
+}
+
+// ─── GET /api/retur/forms — daftar template formulir ( utk UI assignment master ) ─
+router.get("/retur/forms", async (req, res): Promise<void> => {
+  if (!(await requireReturMaster(req, res))) return;
+  const r = await pool.query("SELECT form_key, name FROM retur_form_template ORDER BY form_key");
+  res.json({
+    forms: (r.rows as { form_key: string; name: string }[]).map((row) => ({ formKey: row.form_key, name: row.name })),
+  });
+});
+
+// ─── GET /api/retur/form-def/:materialId — definisi formulir material (null bila belum di-assign)
+router.get("/retur/form-def/:materialId", async (req, res): Promise<void> => {
+  const actor = await requireReturUser(req, res);
+  if (!actor) return;
+  const materialId = Number(req.params.materialId);
+  if (!Number.isInteger(materialId)) { res.status(400).json({ error: "materialId tidak valid" }); return; }
+  const tpl = await getFormTemplate(materialId);
+  res.json({ formKey: tpl?.formKey ?? null, definition: tpl?.definition ?? null });
+});
+
+// ─── PUT /api/retur/form-assign/:materialId (master) — assign/unassign form_key ──
+router.put("/retur/form-assign/:materialId", async (req, res): Promise<void> => {
+  if (!(await requireReturMaster(req, res))) return;
+  const materialId = Number(req.params.materialId);
+  if (!Number.isInteger(materialId)) { res.status(400).json({ error: "materialId tidak valid" }); return; }
+  const body = bodyObject(req);
+  const formKeyRaw = body.formKey;
+  if (formKeyRaw !== null && typeof formKeyRaw !== "string") { res.status(400).json({ error: "formKey harus string atau null" }); return; }
+  if (typeof formKeyRaw === "string" && formKeyRaw) {
+    const exists = await pool.query("SELECT form_key FROM retur_form_template WHERE form_key = $1", [formKeyRaw]);
+    if (exists.rows.length === 0) { res.status(400).json({ error: "Template formulir tidak ditemukan" }); return; }
+  }
+  const upd = await pool.query("UPDATE materials SET form_key = $1 WHERE id = $2 RETURNING id", [formKeyRaw ? formKeyRaw : null, materialId]);
+  if (upd.rows.length === 0) { res.status(404).json({ error: "Material tidak ditemukan" }); return; }
+  res.json({ ok: true, formKey: formKeyRaw || null });
+});
+
 // ─── GET /api/retur/notifications — notifikasi unread milik user ────────────────
 interface NotifRow {
   id: number;
@@ -652,6 +733,7 @@ router.get("/retur/file/:fileId", async (req, res): Promise<void> => {
 interface ValidUnit {
   label: string;
   items: ValidItem[];
+  formData: Record<string, string> | null; // isian "A. DATA MATERIAL" utk Cetak Formulir
 }
 
 interface DriveFile {
@@ -683,6 +765,8 @@ router.post("/retur", async (req, res): Promise<void> => {
   const materialName = matRow.name;
 
   const cfg = await getTemplateConfig(materialId as number); // sudah lolos guard Number.isInteger
+  const formTpl = await getFormTemplate(materialId as number); // null = material tanpa template formulir
+  const allowedFormKeys = formTpl ? formFieldKeys(formTpl.definition) : new Set<string>();
   const units: ValidUnit[] = [];
   for (let i = 0; i < unitsRaw.length; i++) {
     const entry = unitsRaw[i];
@@ -691,7 +775,22 @@ router.post("/retur", async (req, res): Promise<void> => {
     const label = typeof u.label === "string" && u.label.trim() ? u.label.trim() : `Unit ${i + 1}`;
     const v = validateCekItems(u.items, cfg, "pengawas");
     if (!v.ok) { res.status(400).json({ error: `Unit "${label}": ${v.error}` }); return; }
-    units.push({ label, items: v.items });
+    // formData: hanya key milik definisi form material; string kosong dibuang.
+    let unitFormData: Record<string, string> | null = null;
+    if (formTpl) {
+      const fd: Record<string, string> = {};
+      const raw = u.formData;
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        for (const [k, val] of Object.entries(raw as Record<string, unknown>)) {
+          if (!allowedFormKeys.has(k)) continue;
+          if (typeof val !== "string" || !val.trim()) continue;
+          if (val.trim().length > 200) { res.status(400).json({ error: `Unit "${label}": field "${k}" maksimal 200 karakter` }); return; }
+          fd[k] = val.trim();
+        }
+      }
+      unitFormData = Object.keys(fd).length > 0 ? fd : null;
+    }
+    units.push({ label, items: v.items, formData: unitFormData });
   }
 
   const drive = await getReturDriveStatus();
@@ -754,8 +853,8 @@ router.post("/retur", async (req, res): Promise<void> => {
 
     for (let ui = 0; ui < units.length; ui++) {
       const unitRes = await client.query(
-        "INSERT INTO retur_unit (dokumen_id, label, folder_file_id) VALUES ($1, $2, $3) RETURNING id",
-        [dokumenId, units[ui].label, unitFolderIds[ui]],
+        "INSERT INTO retur_unit (dokumen_id, label, folder_file_id, form_data) VALUES ($1, $2, $3, $4::jsonb) RETURNING id",
+        [dokumenId, units[ui].label, unitFolderIds[ui], units[ui].formData ? JSON.stringify(units[ui].formData) : null],
       );
       const unitRow = unitRes.rows[0] as { id: number }; // RETURNING id
       const unitId = unitRow.id;
@@ -937,7 +1036,15 @@ interface VerifyUnit {
   unitId: number;
   sn: string;
   keputusan: "layak_pakai" | "usul_hapus"; // disposisi wajib dari petugas gudang
+  formKeputusan: { code: string; meterLayak?: string; meterTidakLayak?: string } | null; // kesimpulan K6/K7/K8 utk formulir
   items: ValidItem[];
+}
+
+// Nilai kesimpulan meter ("... meter") utk form kabel/konduktor — panjang, opsional.
+function meterField(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const t = raw.trim().slice(0, 20);
+  return t || undefined;
 }
 
 router.post("/retur/:id/verify", async (req, res): Promise<void> => {
@@ -967,6 +1074,10 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   const docUnitIds = new Set<number>(docUnits.map((u) => u.id));
 
   const cfg = await getTemplateConfig(docRow.material_id);
+  const formTpl = await getFormTemplate(docRow.material_id);
+  const kesimpulanOpts = formTpl && Array.isArray((formTpl.definition.kesimpulan as Record<string, unknown> | undefined)?.options)
+    ? ((formTpl.definition.kesimpulan as { options: { code: string; label?: string }[] }).options)
+    : [];
   const verifyUnits: VerifyUnit[] = [];
   const payloadUnitIds = new Set<number>();
   for (const entry of unitsRaw as unknown[]) {
@@ -991,7 +1102,18 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
     }
     const v = validateCekItems(u.items, cfg, "gudang");
     if (!v.ok) { res.status(400).json({ error: `SN "${sn}": ${v.error}` }); return; }
-    verifyUnits.push({ unitId, sn, keputusan: keputusanRaw, items: v.items });
+    // Kesimpulan formulir: wajib bila material punya template form dgn opsi kesimpulan.
+    let formKeputusan: VerifyUnit["formKeputusan"] = null;
+    if (kesimpulanOpts.length > 0) {
+      const fk = u.formKeputusan as Record<string, unknown> | null | undefined;
+      const code = typeof fk?.code === "string" ? fk.code : "";
+      if (!kesimpulanOpts.some((o) => o.code === code)) {
+        res.status(400).json({ error: `Unit "${docUnits.find((du) => du.id === unitId)?.label}": kesimpulan formulir (K6/K7/K8) wajib dipilih` });
+        return;
+      }
+      formKeputusan = { code, meterLayak: meterField(fk?.meterLayak), meterTidakLayak: meterField(fk?.meterTidakLayak) };
+    }
+    verifyUnits.push({ unitId, sn, keputusan: keputusanRaw, formKeputusan, items: v.items });
   }
 
   // SETIAP unit dokumen wajib hadir di payload
@@ -1060,7 +1182,10 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   try {
     await client.query("BEGIN");
     for (let ui = 0; ui < verifyUnits.length; ui++) {
-      await client.query("UPDATE retur_unit SET sn = $1, keputusan = $2 WHERE id = $3 AND dokumen_id = $4", [verifyUnits[ui].sn, verifyUnits[ui].keputusan, verifyUnits[ui].unitId, id]);
+      await client.query(
+        "UPDATE retur_unit SET sn = $1, keputusan = $2, form_keputusan = $5::jsonb WHERE id = $3 AND dokumen_id = $4",
+        [verifyUnits[ui].sn, verifyUnits[ui].keputusan, verifyUnits[ui].unitId, id, verifyUnits[ui].formKeputusan ? JSON.stringify(verifyUnits[ui].formKeputusan) : null],
+      );
       for (let ii = 0; ii < verifyUnits[ui].items.length; ii++) {
         const it = verifyUnits[ui].items[ii];
         await client.query(

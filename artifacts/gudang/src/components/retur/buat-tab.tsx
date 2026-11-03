@@ -9,8 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Camera, FileText, ImageOff, Loader2, PackageX, Plus, Trash2 } from "lucide-react";
-import { DEFAULT_RESULT_OPTIONS, ReturTemplateItem, isNonScanMaterial, readFileCompressed, returApi } from "./shared";
+import { Camera, FileText, ImageOff, Loader2, PackageX, Plus, Trash2, Building2 } from "lucide-react";
+import { useAuth } from "@/lib/auth";
+import { DEFAULT_RESULT_OPTIONS, FormDefinition, ReturTemplateItem, isNonScanMaterial, readFileCompressed, returApi } from "./shared";
 import { MaterialPicker } from "./material-picker";
 
 interface ItemForm {
@@ -23,16 +24,19 @@ interface ItemForm {
 interface UnitForm {
   label: string;
   items: ItemForm[];
+  formData: Record<string, string>; // isian "A. DATA MATERIAL" utk Cetak Formulir (key = field definition)
 }
 
 const makeUnit = (n: number, labels: string[]): UnitForm => ({
   label: `Unit ${n}`,
   items: labels.map((label) => ({ label, hasil: "", catatan: "", foto: "" })),
+  formData: {},
 });
 
 export function BuatTab() {
   const { toast } = useToast();
   const { data: materials } = useListMaterials();
+  const { user } = useAuth();
 
   const [tug10, setTug10] = useState("");
   const [materialId, setMaterialId] = useState("");
@@ -40,6 +44,7 @@ export function BuatTab() {
   const [labels, setLabels] = useState<string[]>([]);
   const [cfgByLabel, setCfgByLabel] = useState<Record<string, { options: string[] | null; tipeInput: "opsi" | "teks"; fotoWajib: boolean }>>({});
   const [units, setUnits] = useState<UnitForm[]>([]);
+  const [formDef, setFormDef] = useState<FormDefinition | null>(null);
   const [templateLoading, setTemplateLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -64,6 +69,7 @@ export function BuatTab() {
               ...u,
               label: `Unit ${ui + 1}`,
               items: ls.map((l) => u.items.find((x) => x.label === l) ?? { label: l, hasil: "", catatan: "", foto: "" }),
+              formData: u.formData ?? {},
             })));
       })
       .catch((e) => { if (alive) toast({ title: "Gagal memuat template", description: (e as Error).message, variant: "destructive" }); })
@@ -71,9 +77,23 @@ export function BuatTab() {
     return () => { alive = false; };
   }, [materialId, toast]);
 
+  // Template formulir inspeksi (Cetak Formulir) — null bila material belum di-assign master.
+  useEffect(() => {
+    if (!materialId) { setFormDef(null); return; }
+    let alive = true;
+    returApi<{ formKey: string | null; definition: FormDefinition | null }>(`/form-def/${materialId}`)
+      .then((d) => { if (alive) setFormDef(d.formKey ? d.definition : null); })
+      .catch(() => { if (alive) setFormDef(null); });
+    return () => { alive = false; };
+  }, [materialId]);
+
   // Komponen tanpa entri config (mis. preset) = opsi bawaan + foto wajib.
   const cfgFor = (label: string) => cfgByLabel[label] ?? { options: null as string[] | null, tipeInput: "opsi" as const, fotoWajib: true };
   const optionsFor = (label: string) => cfgFor(label).options ?? DEFAULT_RESULT_OPTIONS;
+
+  const setFormValue = (unitIdx: number, key: string, value: string) => {
+    setUnits((prev) => prev.map((u, ui) => ui !== unitIdx ? u : { ...u, formData: { ...u.formData, [key]: value } }));
+  };
 
   const setItem = (unitIdx: number, itemIdx: number, patch: Partial<ItemForm>) => {
     setUnits((prev) => prev.map((u, ui) => ui !== unitIdx ? u
@@ -127,6 +147,7 @@ export function BuatTab() {
             items: u.items
               .filter((it) => it.hasil)
               .map((it) => ({ label: it.label, hasil: it.hasil, catatan: it.catatan, foto: it.foto })),
+            ...(formDef ? { formData: Object.fromEntries(Object.entries(u.formData ?? {}).filter(([, v]) => v.trim())) } : {}),
           })),
         }),
       });
@@ -139,8 +160,19 @@ export function BuatTab() {
     }
   };
 
+  const greetingCompany = (user as { companyName?: string | null } | null)?.companyName ?? null;
+
   return (
     <div className="space-y-6">
+      {greetingCompany && (
+        <div className="rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 p-4 flex items-center gap-3">
+          <Building2 className="h-8 w-8 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">Selamat datang, {user?.username} 👋</p>
+            <p className="text-xs text-emerald-700/80 dark:text-emerald-400/80">{greetingCompany}</p>
+          </div>
+        </div>
+      )}
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
@@ -199,6 +231,24 @@ export function BuatTab() {
             )}
           </CardHeader>
           <CardContent>
+            {formDef && (
+              <div className="mb-4 rounded-md border border-border/60 bg-muted/30 p-3 space-y-3">
+                <div>
+                  <p className="text-sm font-medium">Data Material — {formDef.formCode}</p>
+                  <p className="text-xs text-muted-foreground">Isian ini tercetak pada bagian &quot;A. DATA MATERIAL&quot; formulir inspeksi. Boleh dikosongkan bila belum diketahui.</p>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {[...(formDef.fields?.left ?? []), ...(formDef.fields?.right ?? [])].map((f) => (
+                    <div key={f.key} className="space-y-1">
+                      <Label className="text-xs">{f.label}{f.hint ? <span className="text-muted-foreground font-normal"> — {f.hint}</span> : ""}</Label>
+                      <Input className="h-8 text-xs" placeholder={f.hint ?? f.label}
+                        value={unit.formData?.[f.key] ?? ""}
+                        onChange={(e) => setFormValue(ui, f.key, e.target.value)} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             {unit.items.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 {materialId ? "Template material ini kosong — atur daftar komponen di tab Pengaturan (master)." : "Pilih material untuk memuat daftar pemeriksaan."}

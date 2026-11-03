@@ -8,6 +8,7 @@ export const usersTable = pgTable("users", {
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull().default("user"), // "master" | "user"
   menuAccess: jsonb("menu_access").$type<string[]>().default([]), // array of menu route paths
+  companyName: text("company_name"), // nama perusahaan vendor (pengawas vendor) — utk sapaan & tanda tangan formulir retur
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

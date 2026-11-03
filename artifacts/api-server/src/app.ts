@@ -302,6 +302,26 @@ async function setupDatabase() {
       await pool.query("INSERT INTO retur_gdrive_config (access_token, refresh_token) VALUES (NULL, NULL)");
     }
 
+    // ─── Cetak Formulir Inspeksi Retur (Formulir 01-A..01-O) ───────────────────
+    // company_name: nama perusahaan vendor per user (pengawas vendor) — sapaan + blok tanda tangan.
+    await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS company_name TEXT;`);
+    // form_key pada materials: assignment material -> template formulir (retur_form_template.form_key).
+    await pool.query(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS form_key TEXT;`);
+    // form_data: isian "A. DATA MATERIAL" per unit (pengawas); form_keputusan: K6/K7/K8 per unit (gudang).
+    await pool.query(`
+      ALTER TABLE retur_unit ADD COLUMN IF NOT EXISTS form_data JSONB;
+      ALTER TABLE retur_unit ADD COLUMN IF NOT EXISTS form_keputusan JSONB;
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS retur_form_template (
+        id SERIAL PRIMARY KEY,
+        form_key TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        definition JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
+
     logger.info("Database tables ready");
 
     // Seed admin user if no users exist

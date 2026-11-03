@@ -21,8 +21,11 @@ export interface ReturDokumen {
   gudangCatatan: string | null;
   pengawasId: number;
   pengawasName: string | null;
+  pengawasCompany: string | null;
   gudangId: number | null;
   gudangName: string | null;
+  gudangCompany: string | null;
+  formKey: string | null;
   unitCount: number;
   keputusan: Keputusan | "campur" | null; // ringkasan dokumen: nilai seragam semua unit, 'campur', atau null
   createdAt: string;
@@ -44,12 +47,40 @@ export interface ReturUnitDetail {
   label: string;
   sn: string | null;
   keputusan: Keputusan | null; // disposisi gudang per unit; null = belum diverifikasi
+  formData?: Record<string, string> | null; // isian "A. DATA MATERIAL" utk Cetak Formulir
+  formKeputusan?: FormKeputusan | null; // kesimpulan K6/K7/K8 per unit (diisi gudang)
   items: ReturItemCek[];
 }
 
 export interface ReturDetail extends ReturDokumen {
   units: ReturUnitDetail[];
 }
+
+// ─── Template Formulir Inspeksi (Cetak Formulir 01-A..01-O) ─────────────────────
+// Bentuk definition = persis yang di-seed scripts/seed-retur-forms.mjs ke DB.
+export interface FormFieldDef { key: string; label: string; hint?: string }
+export interface FormRowDef {
+  no?: string; label: string; persyaratan?: string; ket?: string;
+  section?: string; level?: number; parent?: boolean; textValue?: string; satuan?: string;
+}
+export interface FormSectionDef { kode: string; judul: string; colL: string; colR: string; nilaiSatuan?: boolean }
+export interface FormKesimpulanOption { code: string; label: string; meterKey?: string }
+export interface FormKesimpulanDef { mode: "coret" | "meter"; options: FormKesimpulanOption[] }
+export interface FormDefinition {
+  formCode: string;
+  title: string;
+  intro: string;
+  header: { line1: string; line2: string; line3: string };
+  signature: { left: string; right: string };
+  fields: { left: FormFieldDef[]; right: FormFieldDef[] };
+  sections: FormSectionDef[];
+  rows: FormRowDef[];
+  kesimpulan: FormKesimpulanDef;
+  legend?: { mark: string; label: string }[];
+  coretNote?: string;
+  note?: string;
+}
+export interface FormKeputusan { code: string; meterLayak?: string; meterTidakLayak?: string }
 
 export interface ReturNotifikasi {
   id: number;

@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CloudUpload, Copy, Link2, Link2Off, Loader2, ListChecks, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CloudUpload, Copy, FileText, Link2, Link2Off, Loader2, ListChecks, Plus, Save, Trash2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MaterialPicker } from "./material-picker";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -24,8 +24,79 @@ export function PengaturanTab() {
   return (
     <div className="space-y-6">
       <DrivePanel />
+      <FormAssignPanel />
       <TemplateEditor />
     </div>
+  );
+}
+
+// Assignment material -> template formulir inspeksi (Formulir 01-A..01-O).
+// Tanpa assignment, tombol "Cetak Formulir" di Riwayat melewatkan dokumen material ini.
+function FormAssignPanel() {
+  const { toast } = useToast();
+  const { data: materials } = useListMaterials();
+  const [forms, setForms] = useState<{ formKey: string; name: string }[]>([]);
+  const [materialId, setMaterialId] = useState("");
+  const [current, setCurrent] = useState("none");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    returApi<{ forms: { formKey: string; name: string }[] }>("/forms")
+      .then((d) => setForms(d.forms ?? []))
+      .catch(() => setForms([]));
+  }, []);
+
+  useEffect(() => {
+    if (!materialId) { setCurrent("none"); return; }
+    returApi<{ formKey: string | null }>(`/form-def/${materialId}`)
+      .then((d) => setCurrent(d.formKey ?? "none"))
+      .catch(() => setCurrent("none"));
+  }, [materialId]);
+
+  const save = async () => {
+    if (!materialId) { toast({ title: "Pilih material terlebih dahulu", variant: "destructive" }); return; }
+    setSaving(true);
+    try {
+      await returApi(`/form-assign/${materialId}`, { method: "PUT", body: JSON.stringify({ formKey: current === "none" ? null : current }) });
+      toast({ title: "Assignment tersimpan", description: current === "none" ? "Material tidak lagi memakai formulir." : "Dokumen material ini kini bisa dicetak dengan formulir terpilih." });
+    } catch (e) {
+      toast({ title: "Gagal menyimpan assignment", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base flex items-center gap-2"><FileText className="h-4 w-4" /> Template Formulir Inspeksi (Cetak Formulir)</CardTitle>
+        <CardDescription>
+          Pasangkan material non-scan dengan formulir inspeksi 01-A..01-O. Setelah di-assign: pengawas mengisi
+          &quot;Data Material&quot; saat membuat dokumen, gudang memilih kesimpulan K6/K7/K8 saat verifikasi,
+          dan Riwayat dapat mencetak formulir identik contoh.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="space-y-2 max-w-md">
+          <Label>Material (non-scan)</Label>
+          <MaterialPicker materials={materials?.filter(isNonScanMaterial)} value={materialId} onChange={setMaterialId} />
+        </div>
+        <div className="space-y-2 max-w-md">
+          <Label>Formulir inspeksi</Label>
+          <Select value={current} onValueChange={setCurrent} disabled={!materialId || forms.length === 0}>
+            <SelectTrigger><SelectValue placeholder="Pilih formulir" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Tanpa formulir</SelectItem>
+              {forms.map((f) => <SelectItem key={f.formKey} value={f.formKey}>{f.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <Button onClick={save} disabled={!materialId || saving}>
+          {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} <Save className="h-4 w-4 mr-2" /> Simpan Assignment
+        </Button>
+        {forms.length === 0 && <p className="text-xs text-muted-foreground">Daftar formulir kosong — seed definisi formulir belum terpasang di server.</p>}
+      </CardContent>
+    </Card>
   );
 }
 

@@ -13,4 +13,6 @@ export interface UserUpdate {
   password?: string | null;
   role?: UserUpdateRole;
   menuAccess?: string[];
+  /** @nullable */
+  companyName?: string | null;
 }

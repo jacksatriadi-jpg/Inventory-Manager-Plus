@@ -31,6 +31,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
     username: user.username,
     role: user.role,
     menuAccess: user.menuAccess || [],
+    companyName: user.companyName ?? null,
     createdAt: user.createdAt.toISOString(),
   };
 
@@ -63,6 +64,7 @@ router.get("/auth/me", async (req, res): Promise<void> => {
     username: user.username,
     role: user.role,
     menuAccess: user.menuAccess || [],
+    companyName: user.companyName ?? null,
     createdAt: user.createdAt.toISOString(),
   });
   res.json(response);

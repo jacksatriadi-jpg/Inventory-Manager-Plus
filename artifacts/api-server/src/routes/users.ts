@@ -40,6 +40,7 @@ router.get("/users", async (req, res): Promise<void> => {
       username: u.username,
       role: u.role,
       menuAccess: u.menuAccess || [],
+      companyName: u.companyName ?? null,
       createdAt: u.createdAt.toISOString(),
     }))
   );
@@ -53,12 +54,12 @@ router.post("/users", async (req, res): Promise<void> => {
     return;
   }
 
-  const { username, password, role, menuAccess } = parsed.data;
+  const { username, password, role, menuAccess, companyName } = parsed.data;
   const passwordHash = hashPassword(password);
 
   const [user] = await db
     .insert(usersTable)
-    .values({ username, passwordHash, role, menuAccess: menuAccess || [] })
+    .values({ username, passwordHash, role, menuAccess: menuAccess || [], companyName: companyName || null })
     .returning();
 
   res.status(201).json({
@@ -66,6 +67,7 @@ router.post("/users", async (req, res): Promise<void> => {
     username: user.username,
     role: user.role,
     menuAccess: user.menuAccess || [],
+    companyName: user.companyName ?? null,
     createdAt: user.createdAt.toISOString(),
   });
 });
@@ -88,6 +90,7 @@ router.get("/users/:id", async (req, res): Promise<void> => {
     username: user.username,
     role: user.role,
     menuAccess: user.menuAccess || [],
+    companyName: user.companyName ?? null,
     createdAt: user.createdAt.toISOString(),
   }));
 });
@@ -110,6 +113,7 @@ router.patch("/users/:id", async (req, res): Promise<void> => {
   if (parsed.data.role) updateData.role = parsed.data.role;
   if (parsed.data.password) updateData.passwordHash = hashPassword(parsed.data.password);
   if (parsed.data.menuAccess !== undefined) updateData.menuAccess = parsed.data.menuAccess;
+  if (parsed.data.companyName !== undefined) updateData.companyName = parsed.data.companyName || null;
 
   const [user] = await db
     .update(usersTable)
@@ -127,6 +131,7 @@ router.patch("/users/:id", async (req, res): Promise<void> => {
     username: user.username,
     role: user.role,
     menuAccess: user.menuAccess || [],
+    companyName: user.companyName ?? null,
     createdAt: user.createdAt.toISOString(),
   }));
 });

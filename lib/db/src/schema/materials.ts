@@ -8,6 +8,7 @@ export const materialsTable = pgTable("materials", {
   code: text("code").notNull().unique(),
   description: text("description"),
   kategori: text("kategori").notNull().default("scan"),
+  formKey: text("form_key"), // kunci template formulir inspeksi retur (retur_form_template.form_key); NULL = tanpa formulir
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

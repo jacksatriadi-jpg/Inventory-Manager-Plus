@@ -26,8 +26,10 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/lib/auth";
-import { CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Pencil, Search, Trash2 } from "lucide-react";
+import { CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Pencil, Printer, Search, Trash2 } from "lucide-react";
 import { DriveImg } from "./drive-img";
+import { buildFormWorkbook, formFilename } from "./form-xlsx";
+import type { FormDefinition } from "./shared";
 import {
   hasilDisplay, ReturDetail, ReturDokumen, ReturTemplateItem,
   KEPUTUSAN_BADGE, KEPUTUSAN_LABEL, Keputusan,
@@ -54,7 +56,7 @@ export function RiwayatTab() {
   const [docs, setDocs] = useState<ReturDokumen[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [exporting, setExporting] = useState<"excel" | "pdf" | null>(null);
+  const [exporting, setExporting] = useState<"excel" | "pdf" | "form" | null>(null);
   const [q, setQ] = useState("");
   const [keputusanF, setKeputusanF] = useState<"semua" | Keputusan>("semua");
   const { user } = useAuth();
@@ -357,6 +359,42 @@ export function RiwayatTab() {
     }
   };
 
+  // Cetak Formulir: .xlsx per dokumen, 1 sheet per unit, layout = contoh Formulir 01-A..01-O
+  // dengan hasil ceklist & data material terisi. Material tanpa assignment formulir dilewati dgn toast.
+  const printFormulir = async () => {
+    const ids = docs.filter((d) => selected.has(d.id)).map((d) => d.id);
+    if (ids.length === 0) { toast({ title: "Pilih minimal satu dokumen", variant: "destructive" }); return; }
+    setExporting("form");
+    try {
+      let ok = 0;
+      const skipped: string[] = [];
+      for (const id of ids) {
+        const detail = await returApi<ReturDetail>(`/${id}`);
+        let def: FormDefinition | null = null;
+        try {
+          const fd = await returApi<{ formKey: string | null; definition: FormDefinition | null }>(`/form-def/${detail.materialId}`);
+          def = fd.formKey ? fd.definition : null;
+        } catch { def = null; }
+        if (!def) { skipped.push(`#${id} (${detail.materialName})`); continue; }
+        const wb = buildFormWorkbook(def, detail);
+        const buf = await wb.xlsx.writeBuffer();
+        downloadBlob(
+          new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+          formFilename(detail),
+        );
+        ok++;
+      }
+      if (ok > 0) toast({ title: `${ok} formulir inspeksi terunduh` });
+      if (skipped.length > 0) {
+        toast({ title: "Beberapa dokumen dilewati", description: `Belum ada template formulir: ${skipped.join("; ")} — assign material ke formulir di tab Pengaturan.`, variant: "destructive" });
+      }
+    } catch (e) {
+      toast({ title: "Gagal mencetak formulir", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setExporting(null);
+    }
+  };
+
   return (
     <>
     <Card>
@@ -370,6 +408,10 @@ export function RiwayatTab() {
           <Button size="sm" variant="outline" onClick={exportPdf} disabled={exporting !== null || selected.size === 0}>
             {exporting === "pdf" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileText className="h-4 w-4 mr-2" />}
             Export PDF
+          </Button>
+          <Button size="sm" variant="secondary" onClick={printFormulir} disabled={exporting !== null || selected.size === 0}>
+            {exporting === "form" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Printer className="h-4 w-4 mr-2" />}
+            Cetak Formulir
           </Button>
         </div>
       </CardHeader>

@@ -12,4 +12,6 @@ export interface UserInput {
   password: string;
   role: UserInputRole;
   menuAccess?: string[];
+  /** @nullable */
+  companyName?: string | null;
 }

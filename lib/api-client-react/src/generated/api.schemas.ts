@@ -28,6 +28,8 @@ export interface User {
   username: string;
   role: UserRole;
   menuAccess?: string[];
+  /** @nullable */
+  companyName?: string | null;
   createdAt: string;
 }
 
@@ -50,6 +52,8 @@ export interface UserInput {
   password: string;
   role: UserInputRole;
   menuAccess?: string[];
+  /** @nullable */
+  companyName?: string | null;
 }
 
 export type UserUpdateRole = typeof UserUpdateRole[keyof typeof UserUpdateRole];
@@ -67,6 +71,8 @@ export interface UserUpdate {
   password?: string | null;
   role?: UserUpdateRole;
   menuAccess?: string[];
+  /** @nullable */
+  companyName?: string | null;
 }
 
 export type MaterialKategori = typeof MaterialKategori[keyof typeof MaterialKategori];

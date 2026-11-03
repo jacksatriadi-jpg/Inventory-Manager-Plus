@@ -33,6 +33,12 @@ export const returUnitTable = pgTable("retur_unit", {
   keputusan: text("keputusan"), // CHECK di DDL runtime app.ts
   sn: text("sn"),
   folderFileId: text("folder_file_id"), // id folder Drive unit ("Unit n - label"); NULL = lama
+  // form_data = isian "A. DATA MATERIAL" per unit utk cetak formulir (diisi pengawas saat buat dokumen).
+  // shape: { [fieldKey]: string } — hanya key yang ada di definisi form material.
+  formData: jsonb("form_data").$type<Record<string, string> | null>(),
+  // form_keputusan = kesimpulan K6/K7/K8 per unit utk formulir (diisi gudang saat verifikasi).
+  // shape: { code: "K6"|"K7"|"K8", meterLayak?: string, meterTidakLayak?: string }
+  formKeputusan: jsonb("form_keputusan").$type<{ code: string; meterLayak?: string; meterTidakLayak?: string } | null>(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 }, (table) => [
   uniqueIndex("retur_unit_sn_unique").on(table.sn).where(isNotNull(table.sn)),
@@ -69,6 +75,21 @@ export const returItemCekTable = pgTable("retur_item_cek", {
 });
 
 export type ReturItemCek = typeof returItemCekTable.$inferSelect;
+
+// ─── Template Formulir Inspeksi Material Retur (01-A..01-O per jenis material) ────
+// Definition JSONB (dibaca renderer Cetak Formulir & form input Data Material):
+// { formCode, title, intro, fields:{left:[{key,label}],right:[{key,label}]},
+//   sections:[{kode,judul,colL,colR}], rows:[{no,label,persyaratan,ket,sub?}],
+//   kesimpulan:{mode:'coret'|'meter',options:[...]}, notes?:string[] }
+export const returFormTemplateTable = pgTable("retur_form_template", {
+  id: serial("id").primaryKey(),
+  formKey: text("form_key").notNull().unique(), // 'kwh-meter','mcb',... — dirujuk materials.form_key
+  name: text("name").notNull(), // label manusiawi, mis. "Formulir 01-A — kWh Meter"
+  definition: jsonb("definition").$type<Record<string, unknown>>().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type ReturFormTemplate = typeof returFormTemplateTable.$inferSelect;
 
 // ─── Notifikasi in-app (bell) untuk petugas gudang ────────────────────────────────
 export const returNotifikasiTable = pgTable("retur_notifikasi", {

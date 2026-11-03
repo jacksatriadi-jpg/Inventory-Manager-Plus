@@ -551,15 +551,15 @@ function UsersTab() {
 
   const [isOpen, setIsOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [formData, setFormData] = useState({ username: "", password: "", role: "user" as "master" | "user", menuAccess: [] as string[] });
+  const [formData, setFormData] = useState({ username: "", password: "", role: "user" as "master" | "user", menuAccess: [] as string[], companyName: "" });
 
   const handleOpen = (user?: any) => {
     if (user) {
       setEditingId(user.id);
-      setFormData({ username: user.username, password: "", role: user.role, menuAccess: user.menuAccess || [] });
+      setFormData({ username: user.username, password: "", role: user.role, menuAccess: user.menuAccess || [], companyName: user.companyName || "" });
     } else {
       setEditingId(null);
-      setFormData({ username: "", password: "", role: "user", menuAccess: [] });
+      setFormData({ username: "", password: "", role: "user", menuAccess: [], companyName: "" });
     }
     setIsOpen(true);
   };
@@ -588,7 +588,7 @@ function UsersTab() {
     e.preventDefault();
     try {
       if (editingId) {
-        const payload: any = { username: formData.username, role: formData.role, menuAccess: formData.menuAccess };
+        const payload: any = { username: formData.username, role: formData.role, menuAccess: formData.menuAccess, companyName: formData.companyName.trim() || null };
         if (formData.password) payload.password = formData.password;
         await updateMutation.mutateAsync({ id: editingId, data: payload });
         toast({ title: "User updated" });
@@ -644,6 +644,14 @@ function UsersTab() {
                     value={formData.username} 
                     onChange={e => setFormData({...formData, username: e.target.value})} 
                     required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Perusahaan <span className="text-muted-foreground font-normal">(vendor/pengawas — untuk sapaan &amp; tanda tangan formulir retur, opsional)</span></Label>
+                  <Input 
+                    value={formData.companyName} 
+                    onChange={e => setFormData({...formData, companyName: e.target.value})} 
+                    placeholder="PT ..."
                   />
                 </div>
                 <div className="space-y-2">
@@ -745,6 +753,7 @@ function UsersTab() {
             <TableHeader>
               <TableRow>
                 <TableHead>Username</TableHead>
+                <TableHead>Perusahaan</TableHead>
                 <TableHead>Role</TableHead>
                 <TableHead>Menu Access</TableHead>
                 <TableHead className="text-right">Actions</TableHead>
@@ -754,6 +763,7 @@ function UsersTab() {
               {users?.map(u => (
                 <TableRow key={u.id}>
                   <TableCell className="font-medium font-mono">{u.username}</TableCell>
+                  <TableCell className="text-xs">{(u as any).companyName || <span className="text-muted-foreground">-</span>}</TableCell>
                   <TableCell>
                     <span className={`px-2 py-1 rounded text-xs font-semibold uppercase ${u.role === 'master' ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground'}`}>
                       {u.role}

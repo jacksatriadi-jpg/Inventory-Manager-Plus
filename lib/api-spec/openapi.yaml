@@ -712,6 +712,8 @@ components:
           items:
             type: string
           default: []
+        companyName:
+          type: ["string", "null"]
         createdAt:
           type: string
 
@@ -731,6 +733,8 @@ components:
           items:
             type: string
           default: []
+        companyName:
+          type: ["string", "null"]
 
     UserUpdate:
       type: object
@@ -746,6 +750,8 @@ components:
           type: array
           items:
             type: string
+        companyName:
+          type: ["string", "null"]
 
     Material:
       type: object

@@ -33,6 +33,7 @@ export const LoginResponse = zod.object({
   "username": zod.string(),
   "role": zod.enum(['master', 'user', 'bendahara']),
   "menuAccess": zod.array(zod.string()).default(loginResponseUserMenuAccessDefault),
+  "companyName": zod.string().nullish(),
   "createdAt": zod.string()
 })
 })
@@ -52,6 +53,7 @@ export const GetMeResponse = zod.object({
   "username": zod.string(),
   "role": zod.enum(['master', 'user', 'bendahara']),
   "menuAccess": zod.array(zod.string()).default(getMeResponseMenuAccessDefault),
+  "companyName": zod.string().nullish(),
   "createdAt": zod.string()
 })
 
@@ -66,6 +68,7 @@ export const ListUsersResponseItem = zod.object({
   "username": zod.string(),
   "role": zod.enum(['master', 'user', 'bendahara']),
   "menuAccess": zod.array(zod.string()).default(listUsersResponseMenuAccessDefault),
+  "companyName": zod.string().nullish(),
   "createdAt": zod.string()
 })
 export const ListUsersResponse = zod.array(ListUsersResponseItem)
@@ -80,7 +83,8 @@ export const CreateUserBody = zod.object({
   "username": zod.string(),
   "password": zod.string(),
   "role": zod.enum(['master', 'user', 'bendahara']),
-  "menuAccess": zod.array(zod.string()).default(createUserBodyMenuAccessDefault)
+  "menuAccess": zod.array(zod.string()).default(createUserBodyMenuAccessDefault),
+  "companyName": zod.string().nullish()
 })
 
 
@@ -98,6 +102,7 @@ export const GetUserResponse = zod.object({
   "username": zod.string(),
   "role": zod.enum(['master', 'user', 'bendahara']),
   "menuAccess": zod.array(zod.string()).default(getUserResponseMenuAccessDefault),
+  "companyName": zod.string().nullish(),
   "createdAt": zod.string()
 })
 
@@ -113,7 +118,8 @@ export const UpdateUserBody = zod.object({
   "username": zod.string().optional(),
   "password": zod.string().nullish(),
   "role": zod.enum(['master', 'user', 'bendahara']).optional(),
-  "menuAccess": zod.array(zod.string()).optional()
+  "menuAccess": zod.array(zod.string()).optional(),
+  "companyName": zod.string().nullish()
 })
 
 export const updateUserResponseMenuAccessDefault = [];
@@ -123,6 +129,7 @@ export const UpdateUserResponse = zod.object({
   "username": zod.string(),
   "role": zod.enum(['master', 'user', 'bendahara']),
   "menuAccess": zod.array(zod.string()).default(updateUserResponseMenuAccessDefault),
+  "companyName": zod.string().nullish(),
   "createdAt": zod.string()
 })
 

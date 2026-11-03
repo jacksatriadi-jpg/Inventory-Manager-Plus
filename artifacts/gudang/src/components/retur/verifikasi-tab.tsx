@@ -15,7 +15,7 @@ import { ArrowLeft, Camera, ImageOff, Loader2, PackageX } from "lucide-react";
 import { DriveImg } from "./drive-img";
 import {
   hasilBadgeClass, hasilDisplay, DEFAULT_RESULT_OPTIONS, ReturDetail, ReturDokumen, ReturItemCek, ReturTemplateItem,
-  KEPUTUSAN_LABEL, Keputusan,
+  KEPUTUSAN_LABEL, Keputusan, FormDefinition, FormKeputusan,
   fmtTanggal, notifyReturChanged, readFileCompressed, returApi,
 } from "./shared";
 
@@ -40,6 +40,9 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
   const [gudangCatatan, setGudangCatatan] = useState("");
   const [itemForms, setItemForms] = useState<Record<number, Record<string, GudangItemForm>>>({});
   const [cfgByLabel, setCfgByLabel] = useState<Record<string, { options: string[] | null; tipeInput: "opsi" | "teks"; fotoWajib: boolean }>>({});
+  // Template formulir material (Cetak Formulir) — kesimpulan K6/K7/K8 per unit diisi gudang di sini.
+  const [formDef, setFormDef] = useState<FormDefinition | null>(null);
+  const [kesimpulanByUnit, setKesimpulanByUnit] = useState<Record<number, FormKeputusan | null>>({});
 
   const itemFileRef = useRef<HTMLInputElement>(null);
   const photoTarget = useRef<{ unitId: number; label: string } | null>(null);
@@ -67,20 +70,26 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
     try {
       const d = await returApi<ReturDetail>(`/${id}`);
       let cfg: Record<string, { options: string[] | null; tipeInput: "opsi" | "teks"; fotoWajib: boolean }> = {};
+      let fdef: FormDefinition | null = null;
       try {
         const materialId = docs.find((x) => x.id === id)?.materialId;
         if (materialId != null) {
           const t = await returApi<{ items: ReturTemplateItem[] }>(`/template/${materialId}`);
           cfg = Object.fromEntries((t.items ?? []).map((i) => [i.label, { options: i.options, tipeInput: i.tipeInput ?? "opsi", fotoWajib: i.fotoWajibGudang !== false }]));
+          const fd = await returApi<{ formKey: string | null; definition: FormDefinition | null }>(`/form-def/${materialId}`);
+          fdef = fd.formKey ? fd.definition : null;
         }
       } catch { /* material tanpa template = pakai bawaan */ }
+      setFormDef(fdef);
       setCfgByLabel(cfg);
       const sn: Record<number, string> = {};
       const keputusan: Record<number, Keputusan | ""> = {};
+      const kesimpulan: Record<number, FormKeputusan | null> = {};
       const forms: Record<number, Record<string, GudangItemForm>> = {};
       for (const u of d.units) {
         sn[u.id] = u.sn ?? "";
         keputusan[u.id] = u.keputusan ?? "";
+        kesimpulan[u.id] = u.formKeputusan ?? null;
         const labels: string[] = [];
         for (const it of u.items) if (!labels.includes(it.itemLabel)) labels.push(it.itemLabel);
         forms[u.id] = Object.fromEntries(labels.map((l) => {
@@ -100,6 +109,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
       setSnByUnit(sn);
       setItemForms(forms);
       setKeputusanByUnit(keputusan);
+      setKesimpulanByUnit(kesimpulan);
       setGudangCatatan(d.gudangCatatan ?? "");
     } catch (e) {
       toast({ title: "Gagal memuat dokumen", description: (e as Error).message, variant: "destructive" });
@@ -149,6 +159,14 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
       toast({ title: "Keputusan unit wajib dipilih", description: `Pilih "Layak Pakai (Standby)" atau "Tidak Layak Pakai (Usul Hapus)" untuk unit: ${keputusanKosong.join(", ")}`, variant: "destructive" });
       return;
     }
+    const formOpts = formDef?.kesimpulan?.options ?? [];
+    if (formOpts.length > 0) {
+      const tanpaKesimpulan = detail.units.filter((u) => !kesimpulanByUnit[u.id]?.code).map((u) => u.label);
+      if (tanpaKesimpulan.length > 0) {
+        toast({ title: "Kesimpulan formulir wajib dipilih", description: `Pilih kesimpulan (K6/K7/K8) untuk unit: ${tanpaKesimpulan.join(", ")}`, variant: "destructive" });
+        return;
+      }
+    }
     const tanpaFoto: string[] = [];
     for (const u of detail.units) {
       for (const [label, f] of Object.entries(itemForms[u.id] ?? {})) {
@@ -165,14 +183,24 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
         method: "POST",
         body: JSON.stringify({
           gudangCatatan: gudangCatatan.trim(),
-          units: detail.units.map((u) => ({
+          units: detail.units.map((u) => {
+            const fk = kesimpulanByUnit[u.id];
+            return {
             unitId: u.id,
             sn: (snByUnit[u.id] ?? "").trim(),
             keputusan: keputusanByUnit[u.id],
+            ...(formOpts.length > 0 && fk?.code ? {
+              formKeputusan: {
+                code: fk.code,
+                ...(fk.meterLayak?.trim() ? { meterLayak: fk.meterLayak.trim() } : {}),
+                ...(fk.meterTidakLayak?.trim() ? { meterTidakLayak: fk.meterTidakLayak.trim() } : {}),
+              },
+            } : {}),
             items: Object.entries(itemForms[u.id] ?? {})
               .filter(([, f]) => f.hasil)
               .map(([label, f]) => ({ label, hasil: f.hasil, catatan: f.catatan, foto: f.foto })),
-          })),
+            };
+          }),
         }),
       });
       toast({ title: "Verifikasi gudang selesai", description: `Dokumen #${detail.id} berstatus selesai.` });
@@ -246,6 +274,44 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                   ))}
                   {!keputusanByUnit[u.id] && <span className="text-xs text-destructive">belum dipilih</span>}
                 </div>
+                {formDef?.kesimpulan?.options?.length ? (
+                  <div className="mb-4 space-y-2 border-t border-border/50 pt-3">
+                    <p className="text-xs font-medium">
+                      Kesimpulan formulir inspeksi (wajib — tercetak di Cetak Formulir {formDef.formCode}):
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {formDef.kesimpulan.options.map((o) => (
+                        <Button key={o.code} size="sm" type="button"
+                          variant={kesimpulanByUnit[u.id]?.code === o.code ? "default" : "outline"}
+                          onClick={() => setKesimpulanByUnit((prev) => ({
+                            ...prev,
+                            [u.id]: prev[u.id]?.code === o.code
+                              ? null
+                              : { code: o.code, meterLayak: prev[u.id]?.meterLayak, meterTidakLayak: prev[u.id]?.meterTidakLayak },
+                          }))}>
+                          {o.label}
+                        </Button>
+                      ))}
+                      {!kesimpulanByUnit[u.id]?.code && <span className="text-xs text-destructive">belum dipilih</span>}
+                    </div>
+                    {formDef.kesimpulan.mode === "meter" && kesimpulanByUnit[u.id] && (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-xl">
+                        <div className="space-y-1">
+                          <Label className="text-xs">Panjang bekas layak pakai (meter)</Label>
+                          <Input className="h-8 text-sm" placeholder="mis. 25.5"
+                            value={kesimpulanByUnit[u.id]?.meterLayak ?? ""}
+                            onChange={(e) => setKesimpulanByUnit((prev) => ({ ...prev, [u.id]: { ...(prev[u.id] as FormKeputusan), meterLayak: e.target.value } }))} />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">Panjang bekas tidak layak pakai (meter)</Label>
+                          <Input className="h-8 text-sm" placeholder="mis. 4"
+                            value={kesimpulanByUnit[u.id]?.meterTidakLayak ?? ""}
+                            onChange={(e) => setKesimpulanByUnit((prev) => ({ ...prev, [u.id]: { ...(prev[u.id] as FormKeputusan), meterTidakLayak: e.target.value } }))} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
                 {labels.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Unit ini tanpa item pemeriksaan.</p>
                 ) : (

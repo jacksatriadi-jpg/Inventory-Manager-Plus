@@ -12,5 +12,7 @@ export interface User {
   username: string;
   role: UserRole;
   menuAccess?: string[];
+  /** @nullable */
+  companyName?: string | null;
   createdAt: string;
 }
