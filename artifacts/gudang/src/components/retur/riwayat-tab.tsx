@@ -1,4 +1,6 @@
-// Tab RIWAYAT (gudang): dokumen selesai (completed), tabel checkable, Export Excel & PDF
+// Tab RIWAYAT: gudang = semua dokumen selesai + Export Excel/PDF/koreksi/hapus.
+// Pengawas/vendor non-gudang = HANYA dokumen miliknya sendiri (backend otomatis memfilter
+// pengawas_id), termasuk yang masih menunggu verifikasi, dengan aksi terbatas Cetak Formulir.
 // sepenuhnya CLIENT-SIDE (exceljs + jspdf). Bytes foto diambil via GET /api/retur/file/:fileId.
 // Master dapat mengoreksi hasil verifikasi (PUT /api/retur/:id/verify-items) dan menghapus
 // dokumen (DELETE /api/retur/:id) — tombol aksi per baris + dialog konfirmasi hapus.
@@ -33,7 +35,7 @@ import type { FormDefinition } from "./shared";
 import {
   hasilDisplay, ReturDetail, ReturDokumen, ReturTemplateItem,
   KEPUTUSAN_BADGE, KEPUTUSAN_LABEL, Keputusan,
-  downloadBlob, fetchReturFile, fmtTanggal, notifyReturChanged, returApi,
+  downloadBlob, fetchReturFile, fmtTanggal, isReturGudang, notifyReturChanged, returApi,
 } from "./shared";
 
 interface DocFiles {
@@ -61,19 +63,23 @@ export function RiwayatTab() {
   const [keputusanF, setKeputusanF] = useState<"semua" | Keputusan>("semua");
   const { user } = useAuth();
   const canDelete = user?.role === "master";
+  const gudangView = isReturGudang(user);
   const [toDelete, setToDelete] = useState<ReturDokumen | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // Filter server-side (status=completed wajib utk riwayat); q didebounce 300 ms.
+  // Filter server-side; q didebounce 300 ms. Gudang hanya melihat dokumen selesai;
+// vendor/pengawas melihat semua dokumen miliknya (pending+selesai) supaya formulir
+// bisa langsung dicetak setelah dokumen disimpan.
   const loadDocs = useCallback(() => {
-    const params = new URLSearchParams({ status: "completed" });
+    const params = new URLSearchParams();
+    if (gudangView) params.set("status", "completed");
     if (q.trim()) params.set("q", q.trim());
     if (keputusanF !== "semua") params.set("keputusan", keputusanF);
     returApi<ReturDokumen[]>(`?${params.toString()}`)
       .then(setDocs)
       .catch((e) => toast({ title: "Gagal memuat riwayat", description: (e as Error).message, variant: "destructive" }))
       .finally(() => setLoading(false));
-  }, [q, keputusanF, toast]);
+  }, [q, keputusanF, gudangView, toast]);
 
   useEffect(() => {
     const t = setTimeout(loadDocs, 300);
@@ -399,16 +405,20 @@ export function RiwayatTab() {
     <>
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0">
-        <CardTitle className="text-base flex items-center gap-2"><CheckCircle2 className="h-4 w-4" /> Dokumen selesai ({docs.length})</CardTitle>
+        <CardTitle className="text-base flex items-center gap-2"><CheckCircle2 className="h-4 w-4" /> {gudangView ? `Dokumen selesai (${docs.length})` : `Dokumen retur saya (${docs.length})`}</CardTitle>
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="outline" onClick={exportExcel} disabled={exporting !== null || selected.size === 0}>
-            {exporting === "excel" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileSpreadsheet className="h-4 w-4 mr-2" />}
-            Export Excel
-          </Button>
-          <Button size="sm" variant="outline" onClick={exportPdf} disabled={exporting !== null || selected.size === 0}>
-            {exporting === "pdf" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileText className="h-4 w-4 mr-2" />}
-            Export PDF
-          </Button>
+          {gudangView && (
+            <>
+              <Button size="sm" variant="outline" onClick={exportExcel} disabled={exporting !== null || selected.size === 0}>
+                {exporting === "excel" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileSpreadsheet className="h-4 w-4 mr-2" />}
+                Export Excel
+              </Button>
+              <Button size="sm" variant="outline" onClick={exportPdf} disabled={exporting !== null || selected.size === 0}>
+                {exporting === "pdf" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <FileText className="h-4 w-4 mr-2" />}
+                Export PDF
+              </Button>
+            </>
+          )}
           <Button size="sm" variant="secondary" onClick={printFormulir} disabled={exporting !== null || selected.size === 0}>
             {exporting === "form" ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Printer className="h-4 w-4 mr-2" />}
             Cetak Formulir
@@ -421,14 +431,16 @@ export function RiwayatTab() {
             <Search className="h-4 w-4 absolute left-2.5 top-2.5 text-muted-foreground pointer-events-none" />
             <Input className="h-8 w-64 pl-8 text-sm" placeholder="Cari nama / kode material..." value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
-          <Select value={keputusanF} onValueChange={(v) => setKeputusanF(v as "semua" | Keputusan)}>
-            <SelectTrigger className="h-8 w-64 text-sm"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="semua">Semua keputusan</SelectItem>
-              <SelectItem value="layak_pakai">Layak Pakai (Standby)</SelectItem>
-              <SelectItem value="usul_hapus">Tidak Layak Pakai (Usul Hapus)</SelectItem>
-            </SelectContent>
-          </Select>
+          {gudangView && (
+            <Select value={keputusanF} onValueChange={(v) => setKeputusanF(v as "semua" | Keputusan)}>
+              <SelectTrigger className="h-8 w-64 text-sm"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="semua">Semua keputusan</SelectItem>
+                <SelectItem value="layak_pakai">Layak Pakai (Standby)</SelectItem>
+                <SelectItem value="usul_hapus">Tidak Layak Pakai (Usul Hapus)</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
           {(q.trim() !== "" || keputusanF !== "semua") && (
             <Button size="sm" variant="ghost" onClick={() => { setQ(""); setKeputusanF("semua"); }}>Reset filter</Button>
           )}
@@ -436,7 +448,7 @@ export function RiwayatTab() {
         {loading ? (
           <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Memuat...</p>
         ) : docs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{q.trim() !== "" || keputusanF !== "semua" ? "Tidak ada dokumen yang cocok dengan filter." : "Belum ada dokumen retur yang selesai diverifikasi."}</p>
+          <p className="text-sm text-muted-foreground">{q.trim() !== "" || keputusanF !== "semua" ? "Tidak ada dokumen yang cocok dengan filter." : gudangView ? "Belum ada dokumen retur yang selesai diverifikasi." : 'Belum ada dokumen retur. Buat dokumen pada tab "Buat Retur" — setelah tersimpan, formulir inspeksi bisa dicetak di sini.'}</p>
         ) : (
           <Table>
             <TableHeader>
@@ -449,7 +461,7 @@ export function RiwayatTab() {
                 <TableHead>Pengawas</TableHead>
                 <TableHead>Gudang</TableHead>
                 <TableHead>Unit</TableHead>
-                <TableHead>Keputusan</TableHead>
+                {gudangView ? <TableHead>Keputusan</TableHead> : <TableHead>Status</TableHead>}
                 <TableHead>Selesai</TableHead>
                 <TableHead>TUG10</TableHead>
                 {canDelete && <TableHead className="w-16">Aksi</TableHead>}
@@ -467,9 +479,13 @@ export function RiwayatTab() {
                   <TableCell>{d.gudangName ?? "-"}</TableCell>
                   <TableCell>{d.unitCount}</TableCell>
                   <TableCell>
-                    {d.keputusan
-                      ? <Badge className={KEPUTUSAN_BADGE[d.keputusan]}>{KEPUTUSAN_LABEL[d.keputusan]}</Badge>
-                      : <span className="text-xs text-muted-foreground">-</span>}
+                    {!gudangView
+                      ? (d.status === "completed"
+                        ? <Badge className="bg-emerald-100 text-emerald-800">Selesai diverifikasi</Badge>
+                        : <Badge className="bg-amber-100 text-amber-800">Menunggu verifikasi gudang</Badge>)
+                      : d.keputusan
+                        ? <Badge className={KEPUTUSAN_BADGE[d.keputusan]}>{KEPUTUSAN_LABEL[d.keputusan]}</Badge>
+                        : <span className="text-xs text-muted-foreground">-</span>}
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">{fmtTanggal(d.completedAt)}</TableCell>
                   <TableCell>

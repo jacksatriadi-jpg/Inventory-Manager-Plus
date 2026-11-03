@@ -151,7 +151,7 @@ export function BuatTab() {
           })),
         }),
       });
-      toast({ title: "Dokumen retur tersimpan", description: "Status: sudah dicek pengawas, menunggu verifikasi gudang." });
+      toast({ title: "Dokumen retur tersimpan", description: "Status: sudah dicek pengawas, menunggu verifikasi gudang. Formulir bisa dicetak dari tab Riwayat — pilih dokumen, klik Cetak Formulir." });
       setTug10(""); setMaterialId(""); setCatatan(""); setLabels([]); setUnits([]);
     } catch (e) {
       toast({ title: "Gagal menyimpan dokumen", description: (e as Error).message, variant: "destructive" });

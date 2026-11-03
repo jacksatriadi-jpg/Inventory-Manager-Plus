@@ -2,7 +2,8 @@
 // Tab via query ?tab= (pola master.tsx) dengan gating per peran:
 //   buat       → semua retur user (pengawas)
 //   verifikasi → gudang (menuAccess "retur:gudang" atau master)
-//   riwayat    → gudang
+//   riwayat    → semua: gudang melihat semua dokumen selesai; pengawas/vendor hanya
+//                dokumen miliknya sendiri (backend filter pengawas_id) utk Cetak Formulir
 //   pengaturan → master
 // Tab yang tidak diizinkan / tidak ada → diarahkan ke default per peran (gudang→verifikasi, selain itu→buat).
 import { useEffect } from "react";
@@ -33,7 +34,8 @@ export default function Retur() {
 
   const allowed = [
     "buat",
-    ...(gudang ? ["verifikasi", "riwayat"] : []),
+    ...(gudang ? ["verifikasi"] : []),
+    "riwayat",
     ...(master ? ["pengaturan"] : []),
   ];
   const defaultTab = gudang ? "verifikasi" : "buat";
@@ -66,7 +68,7 @@ export default function Retur() {
 
   const cols = allowed.length === 4 ? "grid-cols-2 sm:grid-cols-4"
     : allowed.length === 3 ? "grid-cols-3"
-    : "grid-cols-1";
+    : "grid-cols-2";
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -88,11 +90,9 @@ export default function Retur() {
               <ShieldCheck className="w-4 h-4 mr-2" /> Verifikasi
             </TabsTrigger>
           )}
-          {gudang && (
-            <TabsTrigger value="riwayat" className="text-sm sm:text-base">
-              <History className="w-4 h-4 mr-2" /> Riwayat
-            </TabsTrigger>
-          )}
+          <TabsTrigger value="riwayat" className="text-sm sm:text-base">
+            <History className="w-4 h-4 mr-2" /> Riwayat
+          </TabsTrigger>
           {master && (
             <TabsTrigger value="pengaturan" className="text-sm sm:text-base">
               <Settings className="w-4 h-4 mr-2" /> Pengaturan
@@ -108,11 +108,9 @@ export default function Retur() {
             <VerifikasiTab initialDok={tab === "verifikasi" ? dok : null} />
           </TabsContent>
         )}
-        {gudang && (
-          <TabsContent value="riwayat" className="mt-6">
-            <RiwayatTab />
-          </TabsContent>
-        )}
+        <TabsContent value="riwayat" className="mt-6">
+          <RiwayatTab />
+        </TabsContent>
         {master && (
           <TabsContent value="pengaturan" className="mt-6">
             <PengaturanTab />
