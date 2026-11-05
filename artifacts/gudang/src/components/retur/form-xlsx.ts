@@ -73,6 +73,29 @@ function finalItems(unit: ReturUnitDetail): Map<string, ReturItemCek> {
   return m;
 }
 
+// Levenshtein sederhana utk pencocokan longgar label (typo pada template definisi).
+function editDistance(a: string, b: string): number {
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+// Label baris definisi ≈ label item checklist: sama persis, salah satu prefix (definisi
+// sering diberi catatan "(...)" ), atau beda ringan (typo) utk label panjang.
+function labelsClose(rowLabel: string, itemKey: string): boolean {
+  const a = norm(rowLabel);
+  if (a === itemKey) return true;
+  const strip = norm(rowLabel.replace(/\([^)]*\)/g, " "));
+  if (strip && (strip === itemKey || (strip.length > 10 && itemKey.startsWith(strip)))) return true;
+  if (a.length > 10 && itemKey.length > 10 && (a.startsWith(itemKey) || itemKey.startsWith(a))) return true;
+  return Math.min(a.length, itemKey.length) >= 12 && editDistance(a, itemKey) <= 2;
+}
+
 function sheetName(label: string, idx: number): string {
   const clean = (label || `Unit ${idx + 1}`).replace(/[[\]:*?/\\']/g, " ").slice(0, 28);
   return clean || `Unit ${idx + 1}`;
@@ -190,8 +213,13 @@ function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: Retur
 
     let autoIdx = 1;
     for (const row of defRowsBySection.get(sec.kode) ?? []) {
-      const item = items.get(norm(row.label));
-      if (item) matched.add(norm(row.label));
+      let item = items.get(norm(row.label));
+      if (!item) {
+        for (const [key, cand] of items) {
+          if (!matched.has(key) && labelsClose(row.label, key)) { item = cand; break; }
+        }
+      }
+      if (item) matched.add(norm(item.itemLabel));
       const hasil = item?.hasil ?? "";
       const indent = " ".repeat((row.level ?? 0) * 3);
       cell("B", row.no || "", { border: true, align: { horizontal: "center", vertical: "top" } });
@@ -239,8 +267,11 @@ function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: Retur
       matched.add(key);
       cell("B", autoNo(defRowsBySection.get(sec.kode)!.length + autoIdx++), { border: true, align: { horizontal: "center" } });
       cell("C", item.itemLabel, { border: true, align: { wrapText: true } });
-      cell("D", hasilSide(item.hasil, {} as FormRowDef, sec) === "L" ? "✓" : "", { border: true, align: { horizontal: "center" } });
-      cell("E", hasilSide(item.hasil, {} as FormRowDef, sec) === "R" ? "✗" : "", { border: true, align: { horizontal: "center" } });
+      const side = hasilSide(item.hasil, {} as FormRowDef, sec);
+      // hasil bukan kutub kolom L/R (mis. angka/teks data: daya, tahun, berat): tampilkan nilainya apa adanya.
+      const dOut = side === "L" ? "✓" : side === "R" ? "" : (item.hasil || "");
+      cell("D", dOut, { border: true, align: { horizontal: "center", wrapText: true, vertical: "top" } });
+      cell("E", side === "R" ? "✗" : "", { border: true, align: { horizontal: "center" } });
       cell("F", "", { border: true });
       cell("G", "", { border: true, align: { horizontal: "center" } });
       cell("H", item.catatan ?? "", { border: true, align: { wrapText: true } });
