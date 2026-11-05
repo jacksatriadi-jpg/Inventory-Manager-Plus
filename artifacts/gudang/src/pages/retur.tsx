@@ -11,7 +11,8 @@ import { useLocation, useSearch } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ClipboardCheck, History, PackageX, Settings, ShieldCheck } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { BookOpen, ClipboardCheck, History, PackageX, Settings, ShieldCheck } from "lucide-react";
 import { isReturGudang, isReturUser } from "@/components/retur/shared";
 import { BuatTab } from "@/components/retur/buat-tab";
 import { VerifikasiTab } from "@/components/retur/verifikasi-tab";
@@ -78,6 +79,14 @@ export default function Retur() {
           <h2 className="text-3xl font-bold tracking-tight">Material Retur</h2>
           <p className="text-muted-foreground mt-1">Dokumen TUG10 + pemeriksaan dua tahap: pengawas lalu verifikasi gudang.</p>
         </div>
+        {/* Panduan penggunaan (PDF statis, ikut ter-bundling dari public/) — utk semua pengguna retur */}
+        <Button
+          variant="outline"
+          className="ml-auto shrink-0"
+          onClick={() => window.open("/panduan-retur-material.pdf", "_blank", "noopener")}
+        >
+          <BookOpen className="w-4 h-4 mr-2" /> Panduan
+        </Button>
       </div>
 
       <Tabs value={tab} onValueChange={(t) => setLocation(`/retur?tab=${t}`)} className="w-full">
