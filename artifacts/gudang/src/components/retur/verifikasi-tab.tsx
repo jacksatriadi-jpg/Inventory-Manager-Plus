@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Camera, ImageOff, Loader2, PackageX, Paperclip } from "lucide-react";
+import { ArrowLeft, Camera, ImageOff, ImagePlus, Loader2, PackageX, Paperclip } from "lucide-react";
 import { DriveImg } from "./drive-img";
 import {
   hasilBadgeClass, hasilDisplay, DEFAULT_RESULT_OPTIONS, ReturDetail, ReturDokumen, ReturItemCek, ReturTemplateItem,
@@ -45,6 +45,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
   const [kesimpulanByUnit, setKesimpulanByUnit] = useState<Record<number, FormKeputusan | null>>({});
 
   const itemFileRef = useRef<HTMLInputElement>(null);
+  const itemGalleryRef = useRef<HTMLInputElement>(null); // foto dari galeri device
   const photoTarget = useRef<{ unitId: number; label: string } | null>(null);
 
   // Komponen tanpa entri config (dokumen lama/preset) = opsi bawaan + foto wajib.
@@ -396,6 +397,10 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                                   onClick={() => { photoTarget.current = { unitId: u.id, label }; itemFileRef.current?.click(); }}>
                                   <Camera className="h-3.5 w-3.5 mr-1" /> {f.foto ? "Ganti" : "Foto"}
                                 </Button>
+                                <Button size="sm" variant="outline"
+                                  onClick={() => { photoTarget.current = { unitId: u.id, label }; itemGalleryRef.current?.click(); }}>
+                                  <ImagePlus className="h-3.5 w-3.5 mr-1" /> Galeri
+                                </Button>
                                 {f.foto && <img src={f.foto} alt={`Foto gudang: ${label}`} className="h-10 w-10 rounded border object-cover" />}
                               </div>
                             </TableCell>
@@ -426,6 +431,8 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
         </div>
 
         <input ref={itemFileRef} type="file" accept="image/*" capture="environment" className="hidden"
+          onChange={(e) => { handleItemFile(e.target.files?.[0] ?? null); e.target.value = ""; }} />
+        <input ref={itemGalleryRef} type="file" accept="image/*" className="hidden"
           onChange={(e) => { handleItemFile(e.target.files?.[0] ?? null); e.target.value = ""; }} />
       </div>
     );

@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Camera, FileText, ImageOff, Loader2, PackageX, Paperclip, Plus, Trash2, Building2 } from "lucide-react";
+import { Camera, FileText, ImageOff, ImagePlus, Loader2, PackageX, Paperclip, Plus, Trash2, Building2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { DEFAULT_RESULT_OPTIONS, FormDefinition, ReturTemplateItem, readFileCompressed, returApi } from "./shared";
 import { MaterialPicker } from "./material-picker";
@@ -54,6 +54,8 @@ export function BuatTab() {
 
   const tug10InputRef = useRef<HTMLInputElement>(null);
   const itemFileRef = useRef<HTMLInputElement>(null);
+  const itemGalleryRef = useRef<HTMLInputElement>(null); // ambil foto dari galeri device (tanpa capture)
+  const tug10GalleryRef = useRef<HTMLInputElement>(null);
   const photoTarget = useRef<{ unit: number; item: number } | null>(null);
 
   useEffect(() => {
@@ -209,9 +211,14 @@ export function BuatTab() {
           <CardContent className="space-y-3">
             <input ref={tug10InputRef} type="file" accept="image/*" capture="environment" className="hidden"
               onChange={(e) => { handleTug10File(e.target.files?.[0] ?? null); e.target.value = ""; }} />
+            <input ref={tug10GalleryRef} type="file" accept="image/*" className="hidden"
+              onChange={(e) => { handleTug10File(e.target.files?.[0] ?? null); e.target.value = ""; }} />
             <div className="flex items-center gap-3">
               <Button variant="outline" size="sm" onClick={() => tug10InputRef.current?.click()}>
-                <Camera className="h-4 w-4 mr-2" /> {tug10 ? "Ganti foto TUG10" : "Ambil / pilih foto TUG10"}
+                <Camera className="h-4 w-4 mr-2" /> {tug10 ? "Ganti foto TUG10" : "Ambil foto TUG10"}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => tug10GalleryRef.current?.click()}>
+                <ImagePlus className="h-4 w-4 mr-2" /> Galeri
               </Button>
               {tug10 && (
                 <Button variant="ghost" size="sm" onClick={() => setTug10("")}>
@@ -345,6 +352,10 @@ export function BuatTab() {
                         onClick={() => { photoTarget.current = { unit: ui, item: ii }; itemFileRef.current?.click(); }}>
                         <Camera className="h-3.5 w-3.5 mr-1" /> {it.foto ? "Ganti" : "Foto"}
                       </Button>
+                      <Button size="sm" variant="outline"
+                        onClick={() => { photoTarget.current = { unit: ui, item: ii }; itemGalleryRef.current?.click(); }}>
+                        <ImagePlus className="h-3.5 w-3.5 mr-1" /> Galeri
+                      </Button>
                       {it.foto && <img src={it.foto} alt={`Foto ${it.label}`} className="h-10 w-10 rounded border object-cover" />}
                     </div>
                   </div>
@@ -365,6 +376,8 @@ export function BuatTab() {
       </div>
 
       <input ref={itemFileRef} type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={(e) => { handleItemFile(e.target.files?.[0] ?? null); e.target.value = ""; }} />
+      <input ref={itemGalleryRef} type="file" accept="image/*" className="hidden"
         onChange={(e) => { handleItemFile(e.target.files?.[0] ?? null); e.target.value = ""; }} />
     </div>
   );
