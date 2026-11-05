@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ArrowLeft, Camera, ImageOff, Loader2, PackageX } from "lucide-react";
+import { ArrowLeft, Camera, ImageOff, Loader2, PackageX, Paperclip } from "lucide-react";
 import { DriveImg } from "./drive-img";
 import {
   hasilBadgeClass, hasilDisplay, DEFAULT_RESULT_OPTIONS, ReturDetail, ReturDokumen, ReturItemCek, ReturTemplateItem,
@@ -229,11 +229,22 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
             </Button>
             <h3 className="text-lg font-bold">Retur #{detail.id} — {detail.materialName}</h3>
             <Badge variant="secondary" className="capitalize">{detail.status === "checked_supervisor" ? "Menunggu verifikasi" : detail.status}</Badge>
+            {detail.jumlahUnit && detail.jumlahUnit > detail.units.length && (
+              <Badge className="bg-sky-100 text-sky-800">Sampling: {detail.units.length} unit contoh untuk {detail.jumlahUnit} unit</Badge>
+            )}
           </div>
           <Button variant="outline" size="sm" onClick={() => setShowTug10((v) => !v)}>
             {showTug10 ? "Sembunyikan" : "Tampilkan"} foto TUG10
           </Button>
         </div>
+        {detail.lampiran && detail.lampiran.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted-foreground inline-flex items-center gap-1"><Paperclip className="h-4 w-4" /> Lampiran ({detail.lampiran.length}):</span>
+            {detail.lampiran.map((l) => (
+              <a key={l.fileId} href={l.webViewLink} target="_blank" rel="noreferrer" className="underline text-primary truncate max-w-60">{l.name}</a>
+            ))}
+          </div>
+        )}
 
         <div className="text-xs text-muted-foreground grid gap-1 sm:grid-cols-2">
           <span>Pengawas: <b className="text-foreground">{detail.pengawasName ?? "-"}</b></span>

@@ -10,11 +10,15 @@ export interface ReturTemplateItem {
   fotoWajibGudang: boolean;
 }
 
+export interface LampiranFile { name: string; fileId: string; webViewLink: string }
+
 export interface ReturDokumen {
   id: number;
   materialId: number;
   materialName: string;
   status: "checked_supervisor" | "completed";
+  jumlahUnit: number | null; // mode sampling: total unit deklaratif; unit terisi = sampel
+  lampiran: LampiranFile[]; // dokumen lampiran (hanya terisi utk material sampling)
   tug10FileId: string;
   tug10Link: string | null;
   catatan: string | null;

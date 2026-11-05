@@ -1,4 +1,4 @@
-import { pgTable, text, serial, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, boolean, timestamp } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -9,6 +9,7 @@ export const materialsTable = pgTable("materials", {
   description: text("description"),
   kategori: text("kategori").notNull().default("scan"),
   formKey: text("form_key"), // kunci template formulir inspeksi retur (retur_form_template.form_key); NULL = tanpa formulir
+  samplingEnabled: boolean("sampling_enabled").notNull().default(false), // mode sampling: input jumlah unit, 1 unit contoh mewakili sisanya
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

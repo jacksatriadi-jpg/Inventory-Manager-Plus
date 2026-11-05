@@ -38,6 +38,7 @@ function FormAssignPanel() {
   const [forms, setForms] = useState<{ formKey: string; name: string }[]>([]);
   const [materialId, setMaterialId] = useState("");
   const [current, setCurrent] = useState("none");
+  const [sampling, setSampling] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -47,10 +48,10 @@ function FormAssignPanel() {
   }, []);
 
   useEffect(() => {
-    if (!materialId) { setCurrent("none"); return; }
-    returApi<{ formKey: string | null }>(`/form-def/${materialId}`)
-      .then((d) => setCurrent(d.formKey ?? "none"))
-      .catch(() => setCurrent("none"));
+    if (!materialId) { setCurrent("none"); setSampling(false); return; }
+    returApi<{ formKey: string | null; samplingEnabled?: boolean }>(`/form-def/${materialId}`)
+      .then((d) => { setCurrent(d.formKey ?? "none"); setSampling(d.samplingEnabled === true); })
+      .catch(() => { setCurrent("none"); setSampling(false); });
   }, [materialId]);
 
   const save = async () => {
@@ -58,7 +59,11 @@ function FormAssignPanel() {
     setSaving(true);
     try {
       await returApi(`/form-assign/${materialId}`, { method: "PUT", body: JSON.stringify({ formKey: current === "none" ? null : current }) });
-      toast({ title: "Assignment tersimpan", description: current === "none" ? "Material tidak lagi memakai formulir." : "Dokumen material ini kini bisa dicetak dengan formulir terpilih." });
+      await returApi(`/sampling/${materialId}`, { method: "PUT", body: JSON.stringify({ enabled: sampling }) });
+      toast({ title: "Pengaturan tersimpan", description: [
+        current === "none" ? "Material tidak lagi memakai formulir." : "Dokumen material ini kini bisa dicetak dengan formulir terpilih.",
+        sampling ? "Mode sampling AKTIF: pengawas cukup isi 1 unit contoh + jumlah total unit." : "Mode sampling nonaktif: semua unit harus diisi satu-satu.",
+      ].join(" ") });
     } catch (e) {
       toast({ title: "Gagal menyimpan assignment", description: (e as Error).message, variant: "destructive" });
     } finally {
@@ -90,6 +95,13 @@ function FormAssignPanel() {
               {forms.map((f) => <SelectItem key={f.formKey} value={f.formKey}>{f.name}</SelectItem>)}
             </SelectContent>
           </Select>
+        </div>
+        <div className="flex items-start gap-2 max-w-md">
+          <Checkbox id="sampling-toggle" className="mt-1" checked={sampling} onCheckedChange={(v) => setSampling(v === true)} disabled={!materialId} />
+          <Label htmlFor="sampling-toggle" className="text-sm font-normal cursor-pointer">
+            Mode sampling — pengawas cukup mengisi satu unit contoh + jumlah total unit; unit contoh mewakili seluruh unit lainnya.
+            Hanya aktifkan untuk material yang memang diperiksa secara sampling.
+          </Label>
         </div>
         <Button onClick={save} disabled={!materialId || saving}>
           {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} <Save className="h-4 w-4 mr-2" /> Simpan Assignment

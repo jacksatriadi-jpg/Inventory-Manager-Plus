@@ -28,7 +28,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/lib/auth";
-import { CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Pencil, Printer, Search, Trash2 } from "lucide-react";
+import { CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Paperclip, Pencil, Printer, Search, Trash2 } from "lucide-react";
 import { DriveImg } from "./drive-img";
 import { buildFormWorkbook, formFilename } from "./form-xlsx";
 import type { FormDefinition } from "./shared";
@@ -166,6 +166,12 @@ export function RiwayatTab() {
           ["Catatan", detail.catatan ?? "-"],
           ["Catatan Gudang", detail.gudangCatatan ?? "-"],
         ];
+        if (detail.jumlahUnit && detail.jumlahUnit !== detail.units.length) {
+          info.splice(4, 0, ["Jumlah Unit", `${detail.jumlahUnit} unit — diperiksa ${detail.units.length} unit contoh (sampling)`]);
+        }
+        if (detail.lampiran?.length) {
+          info.push(["Lampiran", detail.lampiran.map((l) => l.name).join(", ")]);
+        }
         for (const [k, v] of info) {
           ws.getCell(r, 1).value = k;
           ws.getCell(r, 1).font = { bold: true };
@@ -265,6 +271,12 @@ export function RiwayatTab() {
           ["Pengawas", detail.pengawasName ?? "-"],
           ["Gudang", detail.gudangName ?? "-"],
         ];
+        if (detail.jumlahUnit && detail.jumlahUnit !== detail.units.length) {
+          info.push(["Jumlah Unit", `${detail.jumlahUnit} unit — diperiksa ${detail.units.length} unit contoh (sampling)`]);
+        }
+        if (detail.lampiran?.length) {
+          info.push(["Lampiran", detail.lampiran.map((l) => l.name).join(", ")]);
+        }
         for (const [k, v] of info) {
           ensure(5);
           doc.setFont("helvetica", "bold"); doc.text(`${k}:`, margin, y);
@@ -477,7 +489,16 @@ export function RiwayatTab() {
                   <TableCell>{d.materialName}</TableCell>
                   <TableCell>{d.pengawasName ?? "-"}</TableCell>
                   <TableCell>{d.gudangName ?? "-"}</TableCell>
-                  <TableCell>{d.unitCount}</TableCell>
+                  <TableCell>
+                    {d.jumlahUnit && d.jumlahUnit > d.unitCount ? `${d.jumlahUnit} unit (${d.unitCount} sampel)` : d.unitCount}
+                    {d.lampiran && d.lampiran.length > 0 && (
+                      <a href={d.lampiran[0].webViewLink} target="_blank" rel="noreferrer"
+                        title={d.lampiran.length > 1 ? `${d.lampiran.length} lampiran: ${d.lampiran.map((l) => l.name).join(", ")} (klik membuka yang pertama)` : d.lampiran[0].name}
+                        className="inline-flex items-center gap-1 ml-2 text-muted-foreground hover:text-foreground">
+                        <Paperclip className="h-3.5 w-3.5" />{d.lampiran.length}
+                      </a>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {!gudangView
                       ? (d.status === "completed"

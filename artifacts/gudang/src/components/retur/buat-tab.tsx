@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Camera, FileText, ImageOff, Loader2, PackageX, Plus, Trash2, Building2 } from "lucide-react";
+import { Camera, FileText, ImageOff, Loader2, PackageX, Paperclip, Plus, Trash2, Building2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { DEFAULT_RESULT_OPTIONS, FormDefinition, ReturTemplateItem, isNonScanMaterial, readFileCompressed, returApi } from "./shared";
 import { MaterialPicker } from "./material-picker";
@@ -45,6 +45,10 @@ export function BuatTab() {
   const [cfgByLabel, setCfgByLabel] = useState<Record<string, { options: string[] | null; tipeInput: "opsi" | "teks"; fotoWajib: boolean }>>({});
   const [units, setUnits] = useState<UnitForm[]>([]);
   const [formDef, setFormDef] = useState<FormDefinition | null>(null);
+  const [samplingMode, setSamplingMode] = useState(false);
+  const [jumlahUnit, setJumlahUnit] = useState("");
+  const [lampiranFiles, setLampiranFiles] = useState<{ name: string; dataUrl: string }[]>([]);
+  const lampiranInputRef = useRef<HTMLInputElement>(null);
   const [templateLoading, setTemplateLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -79,17 +83,35 @@ export function BuatTab() {
 
   // Template formulir inspeksi (Cetak Formulir) — null bila material belum di-assign master.
   useEffect(() => {
-    if (!materialId) { setFormDef(null); return; }
+    if (!materialId) { setFormDef(null); setSamplingMode(false); setJumlahUnit(""); setLampiranFiles([]); return; }
     let alive = true;
-    returApi<{ formKey: string | null; definition: FormDefinition | null }>(`/form-def/${materialId}`)
-      .then((d) => { if (alive) setFormDef(d.formKey ? d.definition : null); })
-      .catch(() => { if (alive) setFormDef(null); });
+    returApi<{ formKey: string | null; definition: FormDefinition | null; samplingEnabled?: boolean }>(`/form-def/${materialId}`)
+      .then((d) => {
+        if (!alive) return;
+        setFormDef(d.formKey ? d.definition : null);
+        setSamplingMode(d.samplingEnabled === true);
+        setJumlahUnit(""); setLampiranFiles([]);
+      })
+      .catch(() => { if (alive) { setFormDef(null); setSamplingMode(false); } });
     return () => { alive = false; };
   }, [materialId]);
 
   // Komponen tanpa entri config (mis. preset) = opsi bawaan + foto wajib.
   const cfgFor = (label: string) => cfgByLabel[label] ?? { options: null as string[] | null, tipeInput: "opsi" as const, fotoWajib: true };
   const optionsFor = (label: string) => cfgFor(label).options ?? DEFAULT_RESULT_OPTIONS;
+
+  const pickLampiran = (files: FileList | null) => {
+    if (!files) return;
+    for (const f of Array.from(files)) {
+      const okType = f.type === "application/pdf" || f.type.startsWith("image/");
+      if (!okType) { toast({ title: `Lampiran "${f.name}": hanya gambar atau PDF`, variant: "destructive" }); continue; }
+      if (f.size > 8 * 1024 * 1024) { toast({ title: `Lampiran "${f.name}": maksimal 8 MB`, variant: "destructive" }); continue; }
+      if (lampiranFiles.length >= 10) { toast({ title: "Maksimal 10 dokumen lampiran", variant: "destructive" }); return; }
+      const reader = new FileReader();
+      reader.onload = () => setLampiranFiles((prev) => [...prev, { name: f.name, dataUrl: String(reader.result) }]);
+      reader.readAsDataURL(f);
+    }
+  };
 
   const setFormValue = (unitIdx: number, key: string, value: string) => {
     setUnits((prev) => prev.map((u, ui) => ui !== unitIdx ? u : { ...u, formData: { ...u.formData, [key]: value } }));
@@ -134,6 +156,9 @@ export function BuatTab() {
       toast({ title: "Item wajib foto belum difoto", description: tanpaFoto.join("; "), variant: "destructive" });
       return;
     }
+    if (samplingMode && jumlahUnit.trim() !== "" && (!/^\d+$/.test(jumlahUnit.trim()) || Number(jumlahUnit) < 1)) {
+      toast({ title: "Jumlah unit tidak valid", description: "Isi bilangan bulat >= 1.", variant: "destructive" }); return;
+    }
     setSaving(true);
     try {
       await returApi("", {
@@ -142,6 +167,8 @@ export function BuatTab() {
           materialId: Number(materialId),
           tug10Photo: tug10,
           catatan: catatan.trim(),
+          ...(samplingMode && /^\d+$/.test(jumlahUnit.trim()) ? { jumlahUnit: Number(jumlahUnit.trim()) } : {}),
+          ...(samplingMode && lampiranFiles.length > 0 ? { lampiran: lampiranFiles } : {}),
           units: units.map((u) => ({
             label: u.label,
             items: u.items
@@ -153,6 +180,7 @@ export function BuatTab() {
       });
       toast({ title: "Dokumen retur tersimpan", description: "Status: sudah dicek pengawas, menunggu verifikasi gudang. Formulir bisa dicetak dari tab Riwayat — pilih dokumen, klik Cetak Formulir." });
       setTug10(""); setMaterialId(""); setCatatan(""); setLabels([]); setUnits([]);
+      setJumlahUnit(""); setLampiranFiles([]); setSamplingMode(false);
     } catch (e) {
       toast({ title: "Gagal menyimpan dokumen", description: (e as Error).message, variant: "destructive" });
     } finally {
@@ -219,6 +247,40 @@ export function BuatTab() {
           </CardContent>
         </Card>
       </div>
+
+      {samplingMode && (
+        <Card>
+          <CardHeader className="py-3">
+            <CardTitle className="text-base">Mode Sampling — 1 unit contoh untuk semua unit</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="space-y-1">
+                <Label className="text-sm font-medium">Jumlah unit seluruhnya</Label>
+                <Input type="number" min={1} className="h-9 w-40" value={jumlahUnit} onChange={(e) => setJumlahUnit(e.target.value)} placeholder="mis. 25" />
+              </div>
+              <p className="text-xs text-muted-foreground max-w-md">Cukup periksa <b>satu unit contoh</b> di bawah — unit contoh ini mewakili seluruh unit lainnya sejumlah di atas.</p>
+            </div>
+            <div className="space-y-2">
+              <Button variant="outline" size="sm" onClick={() => lampiranInputRef.current?.click()}>
+                <Paperclip className="h-4 w-4 mr-2" /> Unggah Dokumen Lampiran
+              </Button>
+              <input ref={lampiranInputRef} type="file" accept="image/*,application/pdf" multiple className="hidden" onChange={(e) => { pickLampiran(e.target.files); e.target.value = ""; }} />
+              {lampiranFiles.length > 0 && (
+                <div className="space-y-1 max-w-md">
+                  {lampiranFiles.map((f, fi) => (
+                    <div key={fi} className="flex items-center justify-between gap-2 text-sm border rounded-md px-2 py-1">
+                      <span className="truncate">{f.name}</span>
+                      <Button variant="ghost" size="sm" onClick={() => setLampiranFiles((prev) => prev.filter((_, i) => i !== fi))}><Trash2 className="h-4 w-4" /></Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <p className="text-xs text-muted-foreground">Lampiran = dokumen pendukung (foto/PDF; maks 8 MB per file, maks 10 file) — tersimpan di folder Google Drive dokumen ini.</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {units.map((unit, ui) => (
         <Card key={ui}>
@@ -295,7 +357,7 @@ export function BuatTab() {
 
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="outline" onClick={addUnit} disabled={!materialId}>
-          <Plus className="h-4 w-4 mr-2" /> Tambah Unit
+          <Plus className="h-4 w-4 mr-2" /> {samplingMode ? "Tambah Unit Contoh" : "Tambah Unit"}
         </Button>
         <Button onClick={save} disabled={saving}>
           {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Simpan Dokumen Retur

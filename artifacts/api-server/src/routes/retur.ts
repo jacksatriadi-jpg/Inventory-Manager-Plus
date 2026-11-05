@@ -222,11 +222,15 @@ function validateCekItems(itemsRaw: unknown, cfg: Map<string, ItemCfg>, stage: "
 
 // ─── Bentuk respons ─────────────────────────────────────────────────────────────
 
+interface LampiranFile { name: string; fileId: string; webViewLink: string }
+
 interface ReturDetail {
   id: number;
   materialId: number;
   materialName: string;
   status: string;
+  jumlahUnit: number | null; // total unit deklaratif dokumen sampling
+  lampiran: LampiranFile[]; // dokumen lampiran (mode sampling) — fileId & link Drive
   tug10FileId: string;
   tug10Link: string | null;
   catatan: string | null;
@@ -273,6 +277,8 @@ interface DocJoinedRow {
   tug10_link: string | null;
   catatan: string | null;
   gudang_catatan: string | null;
+  jumlah_unit: number | null;
+  lampiran: unknown;
   pengawas_id: number;
   pengawas_name: string;
   pengawas_company: string | null;
@@ -308,7 +314,7 @@ interface ItemCekRow {
 
 async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> {
   const docRes = await pool.query(
-    `SELECT d.id, d.material_id, m.name AS material_name, m.form_key, d.status,
+    `SELECT d.id, d.material_id, m.name AS material_name, m.form_key, d.status, d.jumlah_unit, d.lampiran,
             d.tug10_file_id, d.tug10_link, d.catatan, d.gudang_catatan,
             d.pengawas_id, p.username AS pengawas_name, p.company_name AS pengawas_company,
             d.gudang_id, g.username AS gudang_name, g.company_name AS gudang_company,
@@ -363,6 +369,8 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
     materialId: d.material_id,
     materialName: d.material_name,
     status: d.status,
+    jumlahUnit: d.jumlah_unit ?? null,
+    lampiran: Array.isArray(d.lampiran) ? (d.lampiran as LampiranFile[]) : [],
     tug10FileId: d.tug10_file_id,
     tug10Link: d.tug10_link,
     catatan: d.catatan,
@@ -634,7 +642,12 @@ router.get("/retur/form-def/:materialId", async (req, res): Promise<void> => {
   const materialId = Number(req.params.materialId);
   if (!Number.isInteger(materialId)) { res.status(400).json({ error: "materialId tidak valid" }); return; }
   const tpl = await getFormTemplate(materialId);
-  res.json({ formKey: tpl?.formKey ?? null, definition: tpl?.definition ?? null });
+  const matRow = await pool.query("SELECT sampling_enabled FROM materials WHERE id = $1", [materialId]);
+  res.json({
+    formKey: tpl?.formKey ?? null,
+    definition: tpl?.definition ?? null,
+    samplingEnabled: (matRow.rows[0] as { sampling_enabled?: boolean } | undefined)?.sampling_enabled === true,
+  });
 });
 
 // ─── PUT /api/retur/form-assign/:materialId (master) — assign/unassign form_key ──
@@ -652,6 +665,21 @@ router.put("/retur/form-assign/:materialId", async (req, res): Promise<void> => 
   const upd = await pool.query("UPDATE materials SET form_key = $1 WHERE id = $2 RETURNING id", [formKeyRaw ? formKeyRaw : null, materialId]);
   if (upd.rows.length === 0) { res.status(404).json({ error: "Material tidak ditemukan" }); return; }
   res.json({ ok: true, formKey: formKeyRaw || null });
+});
+
+// ─── PUT /api/retur/sampling/:materialId (master) — mode sampling material (input jumlah unit) ──
+router.put("/retur/sampling/:materialId", async (req, res): Promise<void> => {
+  if (!(await requireReturMaster(req, res))) return;
+  const materialId = Number(req.params.materialId);
+  if (!Number.isInteger(materialId)) { res.status(400).json({ error: "materialId tidak valid" }); return; }
+  const body = bodyObject(req);
+  const enabled = body.enabled === true;
+  const upd = await pool.query(
+    "UPDATE materials SET sampling_enabled = $1 WHERE id = $2 RETURNING id",
+    [enabled, materialId],
+  );
+  if (upd.rows.length === 0) { res.status(404).json({ error: "Material tidak ditemukan" }); return; }
+  res.json({ ok: true, samplingEnabled: enabled });
 });
 
 // ─── GET /api/retur/notifications — notifikasi unread milik user ────────────────
@@ -754,15 +782,42 @@ router.post("/retur", async (req, res): Promise<void> => {
   const tug10Photo = body.tug10Photo;
   const catatan = body.catatan;
   const unitsRaw = body.units;
+  const jumlahUnitRaw = body.jumlahUnit;
+  const lampiranRaw = body.lampiran;
 
   if (!Number.isInteger(materialId)) { res.status(400).json({ error: "materialId tidak valid" }); return; }
   if (!isImageDataUrl(tug10Photo)) { res.status(400).json({ error: "Foto TUG10 wajib diunggah (format image)" }); return; }
   if (!Array.isArray(unitsRaw) || unitsRaw.length === 0) { res.status(400).json({ error: "Minimal 1 unit harus diisi" }); return; }
 
-  const mat = await pool.query("SELECT id, name FROM materials WHERE id = $1", [materialId]);
+  const mat = await pool.query("SELECT id, name, sampling_enabled FROM materials WHERE id = $1", [materialId]);
   if (mat.rows.length === 0) { res.status(400).json({ error: "Material tidak ditemukan" }); return; }
-  const matRow = mat.rows[0] as { id: number; name: string }; // kolom sesuai SELECT
+  const matRow = mat.rows[0] as { id: number; name: string; sampling_enabled: boolean }; // kolom sesuai SELECT
   const materialName = matRow.name;
+
+  // Mode sampling: total unit deklaratif disimpan di dokumen; unit terisi = sampel perwakilan.
+  let jumlahUnit: number | null = null;
+  if (matRow.sampling_enabled && jumlahUnitRaw !== undefined && jumlahUnitRaw !== null) {
+    if (!Number.isInteger(jumlahUnitRaw) || (jumlahUnitRaw as number) < 1) {
+      res.status(400).json({ error: "Jumlah unit harus bilangan bulat >= 1" }); return;
+    }
+    jumlahUnit = jumlahUnitRaw as number;
+  }
+  // Lampiran (hanya mode sampling): gambar/PDF <=8MB, maks 10 file — diunggah ke folder dokumen di Drive.
+  type LampiranInput = { name: string; dataUrl: string };
+  const lampiranInputs: LampiranInput[] = [];
+  if (matRow.sampling_enabled && Array.isArray(lampiranRaw)) {
+    if (lampiranRaw.length > 10) { res.status(400).json({ error: "Maksimal 10 dokumen lampiran" }); return; }
+    for (const lfRaw of lampiranRaw) {
+      const lf = lfRaw as Record<string, unknown>;
+      const dataUrl = typeof lf.dataUrl === "string" ? lf.dataUrl : "";
+      const name = typeof lf.name === "string" && lf.name.trim() ? lf.name.trim().slice(0, 120) : "lampiran";
+      if (!/^data:(image\/[a-z0-9.+-]+|application\/pdf);base64,/i.test(dataUrl)) {
+        res.status(400).json({ error: `Lampiran "${name}": hanya gambar atau PDF` }); return;
+      }
+      if (dataUrl.length > 11_000_000) { res.status(400).json({ error: `Lampiran "${name}": maksimal ±8 MB` }); return; }
+      lampiranInputs.push({ name, dataUrl });
+    }
+  }
 
   const cfg = await getTemplateConfig(materialId as number); // sudah lolos guard Number.isInteger
   const formTpl = await getFormTemplate(materialId as number); // null = material tanpa template formulir
@@ -801,6 +856,7 @@ router.post("/retur", async (req, res): Promise<void> => {
   const stamp = Date.now();
   let docFolderId = "";
   let tug10File: DriveFile;
+  let lampiranFiles: LampiranFile[] = [];
   const unitFiles: (DriveFile | null)[][] = [];
   const unitFolderIds: string[] = [];
   try {
@@ -810,6 +866,11 @@ router.post("/retur", async (req, res): Promise<void> => {
       root,
     );
     tug10File = await uploadReturDataUrl(tug10Photo, `TUG10.${extFromDataUrl(tug10Photo)}`, docFolderId);
+    lampiranFiles = await Promise.all(lampiranInputs.map(async (lf, li) => {
+      const ext = lf.dataUrl.startsWith("data:application/pdf") ? "pdf" : extFromDataUrl(lf.dataUrl);
+      const up = await uploadReturDataUrl(lf.dataUrl, `Lampiran-${li + 1}-${sanitizeFolderName(lf.name)}.${ext}`, docFolderId);
+      return { name: lf.name, fileId: up.fileId, webViewLink: up.webViewLink };
+    }));
     for (let ui = 0; ui < units.length; ui++) {
       const unitFolder = await ensureChildFolder(
         `Unit ${ui + 1} - ${sanitizeFolderName(units[ui].label)}`,
@@ -837,8 +898,8 @@ router.post("/retur", async (req, res): Promise<void> => {
   try {
     await client.query("BEGIN");
     const docRes = await client.query(
-      `INSERT INTO retur_dokumen (material_id, tug10_file_id, tug10_link, folder_file_id, catatan, pengawas_id)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      `INSERT INTO retur_dokumen (material_id, tug10_file_id, tug10_link, folder_file_id, catatan, pengawas_id, jumlah_unit, lampiran)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) RETURNING id`,
       [
         materialId,
         tug10File.fileId,
@@ -846,6 +907,8 @@ router.post("/retur", async (req, res): Promise<void> => {
         docFolderId,
         typeof catatan === "string" && catatan.trim() ? catatan.trim() : null,
         actor.id,
+        jumlahUnit,
+        JSON.stringify(lampiranFiles),
       ],
     );
     const docRow = docRes.rows[0] as { id: number }; // RETURNING id
@@ -912,7 +975,7 @@ router.get("/retur", async (req, res): Promise<void> => {
   if (keputusanF) { args.push(keputusanF); conds.push(`EXISTS (SELECT 1 FROM retur_unit fu WHERE fu.dokumen_id = d.id AND fu.keputusan = $${args.length})`); }
 
   const result = await pool.query(
-    `SELECT d.id, d.material_id, m.name AS material_name, d.status,
+    `SELECT d.id, d.material_id, m.name AS material_name, d.status, d.jumlah_unit, d.lampiran,
             d.tug10_file_id, d.tug10_link, d.catatan, d.gudang_catatan,
             d.pengawas_id, p.username AS pengawas_name,
             d.gudang_id, g.username AS gudang_name,
@@ -935,6 +998,8 @@ router.get("/retur", async (req, res): Promise<void> => {
       materialId: d.material_id,
       materialName: d.material_name,
       status: d.status,
+      jumlahUnit: d.jumlah_unit ?? null,
+      lampiran: Array.isArray(d.lampiran) ? (d.lampiran as LampiranFile[]) : [],
       tug10FileId: d.tug10_file_id,
       tug10Link: d.tug10_link,
       catatan: d.catatan,

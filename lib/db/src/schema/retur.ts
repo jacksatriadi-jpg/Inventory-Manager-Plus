@@ -17,6 +17,8 @@ export const returDokumenTable = pgTable("retur_dokumen", {
   gudangCatatan: text("gudang_catatan"),
   pengawasId: integer("pengawas_id").notNull().references(() => usersTable.id),
   gudangId: integer("gudang_id").references(() => usersTable.id),
+  jumlahUnit: integer("jumlah_unit"), // total unit deklaratif dokumen sampling; NULL = sesuai jumlah unit terisi
+  lampiran: jsonb("lampiran"), // dokumen lampiran sampling: [{name,fileId,webViewLink}]
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
   completedAt: timestamp("completed_at", { withTimezone: true }),

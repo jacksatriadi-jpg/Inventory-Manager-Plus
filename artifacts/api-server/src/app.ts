@@ -307,6 +307,12 @@ async function setupDatabase() {
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS company_name TEXT;`);
     // form_key pada materials: assignment material -> template formulir (retur_form_template.form_key).
     await pool.query(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS form_key TEXT;`);
+    // sampling_enabled: material boleh memakai mode sampling (input jumlah unit; 1 unit contoh mewakili semua unit).
+    await pool.query(`ALTER TABLE materials ADD COLUMN IF NOT EXISTS sampling_enabled BOOLEAN NOT NULL DEFAULT false;`);
+    // jumlah_unit: total unit deklaratif dokumen sampling (NULL = sesuai jumlah unit yang diisi).
+    await pool.query(`ALTER TABLE retur_dokumen ADD COLUMN IF NOT EXISTS jumlah_unit INTEGER;`);
+    // lampiran: daftar {name,fileId,webViewLink} dokumen pendukung dokumen sampling (diunggah ke Drive).
+    await pool.query(`ALTER TABLE retur_dokumen ADD COLUMN IF NOT EXISTS lampiran JSONB NOT NULL DEFAULT '[]'::jsonb;`);
     // form_data: isian "A. DATA MATERIAL" per unit (pengawas); form_keputusan: K6/K7/K8 per unit (gudang).
     await pool.query(`
       ALTER TABLE retur_unit ADD COLUMN IF NOT EXISTS form_data JSONB;
