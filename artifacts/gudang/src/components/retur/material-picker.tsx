@@ -23,10 +23,12 @@ export function MaterialPicker({
   materials,
   value,
   onChange,
+  invalid,
 }: {
   materials: MaterialOption[] | undefined;
   value: string;
   onChange: (id: string) => void;
+  invalid?: boolean; // tampil bertanda wajib (mis. material belum dipilih)
 }) {
   const [open, setOpen] = useState(false);
   const list = materials ?? [];
@@ -39,7 +41,7 @@ export function MaterialPicker({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          className="w-full justify-between font-normal"
+          className={cn("w-full justify-between font-normal", invalid && !selected && "border-destructive text-destructive")}
         >
           {selected ? (
             <span className="truncate text-left">

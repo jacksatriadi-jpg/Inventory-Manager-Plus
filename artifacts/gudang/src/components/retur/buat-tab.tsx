@@ -243,8 +243,9 @@ export function BuatTab() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label>Material</Label>
-              <MaterialPicker materials={materials} value={materialId} onChange={setMaterialId} />
+              <Label>Material <span className="text-red-600">*</span></Label>
+              <MaterialPicker materials={materials} value={materialId} onChange={setMaterialId} invalid={!materialId} />
+              {!materialId && <p className="text-xs text-destructive">Wajib dipilih sebelum dokumen dapat disimpan.</p>}
               {templateLoading && <p className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Memuat template pemeriksaan...</p>}
             </div>
             <div className="space-y-2">
