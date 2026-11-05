@@ -1139,6 +1139,18 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   const docUnitIds = new Set<number>(docUnits.map((u) => u.id));
 
   const cfg = await getTemplateConfig(docRow.material_id);
+  // Peta: unit -> label item yang punya foto dari tahap pengawas (dasar aturan "ikuti pengawas").
+  const pwFotoRes = await pool.query(
+    `SELECT unit_id, item_label FROM retur_item_cek
+     WHERE stage = 'pengawas' AND foto_file_id IS NOT NULL AND unit_id = ANY($1::int[])`,
+    [Array.from(docUnitIds)],
+  );
+  const pwFotoByUnit = new Map<number, Set<string>>();
+  for (const row of pwFotoRes.rows as { unit_id: number; item_label: string }[]) {
+    if (!pwFotoByUnit.has(row.unit_id)) pwFotoByUnit.set(row.unit_id, new Set());
+    pwFotoByUnit.get(row.unit_id)!.add(row.item_label);
+  }
+
   const formTpl = await getFormTemplate(docRow.material_id);
   const kesimpulanOpts = formTpl && Array.isArray((formTpl.definition.kesimpulan as Record<string, unknown> | undefined)?.options)
     ? ((formTpl.definition.kesimpulan as { options: { code: string; label?: string }[] }).options)
@@ -1165,7 +1177,15 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
       res.status(400).json({ error: `Unit "${docUnits.find((du) => du.id === unitId)?.label}" wajib diputuskan: pilih "Layak Pakai (Standby)" atau "Tidak Layak Pakai (Usul Hapus)"` });
       return;
     }
-    const v = validateCekItems(u.items, cfg, "gudang");
+    // Wajib foto gudang MENGIKUTI pengawas: hanya item yang difoto pengawas pada unit ini
+    // yang menuntut foto gudang; flag template tetap harus on juga (AND).
+    const unitCfg = new Map(cfg);
+    for (const [label, c] of unitCfg) {
+      if (c.fotoWajibGudang && !(pwFotoByUnit.get(unitId)?.has(label))) {
+        unitCfg.set(label, { ...c, fotoWajibGudang: false });
+      }
+    }
+    const v = validateCekItems(u.items, unitCfg, "gudang");
     if (!v.ok) { res.status(400).json({ error: `SN "${sn}": ${v.error}` }); return; }
     // Kesimpulan formulir: wajib bila material punya template form dgn opsi kesimpulan.
     let formKeputusan: VerifyUnit["formKeputusan"] = null;

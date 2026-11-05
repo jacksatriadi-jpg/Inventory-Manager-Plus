@@ -168,10 +168,12 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
         return;
       }
     }
+    // Wajib foto gudang mengikuti pengawas: hanya item yang difoto pengawas yang menuntut foto gudang.
     const tanpaFoto: string[] = [];
     for (const u of detail.units) {
+      const pwFotoLabels = new Set(u.items.filter((it) => it.stage === "pengawas" && it.fotoFileId).map((it) => it.itemLabel));
       for (const [label, f] of Object.entries(itemForms[u.id] ?? {})) {
-        if (f.hasil && !f.foto && cfgFor(label).fotoWajib) tanpaFoto.push(`${u.label} — ${label}`);
+        if (f.hasil && !f.foto && cfgFor(label).fotoWajib && pwFotoLabels.has(label)) tanpaFoto.push(`${u.label} — ${label}`);
       }
     }
     if (tanpaFoto.length > 0) {
@@ -328,7 +330,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                   <p className="text-sm text-muted-foreground">Unit ini tanpa item pemeriksaan.</p>
                 ) : (
                   <>
-                  <p className="text-xs text-muted-foreground mb-2">Komponen bertanda <span className="text-red-600 font-bold">*</span> wajib difoto (verifikasi ditolak bila hasil diisi tanpa foto). Hasil &amp; catatan gudang terisi otomatis mengikuti cek pengawas — ubah seperlunya bila hasil gudang berbeda.</p>
+                  <p className="text-xs text-muted-foreground mb-2">Komponen bertanda <span className="text-red-600 font-bold">*</span> wajib difoto — aturannya mengikuti pengawas: hanya komponen yang difoto pengawas yang menuntut foto gudang (verifikasi ditolak bila hasil diisi tanpa foto). Hasil &amp; catatan gudang terisi otomatis mengikuti cek pengawas — ubah seperlunya bila hasil gudang berbeda.</p>
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -344,12 +346,13 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                       {labels.map((label) => {
                         const pw = pengawasOf(label);
                         const f = itemForms[u.id]?.[label] ?? emptyForm;
+                        const fotoWajibEfektif = cfgFor(label).fotoWajib && !!pw?.fotoFileId;
                         return (
                           <TableRow key={label}>
                             <TableCell className="text-sm max-w-[220px]">
                               {label}
-                              {cfgFor(label).fotoWajib && (
-                                <span className="text-red-600 font-bold ml-1" title="Foto komponen ini wajib">*</span>
+                              {fotoWajibEfektif && (
+                                <span className="text-red-600 font-bold ml-1" title="Foto wajib — pengawas memfoto komponen ini">*</span>
                               )}
                             </TableCell>
                             <TableCell>
@@ -389,7 +392,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                             </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2">
-                                <Button size="sm" variant={f.hasil && !f.foto && cfgFor(label).fotoWajib ? "destructive" : "outline"}
+                                <Button size="sm" variant={f.hasil && !f.foto && fotoWajibEfektif ? "destructive" : "outline"}
                                   onClick={() => { photoTarget.current = { unitId: u.id, label }; itemFileRef.current?.click(); }}>
                                   <Camera className="h-3.5 w-3.5 mr-1" /> {f.foto ? "Ganti" : "Foto"}
                                 </Button>
