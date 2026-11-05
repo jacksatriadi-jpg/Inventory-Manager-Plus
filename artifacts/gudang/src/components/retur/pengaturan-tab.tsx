@@ -13,7 +13,7 @@ import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CloudUpload, Copy, FileT
 import { Checkbox } from "@/components/ui/checkbox";
 import { MaterialPicker } from "./material-picker";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DEFAULT_RESULT_OPTIONS, ReturTemplateItem, isNonScanMaterial, returApi } from "./shared";
+import { DEFAULT_RESULT_OPTIONS, ReturTemplateItem, returApi } from "./shared";
 
 interface DriveStatus {
   connected: boolean;
@@ -76,15 +76,15 @@ function FormAssignPanel() {
       <CardHeader>
         <CardTitle className="text-base flex items-center gap-2"><FileText className="h-4 w-4" /> Template Formulir Inspeksi (Cetak Formulir)</CardTitle>
         <CardDescription>
-          Pasangkan material non-scan dengan formulir inspeksi 01-A..01-O. Setelah di-assign: pengawas mengisi
+          Pasangkan material mana pun dengan formulir inspeksi 01-A..01-O. Setelah di-assign: pengawas mengisi
           &quot;Data Material&quot; saat membuat dokumen, gudang memilih kesimpulan K6/K7/K8 saat verifikasi,
           dan Riwayat dapat mencetak formulir identik contoh.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2 max-w-md">
-          <Label>Material (non-scan)</Label>
-          <MaterialPicker materials={materials?.filter(isNonScanMaterial)} value={materialId} onChange={setMaterialId} />
+          <Label>Material</Label>
+          <MaterialPicker materials={materials} value={materialId} onChange={setMaterialId} />
         </div>
         <div className="space-y-2 max-w-md">
           <Label>Formulir inspeksi</Label>
@@ -320,8 +320,8 @@ function TemplateEditor() {
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-2">
-          <Label>Material (non-scan)</Label>
-          <MaterialPicker materials={materials?.filter(isNonScanMaterial)} value={materialId} onChange={setMaterialId} />
+          <Label>Material</Label>
+          <MaterialPicker materials={materials} value={materialId} onChange={setMaterialId} />
         </div>
 
         {isPreset && (
@@ -470,7 +470,6 @@ function TemplateEditor() {
         <Input value={copyQ} onChange={(e) => setCopyQ(e.target.value)} placeholder="Cari nama / kode material..." className="h-8 text-sm" />
         <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
           {(materials ?? [])
-            .filter(isNonScanMaterial)
             .filter((m) => String(m.id) !== materialId)
             .filter((m) => {
               const q = copyQ.trim().toLowerCase();

@@ -1,5 +1,5 @@
 // Tab BUAT: pengawas membuat dokumen retur — foto TUG10 (mandatori, kompresi 1280/0.72),
-// material non-scan, units repeater, ceklist per unit dari template (opsi + wajib foto per komponen).
+// material (daftar penuh, terserah assignment master), units repeater, ceklist per unit dari template.
 import { useEffect, useRef, useState } from "react";
 import { useListMaterials } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Camera, FileText, ImageOff, Loader2, PackageX, Paperclip, Plus, Trash2, Building2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { DEFAULT_RESULT_OPTIONS, FormDefinition, ReturTemplateItem, isNonScanMaterial, readFileCompressed, returApi } from "./shared";
+import { DEFAULT_RESULT_OPTIONS, FormDefinition, ReturTemplateItem, readFileCompressed, returApi } from "./shared";
 import { MaterialPicker } from "./material-picker";
 
 interface ItemForm {
@@ -236,8 +236,8 @@ export function BuatTab() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label>Material (non-scan)</Label>
-              <MaterialPicker materials={materials?.filter(isNonScanMaterial)} value={materialId} onChange={setMaterialId} />
+              <Label>Material</Label>
+              <MaterialPicker materials={materials} value={materialId} onChange={setMaterialId} />
               {templateLoading && <p className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Memuat template pemeriksaan...</p>}
             </div>
             <div className="space-y-2">

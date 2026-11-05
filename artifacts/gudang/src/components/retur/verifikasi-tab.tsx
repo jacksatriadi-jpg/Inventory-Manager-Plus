@@ -72,7 +72,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
       let cfg: Record<string, { options: string[] | null; tipeInput: "opsi" | "teks"; fotoWajib: boolean }> = {};
       let fdef: FormDefinition | null = null;
       try {
-        const materialId = docs.find((x) => x.id === id)?.materialId;
+        const materialId = d.materialId; // dari respons detail — tidak bergantung state list
         if (materialId != null) {
           const t = await returApi<{ items: ReturTemplateItem[] }>(`/template/${materialId}`);
           cfg = Object.fromEntries((t.items ?? []).map((i) => [i.label, { options: i.options, tipeInput: i.tipeInput ?? "opsi", fotoWajib: i.fotoWajibGudang !== false }]));
@@ -98,11 +98,12 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
           // Default: hasil + catatan salinan cek pengawas (tetap bisa diedit). Nilai hanya
           // disalin bila masih ada di opsi komponen (template berubah -> kosong).
           const pw = u.items.find((it) => it.stage === "pengawas" && it.itemLabel === l);
-          const opts = cfg[l]?.options ?? DEFAULT_RESULT_OPTIONS;
           const teks = (cfg[l]?.tipeInput ?? "opsi") === "teks";
           // item input-form: salin nilai bebas pengawas (kecuali placeholder lama "ISI DI KOLOM CATATAN")
           const salinTeks = teks && pw && pw.hasil && !/^isi di kolom catatan$/i.test(pw.hasil);
-          return [l, { hasil: salinTeks ? pw.hasil : pw && !teks && opts.includes(pw.hasil) ? pw.hasil : "", catatan: pw?.catatan ?? "", foto: "" }];
+          // opsi: SELALU salin hasil pengawas — nilai yang tak lagi ada di daftar opsi (template
+          // diubah setelah dokumen dibuat) tetap terpilih; render menambahkannya ke daftar opsi.
+          return [l, { hasil: pw && (salinTeks || (!teks && pw.hasil)) ? pw.hasil : "", catatan: pw?.catatan ?? "", foto: "" }];
         }));
       }
       setDetail(d);
@@ -373,7 +374,11 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                                   <SelectTrigger className="h-8 w-28 text-xs"><SelectValue placeholder="Lewati" /></SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="skip">Kosong (lewati)</SelectItem>
-                                    {optionsFor(label).map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                                    {(() => {
+                                      const opts = optionsFor(label);
+                                      const shown = f.hasil && !opts.includes(f.hasil) ? [...opts, f.hasil] : opts;
+                                      return shown.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>);
+                                    })()}
                                   </SelectContent>
                                 </Select>
                               )}
