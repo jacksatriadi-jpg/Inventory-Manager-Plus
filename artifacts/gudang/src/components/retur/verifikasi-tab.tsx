@@ -31,6 +31,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
   const { toast } = useToast();
   const [docs, setDocs] = useState<ReturDokumen[]>([]);
   const [loadingList, setLoadingList] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [detail, setDetail] = useState<ReturDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -56,7 +57,9 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
     try {
       const all = await returApi<ReturDokumen[]>("");
       setDocs(all.filter((d) => d.status === "checked_supervisor"));
+      setListError(null);
     } catch (e) {
+      setListError((e as Error).message);
       toast({ title: "Gagal memuat daftar retur", description: (e as Error).message, variant: "destructive" });
     } finally {
       setLoadingList(false);
@@ -70,6 +73,11 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
     setShowTug10(false);
     try {
       const d = await returApi<ReturDetail>(`/${id}`);
+      if (d.status !== "checked_supervisor") {
+        // Dokumen sudah diverifikasi (mis. notifikasi lama dibuka lagi) — jangan render form verifikasi.
+        toast({ title: "Dokumen sudah diverifikasi", description: `Dokumen #${id} berstatus selesai — buka lewat tab Riwayat.`, variant: "destructive" });
+        return;
+      }
       let cfg: Record<string, { options: string[] | null; tipeInput: "opsi" | "teks"; fotoWajib: boolean }> = {};
       let fdef: FormDefinition | null = null;
       try {
@@ -447,7 +455,14 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
         {loadingList ? (
           <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Memuat...</p>
         ) : docs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Tidak ada dokumen retur yang menunggu verifikasi.</p>
+          listError ? (
+            <p className="text-sm text-destructive">
+              Gagal memuat daftar retur: {listError}{" "}
+              <button className="underline" onClick={loadDocs}>Coba lagi</button>
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">Tidak ada dokumen retur yang menunggu verifikasi.</p>
+          )
         ) : (
           <Table>
             <TableHeader>

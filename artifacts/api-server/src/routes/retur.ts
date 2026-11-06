@@ -181,7 +181,8 @@ function validateHasil(label: string, hasil: string, options: string[] | null, t
   }
   if (options === null) {
     const code = HASIL_LABEL_TO_CODE[hasil.toLowerCase()] ?? hasil;
-    if (!(code in HASIL_CODE_TO_LABEL)) {
+    // hasOwnProperty (bukan `in`): properti prototype ("constructor"/"toString") bukan kode bawaan.
+    if (!Object.prototype.hasOwnProperty.call(HASIL_CODE_TO_LABEL, code)) {
       return { ok: false, error: `Hasil untuk item "${label}" harus salah satu: ${DEFAULT_RESULT_OPTIONS.join(", ")}` };
     }
     return { ok: true, value: code };
@@ -551,7 +552,7 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
         if (typeof o !== "string" || !o.trim()) { res.status(400).json({ error: "Setiap opsi harus string tidak kosong" }); return; }
         const t = o.trim();
         if (t.length > 30) { res.status(400).json({ error: "Setiap opsi maksimal 30 karakter" }); return; }
-        if (t in HASIL_CODE_TO_LABEL) { res.status(400).json({ error: `Opsi tidak boleh memakai kode bawaan: "${t}"` }); return; }
+        if (Object.prototype.hasOwnProperty.call(HASIL_CODE_TO_LABEL, t)) { res.status(400).json({ error: `Opsi tidak boleh memakai kode bawaan: "${t}"` }); return; }
         if (seen.has(t.toLowerCase())) { res.status(400).json({ error: `Opsi duplikat: "${t}"` }); return; }
         seen.add(t.toLowerCase());
         opts.push(t);
@@ -796,7 +797,11 @@ router.post("/retur", async (req, res): Promise<void> => {
 
   // Mode sampling: total unit deklaratif disimpan di dokumen; unit terisi = sampel perwakilan.
   let jumlahUnit: number | null = null;
-  if (matRow.sampling_enabled && jumlahUnitRaw !== undefined && jumlahUnitRaw !== null) {
+  if (matRow.sampling_enabled) {
+    // Mode sampling: jumlah unit deklaratif WAJIB — tanpa ini dokumen sampling tampak seperti dokumen normal.
+    if (jumlahUnitRaw === undefined || jumlahUnitRaw === null) {
+      res.status(400).json({ error: "Jumlah unit wajib diisi untuk material mode sampling" }); return;
+    }
     if (!Number.isInteger(jumlahUnitRaw) || (jumlahUnitRaw as number) < 1) {
       res.status(400).json({ error: "Jumlah unit harus bilangan bulat >= 1" }); return;
     }
@@ -1038,9 +1043,9 @@ router.get("/retur/:id", async (req, res): Promise<void> => {
   res.json(detail);
 });
 
-// ─── DELETE /api/retur/:id (master) — hapus dokumen + unit + ceklist + notifikasi ─
+// ─── DELETE /api/retur/:id (gudang/master) — hapus dokumen + unit + ceklist + notifikasi ─
 router.delete("/retur/:id", async (req, res): Promise<void> => {
-  const actor = await requireReturMaster(req, res);
+  const actor = await requireGudang(req, res);
   if (!actor) return;
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
@@ -1233,12 +1238,14 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   // pertama bila dokumen lama belum punya struktur folder).
   const stamp = Date.now();
   const unitFiles: (DriveFile | null)[][] = [];
+  let docFolder = docRow.folder_file_id;
+  let docFolderCreated: string | null = null; // persistensi folder_file_id ditunda ke transaksi utama
+  const unitFolderUpdates: { unitId: number; folderId: string }[] = [];
   try {
     const root = await ensureReturFolder();
-    let docFolder = docRow.folder_file_id;
     if (!docFolder) {
       docFolder = await ensureChildFolder(`RETUR-DOK-${id}`, root);
-      await pool.query("UPDATE retur_dokumen SET folder_file_id = $1 WHERE id = $2", [docFolder, id]);
+      docFolderCreated = docFolder;
     }
     for (let ui = 0; ui < verifyUnits.length; ui++) {
       const duIndex = docUnits.findIndex((du) => du.id === verifyUnits[ui].unitId);
@@ -1246,7 +1253,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
       let unitFolder = du.folder_file_id;
       if (!unitFolder) {
         unitFolder = await ensureChildFolder(`Unit ${duIndex + 1} - ${sanitizeFolderName(du.label)}`, docFolder);
-        await pool.query("UPDATE retur_unit SET folder_file_id = $1 WHERE id = $2", [unitFolder, du.id]);
+        unitFolderUpdates.push({ unitId: du.id, folderId: unitFolder });
       }
       const files: (DriveFile | null)[] = [];
       for (let ii = 0; ii < verifyUnits[ui].items.length; ii++) {
@@ -1266,6 +1273,13 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    // Persist folder_file_id DALAM transaksi: rollback = DB tidak menunjuk folder setengah jadi.
+    if (docFolderCreated) {
+      await client.query("UPDATE retur_dokumen SET folder_file_id = $1 WHERE id = $2", [docFolderCreated, id]);
+    }
+    for (const uf of unitFolderUpdates) {
+      await client.query("UPDATE retur_unit SET folder_file_id = $1 WHERE id = $2", [uf.folderId, uf.unitId]);
+    }
     for (let ui = 0; ui < verifyUnits.length; ui++) {
       await client.query(
         "UPDATE retur_unit SET sn = $1, keputusan = $2, form_keputusan = $5::jsonb WHERE id = $3 AND dokumen_id = $4",
@@ -1294,6 +1308,9 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   } catch (err: unknown) {
     await client.query("ROLLBACK");
     const errCode = err && typeof err === "object" && "code" in err && typeof err.code === "string" ? err.code : "";
+    if (errCode === "23505" && err && typeof err === "object" && "constraint" in err && err.constraint === "retur_item_cek_unit_stage_label_uidx") {
+      res.status(400).json({ error: "Ada item ganda pada daftar hasil per unit" }); return;
+    }
     if (errCode === "23505") {
       const dup = await pool.query(
         "SELECT sn FROM retur_unit WHERE sn = ANY($1::text[]) AND dokumen_id <> $2 ORDER BY id LIMIT 1",
@@ -1314,9 +1331,9 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   res.json(detail);
 });
 
-// ─── PUT /api/retur/:id/verify-items (master) — koreksi hasil cek gudang pada dokumen selesai ──
+// ─── PUT /api/retur/:id/verify-items (gudang/master) — koreksi hasil cek gudang pada dokumen selesai ──
 router.put("/retur/:id/verify-items", async (req, res): Promise<void> => {
-  if (!(await requireReturMaster(req, res))) return;
+  if (!(await requireGudang(req, res))) return;
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "id tidak valid" }); return; }
 
@@ -1351,7 +1368,7 @@ router.put("/retur/:id/verify-items", async (req, res): Promise<void> => {
       const hasil = typeof e.hasil === "string" ? e.hasil.trim() : "";
       const catatan = typeof e.catatan === "string" && e.catatan.trim() ? e.catatan.trim() : null;
       if (!hasil) { edits.push({ unitId, label, hasil: null, catatan: null }); continue; } // hasil kosong = kosongkan baris gudang
-      const hv = validateHasil(label, hasil, cfgFor(cfg, label).options);
+      const hv = validateHasil(label, hasil, cfgFor(cfg, label).options, cfgFor(cfg, label).tipeInput);
       if (!hv.ok) { res.status(400).json({ error: hv.error }); return; }
       edits.push({ unitId, label, hasil: hv.value, catatan });
     }

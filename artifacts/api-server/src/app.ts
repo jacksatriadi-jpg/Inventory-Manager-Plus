@@ -313,6 +313,13 @@ async function setupDatabase() {
     await pool.query(`ALTER TABLE retur_dokumen ADD COLUMN IF NOT EXISTS jumlah_unit INTEGER;`);
     // lampiran: daftar {name,fileId,webViewLink} dokumen pendukung dokumen sampling (diunggah ke Drive).
     await pool.query(`ALTER TABLE retur_dokumen ADD COLUMN IF NOT EXISTS lampiran JSONB NOT NULL DEFAULT '[]'::jsonb;`);
+    // unique (unit_id, stage, item_label): cegah baris cek ganda untuk item yang sama per unit per tahap.
+    // Dedup data lama dulu (pertahankan id terbesar) supaya index bisa dibuat.
+    await pool.query(`
+      DELETE FROM retur_item_cek a USING retur_item_cek b
+      WHERE a.id < b.id AND a.unit_id = b.unit_id AND a.stage = b.stage AND a.item_label = b.item_label;
+    `);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS retur_item_cek_unit_stage_label_uidx ON retur_item_cek (unit_id, stage, item_label);`);
     // form_data: isian "A. DATA MATERIAL" per unit (pengawas); form_keputusan: K6/K7/K8 per unit (gudang).
     await pool.query(`
       ALTER TABLE retur_unit ADD COLUMN IF NOT EXISTS form_data JSONB;

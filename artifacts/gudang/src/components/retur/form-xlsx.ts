@@ -265,7 +265,7 @@ function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: Retur
       const hasMatch = (def.rows ?? []).some((dr) => norm(dr.label) === key);
       if (hasMatch) continue;
       matched.add(key);
-      cell("B", autoNo(defRowsBySection.get(sec.kode)!.length + autoIdx++), { border: true, align: { horizontal: "center" } });
+      cell("B", autoNo((defRowsBySection.get(sec.kode)?.length ?? 0) + autoIdx++), { border: true, align: { horizontal: "center" } });
       cell("C", item.itemLabel, { border: true, align: { wrapText: true } });
       const side = hasilSide(item.hasil, {} as FormRowDef, sec);
       // hasil bukan kutub kolom L/R (mis. angka/teks data: daya, tahun, berat): tampilkan nilainya apa adanya.

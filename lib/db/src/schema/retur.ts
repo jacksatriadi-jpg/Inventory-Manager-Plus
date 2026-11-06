@@ -74,7 +74,9 @@ export const returItemCekTable = pgTable("retur_item_cek", {
   fotoFileId: text("foto_file_id"), // Google Drive Retur file id; null = tidak wajib foto
   fotoLink: text("foto_link"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+}, (table) => [
+  uniqueIndex("retur_item_cek_unit_stage_label_uidx").on(table.unitId, table.stage, table.itemLabel),
+]);
 
 export type ReturItemCek = typeof returItemCekTable.$inferSelect;
 

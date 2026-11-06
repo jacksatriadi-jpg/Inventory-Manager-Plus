@@ -50,6 +50,7 @@ export function BuatTab() {
   const [lampiranFiles, setLampiranFiles] = useState<{ name: string; dataUrl: string }[]>([]);
   const lampiranInputRef = useRef<HTMLInputElement>(null);
   const [templateLoading, setTemplateLoading] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const tug10InputRef = useRef<HTMLInputElement>(null);
@@ -66,6 +67,7 @@ export function BuatTab() {
       .then((d) => {
         if (!alive) return;
         const ls = (d.items ?? []).map((i) => i.label);
+        setTemplateError(null);
         setLabels(ls);
         setCfgByLabel(Object.fromEntries((d.items ?? []).map((i) => [i.label, { options: i.options, tipeInput: i.tipeInput ?? "opsi", fotoWajib: i.fotoWajibPengawas !== false }])));
         // Unit lama tetap ada; item lama dipertahankan utk label yang sama.
@@ -78,7 +80,7 @@ export function BuatTab() {
               formData: u.formData ?? {},
             })));
       })
-      .catch((e) => { if (alive) toast({ title: "Gagal memuat template", description: (e as Error).message, variant: "destructive" }); })
+      .catch((e) => { if (alive) { setTemplateError((e as Error).message); toast({ title: "Gagal memuat template", description: (e as Error).message, variant: "destructive" }); } })
       .finally(() => { if (alive) setTemplateLoading(false); });
     return () => { alive = false; };
   }, [materialId, toast]);
@@ -94,7 +96,7 @@ export function BuatTab() {
         setSamplingMode(d.samplingEnabled === true);
         setJumlahUnit(""); setLampiranFiles([]);
       })
-      .catch(() => { if (alive) { setFormDef(null); setSamplingMode(false); } });
+      .catch((e) => { if (alive) { setFormDef(null); setSamplingMode(false); setTemplateError((e as Error).message); } });
     return () => { alive = false; };
   }, [materialId]);
 
@@ -104,11 +106,15 @@ export function BuatTab() {
 
   const pickLampiran = (files: FileList | null) => {
     if (!files) return;
+    // Counter sinkron: state lampiranFiles belum ter-update di dalam loop (FileReader async),
+    // jadi batas 10 harus dijaga lewat counter lokal, bukan closure state.
+    let count = lampiranFiles.length;
     for (const f of Array.from(files)) {
       const okType = f.type === "application/pdf" || f.type.startsWith("image/");
       if (!okType) { toast({ title: `Lampiran "${f.name}": hanya gambar atau PDF`, variant: "destructive" }); continue; }
       if (f.size > 8 * 1024 * 1024) { toast({ title: `Lampiran "${f.name}": maksimal 8 MB`, variant: "destructive" }); continue; }
-      if (lampiranFiles.length >= 10) { toast({ title: "Maksimal 10 dokumen lampiran", variant: "destructive" }); return; }
+      if (count >= 10) { toast({ title: "Maksimal 10 dokumen lampiran", variant: "destructive" }); return; }
+      count++;
       const reader = new FileReader();
       reader.onload = () => setLampiranFiles((prev) => [...prev, { name: f.name, dataUrl: String(reader.result) }]);
       reader.readAsDataURL(f);
@@ -158,8 +164,8 @@ export function BuatTab() {
       toast({ title: "Item wajib foto belum difoto", description: tanpaFoto.join("; "), variant: "destructive" });
       return;
     }
-    if (samplingMode && jumlahUnit.trim() !== "" && (!/^\d+$/.test(jumlahUnit.trim()) || Number(jumlahUnit) < 1)) {
-      toast({ title: "Jumlah unit tidak valid", description: "Isi bilangan bulat >= 1.", variant: "destructive" }); return;
+    if (samplingMode && (jumlahUnit.trim() === "" || !/^\d+$/.test(jumlahUnit.trim()) || Number(jumlahUnit) < 1)) {
+      toast({ title: "Jumlah unit wajib diisi", description: "Mode sampling: isi jumlah unit bilangan bulat >= 1.", variant: "destructive" }); return;
     }
     setSaving(true);
     try {
@@ -321,7 +327,11 @@ export function BuatTab() {
             )}
             {unit.items.length === 0 ? (
               <p className="text-sm text-muted-foreground">
-                {materialId ? "Template material ini kosong — atur daftar komponen di tab Pengaturan (master)." : "Pilih material untuk memuat daftar pemeriksaan."}
+                {materialId
+                  ? templateError
+                    ? `Gagal memuat template material: ${templateError} — muat ulang halaman atau pilih ulang material.`
+                    : "Template material ini kosong — atur daftar komponen di tab Pengaturan (master)."
+                  : "Pilih material untuk memuat daftar pemeriksaan."}
               </p>
             ) : (
               <div className="space-y-2">

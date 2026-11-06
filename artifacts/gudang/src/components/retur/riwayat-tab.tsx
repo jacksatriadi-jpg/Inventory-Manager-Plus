@@ -58,12 +58,14 @@ export function RiwayatTab() {
   const [docs, setDocs] = useState<ReturDokumen[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [listError, setListError] = useState<string | null>(null);
   const [exporting, setExporting] = useState<"excel" | "pdf" | "form" | null>(null);
   const [q, setQ] = useState("");
   const [keputusanF, setKeputusanF] = useState<"semua" | Keputusan>("semua");
   const { user } = useAuth();
-  const canDelete = user?.role === "master";
   const gudangView = isReturGudang(user);
+  // Koreksi & Hapus mengikuti gerbang backend requireGudang: master ATAU menuAccess "retur:gudang".
+  const canDelete = gudangView;
   const [toDelete, setToDelete] = useState<ReturDokumen | null>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -76,8 +78,16 @@ export function RiwayatTab() {
     if (q.trim()) params.set("q", q.trim());
     if (keputusanF !== "semua") params.set("keputusan", keputusanF);
     returApi<ReturDokumen[]>(`?${params.toString()}`)
-      .then(setDocs)
-      .catch((e) => toast({ title: "Gagal memuat riwayat", description: (e as Error).message, variant: "destructive" }))
+      .then((d) => {
+        setDocs(d);
+        setListError(null);
+        // Checkbox: hanya id yang masih tampil di daftar yang tetap terpilih (mencegah "terpilih" hantu).
+        setSelected((prev) => new Set([...prev].filter((id) => d.some((x) => x.id === id))));
+      })
+      .catch((e) => {
+        setListError((e as Error).message);
+        toast({ title: "Gagal memuat riwayat", description: (e as Error).message, variant: "destructive" });
+      })
       .finally(() => setLoading(false));
   }, [q, keputusanF, gudangView, toast]);
 
@@ -457,10 +467,20 @@ export function RiwayatTab() {
             <Button size="sm" variant="ghost" onClick={() => { setQ(""); setKeputusanF("semua"); }}>Reset filter</Button>
           )}
         </div>
+        {listError && docs.length > 0 && (
+          <p className="text-xs text-destructive mb-2">Gagal memuat data terbaru — tabel masih menampilkan data sebelumnya. ({listError})</p>
+        )}
         {loading ? (
           <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Memuat...</p>
         ) : docs.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{q.trim() !== "" || keputusanF !== "semua" ? "Tidak ada dokumen yang cocok dengan filter." : gudangView ? "Belum ada dokumen retur yang selesai diverifikasi." : 'Belum ada dokumen retur. Buat dokumen pada tab "Buat Retur" — setelah tersimpan, formulir inspeksi bisa dicetak di sini.'}</p>
+          listError ? (
+            <p className="text-sm text-destructive">
+              Gagal memuat riwayat: {listError}{" "}
+              <button className="underline" onClick={loadDocs}>Coba lagi</button>
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground">{q.trim() !== "" || keputusanF !== "semua" ? "Tidak ada dokumen yang cocok dengan filter." : gudangView ? "Belum ada dokumen retur yang selesai diverifikasi." : 'Belum ada dokumen retur. Buat dokumen pada tab "Buat Retur" — setelah tersimpan, formulir inspeksi bisa dicetak di sini.'}</p>
+          )
         ) : (
           <Table>
             <TableHeader>
