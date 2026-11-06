@@ -320,6 +320,10 @@ async function setupDatabase() {
       WHERE a.id < b.id AND a.unit_id = b.unit_id AND a.stage = b.stage AND a.item_label = b.item_label;
     `);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS retur_item_cek_unit_stage_label_uidx ON retur_item_cek (unit_id, stage, item_label);`);
+    // Kas Gudang: foto bukti/selfie pindah ke Google Drive (subfolder "KAS GUDANG"); kolom base64 lama
+    // dibiarkan terisi utk baris historis sampai backfill mengosongkannya (hemat space DB).
+    await pool.query(`ALTER TABLE kas_transaksi ADD COLUMN IF NOT EXISTS bukti_file_id TEXT;`);
+    await pool.query(`ALTER TABLE lembur_absensi ADD COLUMN IF NOT EXISTS selfie_file_id TEXT;`);
     // form_data: isian "A. DATA MATERIAL" per unit (pengawas); form_keputusan: K6/K7/K8 per unit (gudang).
     await pool.query(`
       ALTER TABLE retur_unit ADD COLUMN IF NOT EXISTS form_data JSONB;

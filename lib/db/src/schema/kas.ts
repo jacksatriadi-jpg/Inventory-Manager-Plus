@@ -10,7 +10,7 @@ export const kasTransaksiTable = pgTable("kas_transaksi", {
   metode: text("metode").notNull().default("manual"),
   jumlah: bigint("jumlah", { mode: "number" }).notNull(),
   keterangan: text("keterangan"),
-  buktiImage: text("bukti_image"), // data URL base64 (foto bukti)
+  buktiImage: text("bukti_image"), // data URL base64 (fallback lama; foto baru → Drive)
   userId: integer("user_id").notNull().references(() => usersTable.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -36,7 +36,7 @@ export const lemburAbsensiTable = pgTable("lembur_absensi", {
   lat: text("lat"),
   lng: text("lng"),
   jarakMeter: integer("jarak_meter"),
-  selfieImage: text("selfie_image"), // data URL foto selfie saat absen
+  selfieImage: text("selfie_image"), // data URL foto selfie (fallback lama; foto baru → Drive)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

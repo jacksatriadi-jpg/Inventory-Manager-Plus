@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { DriveImg } from "@/components/retur/drive-img"; // reusable: ambil bytes foto via GET /api/retur/file/:fileId
 import { useAuth } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -123,7 +124,7 @@ export default function KasGudang() {
   const [deleteTarget, setDeleteTarget] = useState<KasRecord | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [buktiView, setBuktiView] = useState<number | null>(null);
-  const [buktiData, setBuktiData] = useState<string | null>(null);
+  const [buktiData, setBuktiData] = useState<{ fileId: string | null; url: string | null } | null>(null);
 
   // ── Lembur ──
   const [view, setView]                   = useState<"kas" | "lembur">("kas");
@@ -240,11 +241,11 @@ export default function KasGudang() {
     closeSelfie();
   };
 
-  const [selfieView, setSelfieView] = useState<string | null>(null);
+  const [selfieView, setSelfieView] = useState<{ fileId: string | null; url: string | null } | null>(null);
   const openSelfie = async (id: number) => {
     try {
       const res = await fetch(`/api/kas/lembur/absensi/${id}`);
-      if (res.ok) { const d = await res.json(); setSelfieView(d.selfieImage); }
+      if (res.ok) { const d = await res.json(); setSelfieView({ fileId: d.selfieFileId ?? null, url: d.selfieImage ?? null }); }
     } catch { /* ignore */ }
   };
 
@@ -507,7 +508,7 @@ export default function KasGudang() {
     setBuktiView(id); setBuktiData(null);
     try {
       const res = await fetch(`/api/kas/transaksi/${id}`);
-      if (res.ok) { const d = await res.json(); setBuktiData(d.buktiImage); }
+      if (res.ok) { const d = await res.json(); setBuktiData({ fileId: d.buktiFileId ?? null, url: d.buktiImage ?? null }); }
     } catch { /* ignore */ }
   };
 
@@ -827,7 +828,8 @@ export default function KasGudang() {
       <Dialog open={selfieView !== null} onOpenChange={open => { if (!open) setSelfieView(null); }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Foto Selfie Absensi Lembur</DialogTitle></DialogHeader>
-          {selfieView ? <img src={selfieView} alt="selfie absensi" className="max-h-[70vh] mx-auto rounded" /> : null}
+          {selfieView?.fileId ? <DriveImg fileId={selfieView.fileId} alt="selfie absensi" imgClassName="max-h-[70vh] mx-auto rounded" />
+            : selfieView?.url ? <img src={selfieView.url} alt="selfie absensi" className="max-h-[70vh] mx-auto rounded" /> : null}
         </DialogContent>
       </Dialog>
 
@@ -876,7 +878,8 @@ export default function KasGudang() {
         <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>Foto Bukti Transaksi</DialogTitle></DialogHeader>
           {buktiData === null ? <div className="py-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin" /></div>
-            : buktiData ? <img src={buktiData} alt="bukti transaksi" className="max-h-[70vh] mx-auto rounded" />
+            : buktiData?.fileId ? <DriveImg fileId={buktiData.fileId} alt="bukti transaksi" imgClassName="max-h-[70vh] mx-auto rounded" />
+            : buktiData?.url ? <img src={buktiData.url} alt="bukti transaksi" className="max-h-[70vh] mx-auto rounded" />
             : <p className="text-muted-foreground">Bukti tidak ditemukan.</p>}
         </DialogContent>
       </Dialog>

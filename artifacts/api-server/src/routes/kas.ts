@@ -1,6 +1,27 @@
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
 import { logger } from "../lib/logger";
+import { ensureReturFolder, ensureChildFolder, uploadReturDataUrl, deleteReturFile } from "../lib/retur-drive";
+
+// Foto Kas (bukti transaksi & selfie lembur) disimpan di Google Drive akun Retur,
+// subfolder "KAS GUDANG" di bawah folder root — hemat ruang Postgres/disk STB.
+let kasPhotoFolderId: string | null = null; // cache id; listing Drive tak perlu tiap upload
+async function kasPhotoFolder(): Promise<string> {
+  if (!kasPhotoFolderId) kasPhotoFolderId = await ensureChildFolder("KAS GUDANG", await ensureReturFolder());
+  return kasPhotoFolderId;
+}
+// Upload dataURL ke Drive. Bila Drive gagal/belum terhubung: fallback base64 ke DB supaya
+// transaksi tetap tersimpan & foto tetap tampil (kapasitas tidak hemat, tapi data tidak hilang).
+async function storeKasPhoto(dataUrl: string | null, name: string): Promise<{ fileId: string | null; fallback: boolean }> {
+  if (!dataUrl) return { fileId: null, fallback: false };
+  try {
+    const up = await uploadReturDataUrl(dataUrl, name, await kasPhotoFolder());
+    return { fileId: up.fileId, fallback: false };
+  } catch (err) {
+    logger.warn({ err }, "Kas: Drive tidak tersedia — foto disimpan sebagai base64 di DB");
+    return { fileId: null, fallback: true };
+  }
+}
 
 const router: IRouter = Router();
 
@@ -17,7 +38,7 @@ router.get("/kas/transaksi", async (req, res): Promise<void> => {
 
   const result = await pool.query(
     `SELECT k.id, k.tipe, k.metode, k.jumlah, k.keterangan,
-            (k.bukti_image IS NOT NULL) AS has_bukti,
+            (k.bukti_image IS NOT NULL OR k.bukti_file_id IS NOT NULL) AS has_bukti,
             k.user_id, u.username, k.created_at
      FROM kas_transaksi k
      JOIN users u ON u.id = k.user_id
@@ -45,7 +66,7 @@ router.get("/kas/transaksi/:id", async (req, res): Promise<void> => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
   const result = await pool.query(
-    `SELECT k.id, k.tipe, k.metode, k.jumlah, k.keterangan, k.bukti_image,
+    `SELECT k.id, k.tipe, k.metode, k.jumlah, k.keterangan, k.bukti_image, k.bukti_file_id,
             k.user_id, u.username, k.created_at
      FROM kas_transaksi k JOIN users u ON u.id = k.user_id WHERE k.id = $1`,
     [id],
@@ -54,7 +75,7 @@ router.get("/kas/transaksi/:id", async (req, res): Promise<void> => {
   const r = result.rows[0];
   res.json({
     id: r.id, tipe: r.tipe, metode: r.metode, jumlah: Number(r.jumlah),
-    keterangan: r.keterangan ?? null, buktiImage: r.bukti_image ?? null,
+    keterangan: r.keterangan ?? null, buktiImage: r.bukti_image ?? null, buktiFileId: r.bukti_file_id ?? null,
     userId: r.user_id, userName: r.username,
     createdAt: new Date(r.created_at).toISOString(),
   });
@@ -88,14 +109,17 @@ router.post("/kas/transaksi", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Foto bukti terlalu besar" }); return;
   }
 
+  const rawBukti = typeof buktiImage === "string" && buktiImage.startsWith("data:image/") ? buktiImage : null;
+
   try {
+    const stored = await storeKasPhoto(rawBukti, `KAS-BUKTI-${Date.now()}.jpg`);
     const result = await pool.query(
-      `INSERT INTO kas_transaksi (tipe, metode, jumlah, keterangan, bukti_image, user_id)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      `INSERT INTO kas_transaksi (tipe, metode, jumlah, keterangan, bukti_image, bukti_file_id, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
       [tipe, metode, Math.round(amt), (typeof keterangan === "string" ? keterangan.trim() : null) || null,
-       (typeof buktiImage === "string" ? buktiImage : null), userId],
+       stored.fallback ? rawBukti : null, stored.fileId, userId],
     );
-    res.status(201).json({ id: result.rows[0].id });
+    res.status(201).json({ id: result.rows[0].id, buktiDiDrive: !!stored.fileId });
   } catch (err) {
     logger.error({ err }, "Kas: gagal menyimpan transaksi");
     res.status(500).json({ error: "Gagal menyimpan transaksi" });
@@ -106,8 +130,12 @@ router.post("/kas/transaksi", async (req, res): Promise<void> => {
 router.delete("/kas/transaksi/:id", async (req, res): Promise<void> => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
-  const result = await pool.query("DELETE FROM kas_transaksi WHERE id = $1 RETURNING id", [id]);
-  if (result.rowCount && result.rowCount > 0) { res.sendStatus(204); return; }
+  const result = await pool.query("DELETE FROM kas_transaksi WHERE id = $1 RETURNING bukti_file_id", [id]);
+  if (result.rowCount && result.rowCount > 0) {
+    const f = result.rows[0].bukti_file_id;
+    if (f) { try { await deleteReturFile(f); } catch (err) { logger.warn({ err }, "Kas: gagal hapus file bukti di Drive"); } }
+    res.sendStatus(204); return;
+  }
   res.status(404).json({ error: "Transaksi tidak ditemukan" });
 });
 
@@ -187,7 +215,7 @@ router.get("/kas/lembur/absensi", async (req, res): Promise<void> => {
   const result = await pool.query(
     `SELECT la.id, la.karyawan_id, lk.nama AS karyawan, la.tanggal, la.jenis,
             la.fee, la.kas_transaksi_id, la.lat, la.lng, la.jarak_meter,
-            (la.selfie_image IS NOT NULL) AS has_selfie, la.created_at
+            (la.selfie_image IS NOT NULL OR la.selfie_file_id IS NOT NULL) AS has_selfie, la.created_at
      FROM lembur_absensi la
      JOIN lembur_karyawan lk ON lk.id = la.karyawan_id
      ${where}
@@ -227,14 +255,24 @@ router.post("/kas/lembur/absensi", async (req, res): Promise<void> => {
   const selfie = typeof selfieImage === "string" && selfieImage.startsWith("data:image/") ? selfieImage : null;
 
   try {
+    // Insert TANPA foto dulu agar konflik DO NOTHING tidak menyisakan file yatim di Drive;
+    // foto di-upload lalu di-update setelah baris pasti tersimpan.
     const result = await pool.query(
-      `INSERT INTO lembur_absensi (karyawan_id, tanggal, jenis, lat, lng, jarak_meter, selfie_image)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO lembur_absensi (karyawan_id, tanggal, jenis, lat, lng, jarak_meter)
+       VALUES ($1, $2, $3, $4, $5, $6)
        ON CONFLICT (karyawan_id, tanggal) DO NOTHING RETURNING id`,
-      [karyawanId, tanggal, jenis, Number.isFinite(latN) ? String(latN) : null, Number.isFinite(lngN) ? String(lngN) : null, jarak, selfie],
+      [karyawanId, tanggal, jenis, Number.isFinite(latN) ? String(latN) : null, Number.isFinite(lngN) ? String(lngN) : null, jarak],
     );
     if (result.rowCount === 0) { res.status(409).json({ error: "Karyawan ini sudah tercatat absen pada tanggal tersebut" }); return; }
-    res.status(201).json({ id: result.rows[0].id, jarakMeter: jarak });
+    const newId = result.rows[0].id;
+    if (selfie) {
+      const stored = await storeKasPhoto(selfie, `KAS-LEMBUR-${karyawanId}-${tanggal}.jpg`);
+      await pool.query(
+        "UPDATE lembur_absensi SET selfie_file_id = $1, selfie_image = $2 WHERE id = $3",
+        [stored.fileId, stored.fallback ? selfie : null, newId],
+      );
+    }
+    res.status(201).json({ id: newId, jarakMeter: jarak });
   } catch (err) {
     logger.error({ err }, "Lembur: gagal mencatat absensi");
     res.status(500).json({ error: "Gagal mencatat absensi" });
@@ -246,14 +284,14 @@ router.get("/kas/lembur/absensi/:id", async (req, res): Promise<void> => {
   if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
   const result = await pool.query(
     `SELECT la.id, la.karyawan_id, lk.nama AS karyawan, la.tanggal, la.jenis,
-            la.fee, la.lat, la.lng, la.jarak_meter, la.selfie_image
+            la.fee, la.lat, la.lng, la.jarak_meter, la.selfie_image, la.selfie_file_id
      FROM lembur_absensi la JOIN lembur_karyawan lk ON lk.id = la.karyawan_id WHERE la.id = $1`, [id]);
   if (result.rowCount === 0) { res.status(404).json({ error: "Absensi tidak ditemukan" }); return; }
   const r = result.rows[0];
   res.json({
     id: r.id, karyawanId: r.karyawan_id, karyawan: r.nama, tanggal: r.tanggal, jenis: r.jenis,
     fee: r.fee === null ? null : Number(r.fee), lat: r.lat, lng: r.lng, jarakMeter: r.jarak_meter,
-    selfieImage: r.selfie_image ?? null,
+    selfieImage: r.selfie_image ?? null, selfieFileId: r.selfie_file_id ?? null,
   });
 });
 
@@ -298,10 +336,16 @@ router.put("/kas/lembur/absensi/:id", async (req, res): Promise<void> => {
 router.delete("/kas/lembur/absensi/:id", async (req, res): Promise<void> => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
-  const cur = await pool.query("SELECT kas_transaksi_id FROM lembur_absensi WHERE id = $1", [id]);
+  const cur = await pool.query(
+    `SELECT la.kas_transaksi_id, la.selfie_file_id, k.bukti_file_id AS kas_bukti_file_id
+     FROM lembur_absensi la LEFT JOIN kas_transaksi k ON k.id = la.kas_transaksi_id WHERE la.id = $1`, [id]);
   if (cur.rowCount === 0) { res.status(404).json({ error: "Absensi tidak ditemukan" }); return; }
-  if (cur.rows[0].kas_transaksi_id) await pool.query("DELETE FROM kas_transaksi WHERE id = $1", [cur.rows[0].kas_transaksi_id]);
+  const row = cur.rows[0];
+  if (row.kas_transaksi_id) await pool.query("DELETE FROM kas_transaksi WHERE id = $1", [row.kas_transaksi_id]);
   await pool.query("DELETE FROM lembur_absensi WHERE id = $1", [id]);
+  for (const f of [row.selfie_file_id, row.kas_bukti_file_id]) {
+    if (f) { try { await deleteReturFile(f); } catch (err) { logger.warn({ err }, "Lembur: gagal hapus file di Drive"); } }
+  }
   res.sendStatus(204);
 });
 
