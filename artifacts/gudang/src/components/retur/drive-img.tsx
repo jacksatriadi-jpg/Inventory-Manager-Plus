@@ -9,12 +9,12 @@ import { fetchReturFile } from "./shared";
 const objectUrlCache = new Map<string, string>();
 const inflight = new Map<string, Promise<string>>();
 
-function getObjectUrl(fileId: string): Promise<string> {
+function getObjectUrl(fileId: string, endpoint = "/api/retur/file"): Promise<string> {
   const cached = objectUrlCache.get(fileId);
   if (cached) return Promise.resolve(cached);
   const pending = inflight.get(fileId);
   if (pending) return pending;
-  const task = fetchReturFile(fileId)
+  const task = fetchReturFile(fileId, endpoint)
     .then(({ bytes, contentType }) => {
       const url = URL.createObjectURL(new Blob([bytes], { type: contentType }));
       objectUrlCache.set(fileId, url);
@@ -29,7 +29,7 @@ function getObjectUrl(fileId: string): Promise<string> {
   return task;
 }
 
-export function DriveImg({ fileId, alt, className, imgClassName }: { fileId: string; alt?: string; className?: string; imgClassName?: string }) {
+export function DriveImg({ fileId, alt, className, imgClassName, endpoint }: { fileId: string; alt?: string; className?: string; imgClassName?: string; endpoint?: string }) {
   const [url, setUrl] = useState<string | null>(() => objectUrlCache.get(fileId) ?? null);
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState(false);
@@ -37,7 +37,7 @@ export function DriveImg({ fileId, alt, className, imgClassName }: { fileId: str
   useEffect(() => {
     if (url || failed) return;
     let alive = true;
-    getObjectUrl(fileId)
+    getObjectUrl(fileId, endpoint ?? "/api/retur/file")
       .then((u) => { if (alive) setUrl(u); })
       .catch(() => { if (alive) setFailed(true); });
     return () => { alive = false; };

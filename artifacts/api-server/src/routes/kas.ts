@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
 import { logger } from "../lib/logger";
-import { ensureReturFolder, ensureChildFolder, uploadReturDataUrl, deleteReturFile } from "../lib/retur-drive";
+import { ensureReturFolder, ensureChildFolder, uploadReturDataUrl, deleteReturFile, downloadReturFile } from "../lib/retur-drive";
 
 // Foto Kas (bukti transaksi & selfie lembur) disimpan di Google Drive akun Retur,
 // subfolder "KAS GUDANG" di bawah folder root — hemat ruang Postgres/disk STB.
@@ -24,6 +24,23 @@ async function storeKasPhoto(dataUrl: string | null, name: string): Promise<{ fi
 }
 
 const router: IRouter = Router();
+
+// ─── GET /api/kas/file/:fileId — stream bytes foto bukti/selfie dari Drive ──
+// DriveImg di halaman kas memakai endpoint ini, BUKAN /api/retur/file/:id yang
+// mengunci akses ke pengguna modul Retur (akun khusus kas akan dapat 403).
+router.get("/kas/file/:fileId", async (req, res): Promise<void> => {
+  const fileId = req.params.fileId;
+  if (!fileId) { res.status(404).json({ error: "File tidak ditemukan" }); return; }
+  try {
+    const { contentType, buffer } = await downloadReturFile(fileId);
+    res.setHeader("Content-Type", contentType);
+    res.setHeader("Cache-Control", "private, max-age=86400");
+    res.send(buffer);
+  } catch (err) {
+    logger.error({ err, fileId }, "Kas Drive: unduh file gagal");
+    res.status(404).json({ error: "File tidak ditemukan" });
+  }
+});
 
 // ─── GET /api/kas/transaksi — daftar transaksi (filter: tipe, search) ─────
 router.get("/kas/transaksi", async (req, res): Promise<void> => {

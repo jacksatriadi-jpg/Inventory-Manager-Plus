@@ -195,8 +195,9 @@ export async function returApi<T>(path: string, init?: RequestInit): Promise<T> 
 }
 
 // Bytes foto dari Drive Retur via server (retur user).
-export async function fetchReturFile(fileId: string): Promise<{ bytes: ArrayBuffer; contentType: string }> {
-  const res = await fetch(`/api/retur/file/${encodeURIComponent(fileId)}`, { headers: authHeaders() });
+// endpoint default = proxy Retur; modul lain (mis. Kas) mengirim proxy miliknya sendiri.
+export async function fetchReturFile(fileId: string, endpoint = "/api/retur/file"): Promise<{ bytes: ArrayBuffer; contentType: string }> {
+  const res = await fetch(`${endpoint}/${encodeURIComponent(fileId)}`, { headers: authHeaders() });
   if (!res.ok) throw new Error("File tidak ditemukan");
   const bytes = await res.arrayBuffer();
   return { bytes, contentType: res.headers.get("content-type") || "image/jpeg" };

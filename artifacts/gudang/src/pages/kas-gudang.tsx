@@ -828,7 +828,7 @@ export default function KasGudang() {
       <Dialog open={selfieView !== null} onOpenChange={open => { if (!open) setSelfieView(null); }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Foto Selfie Absensi Lembur</DialogTitle></DialogHeader>
-          {selfieView?.fileId ? <DriveImg fileId={selfieView.fileId} alt="selfie absensi" imgClassName="max-h-[70vh] mx-auto rounded" />
+          {selfieView?.fileId ? <DriveImg fileId={selfieView.fileId} alt="selfie absensi" endpoint="/api/kas/file" imgClassName="max-h-[70vh] mx-auto rounded" />
             : selfieView?.url ? <img src={selfieView.url} alt="selfie absensi" className="max-h-[70vh] mx-auto rounded" /> : null}
         </DialogContent>
       </Dialog>
@@ -878,7 +878,7 @@ export default function KasGudang() {
         <DialogContent className="max-w-2xl">
           <DialogHeader><DialogTitle>Foto Bukti Transaksi</DialogTitle></DialogHeader>
           {buktiData === null ? <div className="py-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin" /></div>
-            : buktiData?.fileId ? <DriveImg fileId={buktiData.fileId} alt="bukti transaksi" imgClassName="max-h-[70vh] mx-auto rounded" />
+            : buktiData?.fileId ? <DriveImg fileId={buktiData.fileId} alt="bukti transaksi" endpoint="/api/kas/file" imgClassName="max-h-[70vh] mx-auto rounded" />
             : buktiData?.url ? <img src={buktiData.url} alt="bukti transaksi" className="max-h-[70vh] mx-auto rounded" />
             : <p className="text-muted-foreground">Bukti tidak ditemukan.</p>}
         </DialogContent>
