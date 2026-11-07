@@ -79,6 +79,19 @@ export default function Riwayat() {
 
   const deleteHistoryMutation = useDeleteHistory();
 
+  // Label box yang dipakai lebih dari satu sesi = warisan bug penomoran lama
+  // (nomor urut dari count, bukan max-suffix) — sudah diperbaiki服务端 c344df7,
+  // data lama sengaja tidak diubah. Penanda ini hanya bantu operator membedakan.
+  const dupBoxCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const h of history ?? []) {
+      if (h.source === "scan" && h.type === "in" && h.boxLabel) {
+        m.set(h.boxLabel, (m.get(h.boxLabel) ?? 0) + 1);
+      }
+    }
+    return m;
+  }, [history]);
+
   const filteredHistory = useMemo(() => {
     if (!history) return [];
     if (filterSource === "all") return history;
@@ -725,7 +738,16 @@ export default function Riwayat() {
                               {isNonScan ? (
                                 <span className="text-xs bg-muted px-1.5 py-0.5 rounded text-muted-foreground">Non-Scan</span>
                               ) : (
-                                record.boxLabel || "-"
+                                <>
+                                  {record.boxLabel || "-"}
+                                  {isIn && record.boxLabel && (dupBoxCounts.get(record.boxLabel) ?? 0) > 1 && (
+                                    <Badge
+                                      variant="outline"
+                                      className="ml-1.5 text-[10px] px-1 py-0 text-amber-700 border-amber-400/60 bg-amber-50 dark:text-amber-400 dark:bg-amber-950/30"
+                                      title={`Label box ini dipakai ${dupBoxCounts.get(record.boxLabel)} sesi berbeda (warisan bug penomoran lama — generator sudah diperbaiki). Bedakan sesi lewat tanggal & daftar serial number.`}
+                                    >⚠{dupBoxCounts.get(record.boxLabel)}</Badge>
+                                  )}
+                                </>
                               )}
                             </TableCell>
                             <TableCell className="font-mono">{record.materialName || record.materialCode || "-"}</TableCell>
