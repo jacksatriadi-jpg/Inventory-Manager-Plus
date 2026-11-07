@@ -1,7 +1,8 @@
 import { Router } from "express";
 import type { IRouter } from "express";
 import { db, pool, scanInTable, scanItemsTable, scanOutTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { requireActor, requireMaster } from "../lib/request-auth";
 import {
   ListHistoryQueryParams,
   ListHistoryResponse,
@@ -11,6 +12,7 @@ import {
 const router: IRouter = Router();
 
 router.get("/history", async (req, res): Promise<void> => {
+  if (!(await requireActor(req, res))) return;
   const params = ListHistoryQueryParams.safeParse(req.query);
   const filterType       = params.success ? params.data.type       : undefined;
   const filterMaterialId = params.success && params.data.materialId ? Number(params.data.materialId) : null;
@@ -52,30 +54,31 @@ router.get("/history", async (req, res): Promise<void> => {
   };
 
   const buildScanOutQuery = () => {
+    // Material ditentukan PER ITEM (scan_items -> scan_in -> materials), bukan dari box
+    // "pertama" saja: satu sesi dispatch bisa mencampur beberapa box/material. Kalau hanya
+    // material pertama yang dipakai, sesi campuran salah label DAN hilang saat difilter per material.
     const args: any[] = [];
     const conds: string[] = [];
+    if (filterMaterialId) { args.push(filterMaterialId); conds.push(`si.material_id = $${args.length}`); }
     if (filterUserId) { args.push(filterUserId); conds.push(`so.user_id = $${args.length}`); }
     if (filterFrom)   { args.push(filterFrom);   conds.push(`so.created_at >= $${args.length}::date`); }
     if (filterTo)     { args.push(filterTo);     conds.push(`so.created_at <= $${args.length}::date + interval '1 day' - interval '1 second'`); }
     const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
     return pool.query(
-      `WITH so_first AS (
-         SELECT DISTINCT ON (scan_out_id) scan_out_id, scan_in_id
-         FROM scan_items WHERE scan_out_id IS NOT NULL
-         ORDER BY scan_out_id, id
-       )
-       SELECT
+      `SELECT
          so.id, so.created_at, so.user_id, u.username,
-         si.material_id, m.code AS material_code, m.name AS material_name, si.box_label,
+         MIN(si.material_id) AS material_id,
+         string_agg(DISTINCT m.code, ' + ') AS material_code,
+         string_agg(DISTINCT m.name, ' + ') AS material_name,
+         string_agg(DISTINCT si.box_label, ' + ') AS box_label,
          array_remove(array_agg(items.serial_number ORDER BY items.id), NULL) AS serial_numbers
        FROM scan_out so
        JOIN users      u ON u.id = so.user_id
        JOIN scan_items items ON items.scan_out_id = so.id
-       LEFT JOIN so_first sf ON sf.scan_out_id = so.id
-       LEFT JOIN scan_in  si ON si.id = sf.scan_in_id
+       LEFT JOIN scan_in  si ON si.id = items.scan_in_id
        LEFT JOIN materials m ON m.id  = si.material_id
        ${where}
-       GROUP BY so.id, so.created_at, so.user_id, u.username, si.material_id, m.code, m.name, si.box_label
+       GROUP BY so.id, so.created_at, so.user_id, u.username
        HAVING COUNT(items.id) > 0`,
       args,
     );
@@ -111,8 +114,14 @@ router.get("/history", async (req, res): Promise<void> => {
     return pool.query(
       `SELECT nk.id, nk.created_at, nk.material_id, m.code AS material_code, m.name AS material_name,
               nk.user_id, u.username, nk.jumlah,
-              (SELECT satuan FROM non_scan_masuk
-               WHERE material_id = nk.material_id ORDER BY id DESC LIMIT 1) AS satuan
+              COALESCE(
+                (SELECT satuan FROM non_scan_masuk nm2
+                 WHERE nm2.material_id = nk.material_id AND nm2.created_at <= nk.created_at
+                 ORDER BY nm2.created_at DESC LIMIT 1),
+                (SELECT satuan FROM non_scan_masuk nm3
+                 WHERE nm3.material_id = nk.material_id
+                 ORDER BY nm3.created_at ASC LIMIT 1)
+              ) AS satuan
        FROM non_scan_keluar nk
        JOIN materials m ON m.id = nk.material_id
        JOIN users     u ON u.id = nk.user_id
@@ -156,8 +165,6 @@ router.get("/history", async (req, res): Promise<void> => {
   }
 
   for (const r of soResult.rows) {
-    // apply materialId filter (join-side, not WHERE-side for scan_out)
-    if (filterMaterialId && r.material_id !== filterMaterialId) continue;
     records.push({
       id: r.id,
       type: "out",
@@ -216,6 +223,7 @@ router.get("/history", async (req, res): Promise<void> => {
 });
 
 router.delete("/history/:id", async (req, res): Promise<void> => {
+  if (!(await requireMaster(req, res))) return;
   const params = DeleteHistoryParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -236,22 +244,30 @@ router.delete("/history/:id", async (req, res): Promise<void> => {
     if (result.rowCount && result.rowCount > 0) { res.sendStatus(204); return; }
   }
 
-  const [siRecord] = await db.select().from(scanInTable).where(eq(scanInTable.id, id));
-  if (siRecord) {
-    await db.delete(scanItemsTable).where(eq(scanItemsTable.scanInId, id));
-    await db.delete(scanInTable).where(eq(scanInTable.id, id));
-    res.sendStatus(204);
-    return;
-  }
+  // Hapus sesi scan masuk: SN yang SUDAH discan-out tidak boleh ikut hilang —
+  // item dispatch hanya di-LEPAS (scan_in_id = NULL) supaya riwayat keluar tetap utuh;
+  // hanya item yang belum pernah keluar yang dihapus. Semua dalam satu transaksi.
+  const deletedScanIn = await db.transaction(async (tx) => {
+    const [exists] = await tx.select({ id: scanInTable.id }).from(scanInTable).where(eq(scanInTable.id, id));
+    if (!exists) return false;
+    await tx.update(scanItemsTable).set({ scanInId: null })
+      .where(and(eq(scanItemsTable.scanInId, id), sql`${scanItemsTable.scanOutId} is not null`));
+    await tx.delete(scanItemsTable)
+      .where(and(eq(scanItemsTable.scanInId, id), sql`${scanItemsTable.scanOutId} is null`));
+    await tx.delete(scanInTable).where(eq(scanInTable.id, id));
+    return true;
+  });
+  if (deletedScanIn) { res.sendStatus(204); return; }
 
-  const result = await pool.query(
-    "DELETE FROM scan_out WHERE id = $1 RETURNING id", [id]
-  );
-  if (result.rowCount && result.rowCount > 0) {
-    await pool.query("UPDATE scan_items SET scan_out_id = NULL WHERE scan_out_id = $1", [id]);
-    res.sendStatus(204);
-    return;
-  }
+  // Hapus sesi scan keluar: item (SN) tetap hidup, hanya di-unlink.
+  const deletedScanOut = await db.transaction(async (tx) => {
+    const [exists] = await tx.select({ id: scanOutTable.id }).from(scanOutTable).where(eq(scanOutTable.id, id));
+    if (!exists) return false;
+    await tx.update(scanItemsTable).set({ scanOutId: null }).where(eq(scanItemsTable.scanOutId, id));
+    await tx.delete(scanOutTable).where(eq(scanOutTable.id, id));
+    return true;
+  });
+  if (deletedScanOut) { res.sendStatus(204); return; }
 
   res.status(404).json({ error: "History record not found" });
 });

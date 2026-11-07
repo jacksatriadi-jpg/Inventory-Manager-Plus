@@ -54,6 +54,7 @@ export default function ScanInView() {
   // Ref to avoid stale closure in rAF loop
   const cameraRunning = useRef(false);
   const activeSessionRef = useRef<any>(null);
+  const scannedItemsRef = useRef<{id: number, serialNumber: string}[]>([]);
 
   const createScanInMutation = useCreateScanIn();
   const updateScanInMutation = useUpdateScanIn();
@@ -65,6 +66,10 @@ export default function ScanInView() {
   useEffect(() => {
     activeSessionRef.current = activeSession;
   }, [activeSession]);
+
+  useEffect(() => {
+    scannedItemsRef.current = scannedItems;
+  }, [scannedItems]);
 
   // Restore session from localStorage on mount
   useEffect(() => {
@@ -144,14 +149,14 @@ export default function ScanInView() {
       return;
     }
 
-    setScannedItems(prev => {
-      if (prev.some(item => item.serialNumber === sn)) {
-        toast({ title: "Duplikat", description: "Serial ini sudah discan.", variant: "destructive" });
-        playBeep(false);
-        return prev;
-      }
-      return prev;
-    });
+    // Cek duplikat lewat ref mirror, BUKAN side-effect di dalam updater setState:
+    // pola lama membuat toast dobel (StrictMode) dan duplikat memunculkan dua error
+    // ("Duplikat" lokal + 409 server).
+    if (scannedItemsRef.current.some(item => item.serialNumber === sn)) {
+      toast({ title: "Duplikat", description: "Serial ini sudah discan.", variant: "destructive" });
+      playBeep(false);
+      return;
+    }
 
     // check duplicate outside state setter for async flow
     try {
@@ -167,7 +172,8 @@ export default function ScanInView() {
       playBeep(false);
       setManualInput("");
       if (scanMethod === "manual") inputRef.current?.focus();
-      toast({ title: "Scan gagal", description: error?.message || "Gagal menambah item. Mungkin duplikat.", variant: "destructive" });
+      const isDup = typeof error?.message === "string" && /duplicate/i.test(error.message);
+      toast({ title: "Scan gagal", description: isDup ? "Serial ini sudah discan (oleh sesi/pengguna lain)." : (error?.message || "Gagal menambah item."), variant: "destructive" });
     }
   }, [addItemMutation, playBeep, scanMethod, toast]);
 
@@ -190,7 +196,7 @@ export default function ScanInView() {
       }
       try {
         await updateScanInMutation.mutateAsync({ id: activeSession.id, data: { status: "completed" } });
-        const qrText = scannedItems.map(i => i.serialNumber).join('\\n');
+        const qrText = scannedItems.map(i => i.serialNumber).join('\n');
         const qrDataUrl = await QRCode.toDataURL(qrText, { errorCorrectionLevel: 'M', margin: 2, width: 300 });
         setGeneratedQr(qrDataUrl);
         localStorage.removeItem(SESSION_KEY);

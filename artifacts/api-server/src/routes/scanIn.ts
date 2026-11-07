@@ -1,7 +1,9 @@
 import { Router } from "express";
 import type { IRouter } from "express";
 import { db, scanInTable, scanItemsTable, materialsTable, usersTable } from "@workspace/db";
-import { eq, and } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
+import { logger } from "../lib/logger";
+import { requireActor, requireScanWrite } from "../lib/request-auth";
 import {
   ListScanInQueryParams,
   ListScanInResponse,
@@ -45,7 +47,26 @@ async function buildScanInResponse(scanIn: any) {
   };
 }
 
+// Nomor urut label box diambil dari SUFFIX ANGKA tertinggi pada label existing untuk
+// material ini (bukan jumlah sesi): stabil walau ada sesi dibatalkan/terhapus, dan
+// label baru tidak menabrak label lama yang sudah dobel. Data lama tidak diubah.
+async function nextBoxLabelFor(materialId: number, code: string): Promise<string> {
+  const rows = await db
+    .select({ boxLabel: scanInTable.boxLabel })
+    .from(scanInTable)
+    .where(eq(scanInTable.materialId, materialId));
+  let maxSeq = 0;
+  for (const row of rows) {
+    if (typeof row.boxLabel === "string" && row.boxLabel.startsWith(code)) {
+      const n = parseInt(row.boxLabel.slice(code.length), 10);
+      if (Number.isFinite(n) && n > maxSeq) maxSeq = n;
+    }
+  }
+  return `${code}${String(maxSeq + 1).padStart(3, "0")}`;
+}
+
 router.get("/scan-in", async (req, res): Promise<void> => {
+  if (!(await requireActor(req, res))) return;
   const params = ListScanInQueryParams.safeParse(req.query);
   const materialId = params.success && params.data.materialId ? Number(params.data.materialId) : undefined;
 
@@ -59,6 +80,8 @@ router.get("/scan-in", async (req, res): Promise<void> => {
 });
 
 router.post("/scan-in", async (req, res): Promise<void> => {
+  const actor = await requireScanWrite(req, res);
+  if (!actor) return;
   const parsed = CreateScanInBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -75,20 +98,13 @@ router.post("/scan-in", async (req, res): Promise<void> => {
   const abandonedSessions = await db
     .select()
     .from(scanInTable)
-    .where(and(eq(scanInTable.userId, parsed.data.userId), eq(scanInTable.status, "scanning")));
+    .where(and(eq(scanInTable.userId, actor.id), eq(scanInTable.status, "scanning")));
   for (const s of abandonedSessions) {
     await db.delete(scanItemsTable).where(eq(scanItemsTable.scanInId, s.id));
     await db.delete(scanInTable).where(eq(scanInTable.id, s.id));
   }
 
-  // Count ALL sessions (scanning by other users + completed) so concurrent users get unique sequential numbers.
-  // This user's own abandoned sessions were deleted above, so they don't inflate the count.
-  const allSessions = await db
-    .select()
-    .from(scanInTable)
-    .where(eq(scanInTable.materialId, parsed.data.materialId));
-  const seqNum = (allSessions.length + 1).toString().padStart(3, "0");
-  const boxLabel = `${material.code}${seqNum}`;
+  const boxLabel = await nextBoxLabelFor(parsed.data.materialId, material.code);
 
   const [scanIn] = await db
     .insert(scanInTable)
@@ -96,7 +112,7 @@ router.post("/scan-in", async (req, res): Promise<void> => {
       materialId: parsed.data.materialId,
       boxLabel,
       status: "scanning",
-      userId: parsed.data.userId,
+      userId: actor.id, // selalu dari token — tak bisa impersonasi operator lain
     })
     .returning();
 
@@ -105,6 +121,7 @@ router.post("/scan-in", async (req, res): Promise<void> => {
 });
 
 router.get("/scan-in/:id", async (req, res): Promise<void> => {
+  if (!(await requireActor(req, res))) return;
   const params = GetScanInParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -122,6 +139,7 @@ router.get("/scan-in/:id", async (req, res): Promise<void> => {
 });
 
 router.patch("/scan-in/:id", async (req, res): Promise<void> => {
+  if (!(await requireScanWrite(req, res))) return;
   const params = UpdateScanInParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -138,6 +156,9 @@ router.patch("/scan-in/:id", async (req, res): Promise<void> => {
   if (parsed.data.status) {
     updateData.status = parsed.data.status;
     if (parsed.data.status === "completed") {
+      // Guard sisi server: box "completed" tanpa item membuat riwayat kosong & label terbuang.
+      const itemsNow = await db.select({ id: scanItemsTable.id }).from(scanItemsTable).where(eq(scanItemsTable.scanInId, params.data.id));
+      if (itemsNow.length === 0) { res.status(400).json({ error: "Sesi tidak memiliki item — butuh minimal 1 serial untuk diselesaikan" }); return; }
       updateData.completedAt = new Date();
     }
   }
@@ -164,10 +185,28 @@ router.delete("/scan-in/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  // Delete items first
-  await db.delete(scanItemsTable).where(eq(scanItemsTable.scanInId, params.data.id));
-  const [scanIn] = await db.delete(scanInTable).where(eq(scanInTable.id, params.data.id)).returning();
-  if (!scanIn) {
+  // SN yang SUDAH discan-out tidak boleh ikut hilang: item dispatch hanya di-LEPAS
+  // (scan_in_id = NULL) supaya riwayat keluar tetap utuh; hanya item yang belum pernah
+  // keluar yang dihapus. Satu transaksi utuh (dulu: items duluan, sesi belakangan).
+  if (!(await requireScanWrite(req, res))) return;
+  let deleted = false;
+  try {
+    deleted = await db.transaction(async (tx) => {
+      const [exists] = await tx.select({ id: scanInTable.id }).from(scanInTable).where(eq(scanInTable.id, params.data.id));
+      if (!exists) return false;
+      await tx.update(scanItemsTable).set({ scanInId: null })
+        .where(and(eq(scanItemsTable.scanInId, params.data.id), sql`${scanItemsTable.scanOutId} is not null`));
+      await tx.delete(scanItemsTable)
+        .where(and(eq(scanItemsTable.scanInId, params.data.id), sql`${scanItemsTable.scanOutId} is null`));
+      await tx.delete(scanInTable).where(eq(scanInTable.id, params.data.id));
+      return true;
+    });
+  } catch (err) {
+    logger.error({ err }, "scan-in: gagal menghapus sesi");
+    res.status(500).json({ error: "Gagal menghapus sesi" });
+    return;
+  }
+  if (!deleted) {
     res.status(404).json({ error: "ScanIn session not found" });
     return;
   }
@@ -175,6 +214,7 @@ router.delete("/scan-in/:id", async (req, res): Promise<void> => {
 });
 
 router.post("/scan-in/:id/complete-and-continue", async (req, res): Promise<void> => {
+  if (!(await requireScanWrite(req, res))) return;
   const params = UpdateScanInParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -192,6 +232,12 @@ router.post("/scan-in/:id/complete-and-continue", async (req, res): Promise<void
     return;
   }
 
+  const itemsNow = await db.select({ id: scanItemsTable.id }).from(scanItemsTable).where(eq(scanItemsTable.scanInId, params.data.id));
+  if (itemsNow.length === 0) {
+    res.status(400).json({ error: "Sesi tidak memiliki item — scan minimal 1 serial sebelum lanjut" });
+    return;
+  }
+
   try {
     // Complete the current session
     await db
@@ -206,13 +252,7 @@ router.post("/scan-in/:id/complete-and-continue", async (req, res): Promise<void
       return;
     }
 
-    // Count ALL sessions for this material to get next sequential number
-    const allSessions = await db
-      .select()
-      .from(scanInTable)
-      .where(eq(scanInTable.materialId, currentSession.materialId));
-    const seqNum = (allSessions.length + 1).toString().padStart(3, "0");
-    const boxLabel = `${material.code}${seqNum}`;
+    const boxLabel = await nextBoxLabelFor(currentSession.materialId, material.code);
 
     // Create new session with same material and user
     const [newScanIn] = await db
@@ -233,6 +273,7 @@ router.post("/scan-in/:id/complete-and-continue", async (req, res): Promise<void
 });
 
 router.post("/scan-in/:id/items", async (req, res): Promise<void> => {
+  if (!(await requireScanWrite(req, res))) return;
   const params = AddScanInItemParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -269,6 +310,7 @@ router.post("/scan-in/:id/items", async (req, res): Promise<void> => {
 });
 
 router.delete("/scan-in/:id/items/:itemId", async (req, res): Promise<void> => {
+  if (!(await requireScanWrite(req, res))) return;
   const params = DeleteScanInItemParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });

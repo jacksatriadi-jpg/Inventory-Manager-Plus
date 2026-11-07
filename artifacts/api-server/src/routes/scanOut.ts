@@ -2,6 +2,8 @@ import { Router } from "express";
 import type { IRouter } from "express";
 import { db, scanOutTable, scanItemsTable, scanInTable, materialsTable, usersTable } from "@workspace/db";
 import { eq, and, isNull } from "drizzle-orm";
+import { logger } from "../lib/logger";
+import { requireActor, requireScanWrite } from "../lib/request-auth";
 import {
   ListScanOutQueryParams,
   ListScanOutResponse,
@@ -37,6 +39,7 @@ async function buildScanOutResponse(scanOut: any) {
 }
 
 router.get("/scan-out", async (req, res): Promise<void> => {
+  if (!(await requireActor(req, res))) return;
   const params = ListScanOutQueryParams.safeParse(req.query);
   const materialId = params.success && params.data.materialId ? Number(params.data.materialId) : undefined;
 
@@ -67,18 +70,21 @@ router.get("/scan-out", async (req, res): Promise<void> => {
 });
 
 router.post("/scan-out", async (req, res): Promise<void> => {
+  const actor = await requireScanWrite(req, res);
+  if (!actor) return;
   const parsed = CreateScanOutBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
 
-  const [scanOut] = await db.insert(scanOutTable).values({ userId: parsed.data.userId }).returning();
+  const [scanOut] = await db.insert(scanOutTable).values({ userId: actor.id }).returning(); // selalu dari token
   const result = await buildScanOutResponse(scanOut);
   res.status(201).json(result);
 });
 
 router.get("/scan-out/:id", async (req, res): Promise<void> => {
+  if (!(await requireActor(req, res))) return;
   const params = GetScanOutParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -102,10 +108,23 @@ router.delete("/scan-out/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  // Unlink items from this scan-out (set scanOutId to null)
-  await db.update(scanItemsTable).set({ scanOutId: null }).where(eq(scanItemsTable.scanOutId, params.data.id));
-  const [scanOut] = await db.delete(scanOutTable).where(eq(scanOutTable.id, params.data.id)).returning();
-  if (!scanOut) {
+  if (!(await requireScanWrite(req, res))) return;
+  // Unlink items from this scan-out (set scanOutId to null) — atomik; SN tetap hidup.
+  let deleted = false;
+  try {
+    deleted = await db.transaction(async (tx) => {
+      const [exists] = await tx.select({ id: scanOutTable.id }).from(scanOutTable).where(eq(scanOutTable.id, params.data.id));
+      if (!exists) return false;
+      await tx.update(scanItemsTable).set({ scanOutId: null }).where(eq(scanItemsTable.scanOutId, params.data.id));
+      await tx.delete(scanOutTable).where(eq(scanOutTable.id, params.data.id));
+      return true;
+    });
+  } catch (err) {
+    logger.error({ err }, "scan-out: gagal menghapus sesi");
+    res.status(500).json({ error: "Gagal menghapus sesi" });
+    return;
+  }
+  if (!deleted) {
     res.status(404).json({ error: "ScanOut session not found" });
     return;
   }
@@ -113,6 +132,7 @@ router.delete("/scan-out/:id", async (req, res): Promise<void> => {
 });
 
 router.post("/scan-out/:id/items", async (req, res): Promise<void> => {
+  if (!(await requireScanWrite(req, res))) return;
   const params = AddScanOutItemParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });
@@ -135,36 +155,43 @@ router.post("/scan-out/:id/items", async (req, res): Promise<void> => {
     return;
   }
 
-  const processedItems = [];
-  for (const sn of serialNumbers) {
-    // Find the item in scan_in
-    const [item] = await db.select().from(scanItemsTable).where(eq(scanItemsTable.serialNumber, sn));
-    if (!item) {
-      res.status(404).json({ error: `Serial number not found in stock: ${sn}` });
-      return;
-    }
-    if (item.scanOutId != null) {
-      res.status(409).json({ error: `Serial number already scanned out: ${sn}` });
-      return;
-    }
-
-    const [updated] = await db
-      .update(scanItemsTable)
-      .set({ scanOutId: params.data.id })
-      .where(eq(scanItemsTable.serialNumber, sn))
-      .returning();
-
-    processedItems.push({
-      id: updated.id,
-      serialNumber: updated.serialNumber,
-      scanInId: updated.scanInId ?? null,
-      scanOutId: updated.scanOutId ?? null,
-      createdAt: updated.createdAt.toISOString(),
+  // ATOMIK: kalau satu serial gagal (tidak ditemukan / sudah keluar), seluruh QR di-rollback.
+  // Sebelumnya serial yang terlanjur diproses sebelum error tetap "keluar" di DB sementara
+  // UI menampilkan "Scan gagal" — stok & log sesi jadi tidak konsisten.
+  class ScanItemError extends Error { status: number; constructor(message: string, status: number) { super(message); this.status = status; } }
+  try {
+    const processedItems = await db.transaction(async (tx) => {
+      const out: any[] = [];
+      for (const sn of serialNumbers) {
+        const [item] = await tx.select().from(scanItemsTable).where(eq(scanItemsTable.serialNumber, sn));
+        if (!item) {
+          throw new ScanItemError(`Serial number not found in stock: ${sn}`, 404);
+        }
+        if (item.scanOutId != null) {
+          throw new ScanItemError(`Serial number already scanned out: ${sn}`, 409);
+        }
+        const [updated] = await tx
+          .update(scanItemsTable)
+          .set({ scanOutId: params.data.id })
+          .where(eq(scanItemsTable.serialNumber, sn))
+          .returning();
+        out.push({
+          id: updated.id,
+          serialNumber: updated.serialNumber,
+          scanInId: updated.scanInId ?? null,
+          scanOutId: updated.scanOutId ?? null,
+          createdAt: updated.createdAt.toISOString(),
+        });
+      }
+      return out;
     });
+    // Return the first processed item (or all — API only returns one ScanItem per call)
+    res.status(201).json(processedItems[0]);
+  } catch (err) {
+    if (err instanceof ScanItemError) { res.status(err.status).json({ error: err.message }); return; }
+    logger.error({ err }, "scan-out: gagal memproses item");
+    res.status(500).json({ error: "Gagal memproses item scan keluar" });
   }
-
-  // Return the first processed item (or all — API only returns one ScanItem per call)
-  res.status(201).json(processedItems[0]);
 });
 
 // Bulk variant used by "Scan Keluar" triggered from the Riwayat page: the
@@ -174,6 +201,7 @@ router.post("/scan-out/:id/items", async (req, res): Promise<void> => {
 // aborting the whole batch — a stale/partial selection from history is
 // expected, not an error case. The whole batch is applied atomically.
 router.post("/scan-out/:id/items/bulk", async (req, res): Promise<void> => {
+  if (!(await requireScanWrite(req, res))) return;
   const params = AddScanOutItemsBulkParams.safeParse(req.params);
   if (!params.success) {
     res.status(400).json({ error: params.error.message });

@@ -23,7 +23,7 @@ export const scanItemsTable = pgTable("scan_items", {
   id: serial("id").primaryKey(),
   serialNumber: text("serial_number").notNull().unique(),
   scanInId: integer("scan_in_id").references(() => scanInTable.id),
-  scanOutId: integer("scan_out_id"),
+  scanOutId: integer("scan_out_id").references(() => scanOutTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

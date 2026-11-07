@@ -322,6 +322,14 @@ async function setupDatabase() {
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS retur_item_cek_unit_stage_label_uidx ON retur_item_cek (unit_id, stage, item_label);`);
     // Kas Gudang: foto bukti/selfie pindah ke Google Drive (subfolder "KAS GUDANG"); kolom base64 lama
     // dibiarkan terisi utk baris historis sampai backfill mengosongkannya (hemat space DB).
+    // Integritas data scan: scan_out_id wajib merujuk sesi scan_out yang ada.
+    // (Saat deploy tidak ada baris menggantung — verified via dump; ON DELETE SET NULL
+    // menjaga SN tetap hidup kalau sesi keluar dihapus mentah di luar API.)
+    await pool.query(`
+      DO $$ BEGIN
+        ALTER TABLE scan_items ADD CONSTRAINT scan_items_scan_out_id_fkey FOREIGN KEY (scan_out_id) REFERENCES scan_out(id) ON DELETE SET NULL;
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+    `);
     await pool.query(`ALTER TABLE kas_transaksi ADD COLUMN IF NOT EXISTS bukti_file_id TEXT;`);
     await pool.query(`ALTER TABLE lembur_absensi ADD COLUMN IF NOT EXISTS selfie_file_id TEXT;`);
     // form_data: isian "A. DATA MATERIAL" per unit (pengawas); form_keputusan: K6/K7/K8 per unit (gudang).

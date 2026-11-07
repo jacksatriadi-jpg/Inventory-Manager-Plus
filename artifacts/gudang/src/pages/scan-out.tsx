@@ -10,10 +10,13 @@ import jsQR from "jsqr";
 import { useQueryClient } from "@tanstack/react-query";
 
 export default function ScanOutView() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const audioContextRef = useRef<AudioContext | null>(null);
+  const SESSION_KEY = user ? `active_scan_out_session_id_${user.id}` : "active_scan_out_session_id";
+  // Key per-user seperti halaman scan-in: sesi dispatch yang masih hidup di server
+  // tetap bisa dilanjutkan setelah refresh / tab tertutup, bukan jadi sesi yatim.
 
   const [activeSession, setActiveSession] = useState<any>(null);
   const [scannedBoxes, setScannedBoxes] = useState<any[]>([]);
@@ -39,6 +42,26 @@ export default function ScanOutView() {
   useEffect(() => {
     activeSessionRef.current = activeSession;
   }, [activeSession]);
+
+  // Pulihkan sesi dispatch yang masih ada di server (parity dgn restore scan-in).
+  useEffect(() => {
+    const savedId = localStorage.getItem(SESSION_KEY);
+    if (!savedId || !token) return;
+    fetch(`/api/scan-out/${savedId}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => (r.ok ? r.json() : null))
+      .then(session => {
+        if (session && typeof session.id === "number") {
+          setActiveSession(session);
+          const n = (session.items ?? []).length;
+          setScannedBoxes(n > 0 ? [{ id: "restored", count: n, preview: "Sesi dispatch dipulihkan dari server", time: new Date() }] : []);
+          toast({ title: "Sesi dispatch dilanjutkan", description: `${n} item sudah discan keluar pada sesi ini.` });
+        } else {
+          localStorage.removeItem(SESSION_KEY);
+        }
+      })
+      .catch(() => localStorage.removeItem(SESSION_KEY));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   const getAudioContext = () => {
     if (!audioContextRef.current) {
@@ -69,6 +92,7 @@ export default function ScanOutView() {
       const result = await createScanOutMutation.mutateAsync({ data: { userId: user.id } });
       setActiveSession(result);
       setScannedBoxes([]);
+      localStorage.setItem(SESSION_KEY, String(result.id));
       if (scanMethod === "manual") setTimeout(() => inputRef.current?.focus(), 100);
     } catch {
       toast({ title: "Gagal memulai sesi", variant: "destructive" });
@@ -123,6 +147,7 @@ export default function ScanOutView() {
   }, [addItemMutation, playBeep, scanMethod, toast]);
 
   const handleCompleteSession = () => {
+    localStorage.removeItem(SESSION_KEY);
     setActiveSession(null);
     setScannedBoxes([]);
     stopCamera();

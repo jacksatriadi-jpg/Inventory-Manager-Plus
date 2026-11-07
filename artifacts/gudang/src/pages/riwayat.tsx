@@ -69,7 +69,7 @@ export default function Riwayat() {
     [sortedMaterialStats],
   );
 
-  const { data: history, isLoading, refetch } = useListHistory({
+  const { data: history, isLoading, error, refetch } = useListHistory({
     type:       filterType === "all" ? undefined : filterType,
     materialId: filterMaterialId !== "all" ? Number(filterMaterialId) : undefined,
     from:       filterFrom ? filterFrom + "T00:00:00" : undefined,
@@ -669,10 +669,17 @@ export default function Riwayat() {
                     {pagedHistory.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={colSpan} className="h-32 text-center text-muted-foreground">
-                          <div className="flex flex-col items-center gap-2">
-                            <Search className="w-7 h-7 opacity-30" />
-                            <span>{searchQuery ? `Tidak ada hasil untuk "${searchQuery}"` : "Tidak ada transaksi ditemukan"}</span>
-                          </div>
+                          {error ? (
+                            <div className="flex flex-col items-center gap-2">
+                              <span className="text-destructive">Gagal memuat riwayat: {(error as Error)?.message || "terjadi kesalahan pada server"}.</span>
+                              <Button variant="outline" size="sm" onClick={() => refetch()}>Coba lagi</Button>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center gap-2">
+                              <Search className="w-7 h-7 opacity-30" />
+                              <span>{searchQuery ? `Tidak ada hasil untuk "${searchQuery}"` : "Tidak ada transaksi ditemukan"}</span>
+                            </div>
+                          )}
                         </TableCell>
                       </TableRow>
                     ) : (
