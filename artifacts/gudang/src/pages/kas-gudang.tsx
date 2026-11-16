@@ -118,7 +118,8 @@ export default function KasGudang() {
   const [filterKategori, setFilterKategori] = useState("");
   const [newKategori, setNewKategori]     = useState("");
   const [savingKategori, setSavingKategori] = useState(false);
-  const isMaster = (user as { role?: string } | null)?.role === "master";
+  const kasRole = (user as { role?: string } | null)?.role;
+  const canManageKategori = kasRole === "master" || kasRole === "bendahara";
 
   const [tipe, setTipe]             = useState<"masuk" | "keluar">("masuk");
   const [metode, setMetode]         = useState<"manual" | "ocr">("manual");
@@ -589,7 +590,7 @@ export default function KasGudang() {
                   : <SelectItem value="Kas Gudang">Kas Gudang</SelectItem>}
               </SelectContent>
             </Select>
-            {isMaster && (
+            {canManageKategori && (
               <div className="flex items-center gap-2">
                 <Input value={newKategori} onChange={e => setNewKategori(e.target.value)}
                   placeholder="Tentukan jenis kas baru (mis. Kas Operasional, Kas Proyek)" className="h-8 text-xs flex-1"

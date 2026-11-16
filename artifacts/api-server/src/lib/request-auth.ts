@@ -39,3 +39,14 @@ export async function requireMaster(req: Request, res: Response): Promise<ScanAc
   if (actor.role !== "master") { res.status(403).json({ error: "Hanya master yang dapat menghapus riwayat" }); return null; }
   return actor;
 }
+
+// Tulis utk himpunan role tertentu (mis. kategori Kas: master ATAU bendahara).
+export async function requireRoleIn(req: Request, res: Response, roles: string[]): Promise<ScanActor | null> {
+  const actor = await loadActor(req, res);
+  if (!actor) return null;
+  if (!roles.includes(actor.role)) {
+    res.status(403).json({ error: `Hanya ${roles.join(" atau ")} yang dapat melakukan ini` });
+    return null;
+  }
+  return actor;
+}

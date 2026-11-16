@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
 import { logger } from "../lib/logger";
-import { requireActor, requireMaster } from "../lib/request-auth";
+import { requireActor, requireRoleIn } from "../lib/request-auth";
 import { ensureReturFolder, ensureChildFolder, uploadReturDataUrl, deleteReturFile, downloadReturFile } from "../lib/retur-drive";
 
 // Foto Kas (bukti transaksi & selfie lembur) disimpan di Google Drive akun Retur,
@@ -181,7 +181,7 @@ router.get("/kas/kategori", async (req, res): Promise<void> => {
 });
 
 router.post("/kas/kategori", async (req, res): Promise<void> => {
-  if (!(await requireMaster(req, res))) return;
+  if (!(await requireRoleIn(req, res, ["master", "bendahara"]))) return;
   const nama = typeof (req.body ?? {}).nama === "string" ? (req.body as { nama: string }).nama.trim() : "";
   if (nama.length < 2 || nama.length > 40) { res.status(400).json({ error: "Nama kategori 2-40 karakter" }); return; }
   try {
@@ -196,7 +196,7 @@ router.post("/kas/kategori", async (req, res): Promise<void> => {
 });
 
 router.delete("/kas/kategori/:id", async (req, res): Promise<void> => {
-  if (!(await requireMaster(req, res))) return;
+  if (!(await requireRoleIn(req, res, ["master", "bendahara"]))) return;
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
   const chk = await pool.query("SELECT id, nama, is_default FROM kas_kategori WHERE id = $1", [id]);
