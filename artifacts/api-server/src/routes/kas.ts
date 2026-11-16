@@ -103,19 +103,41 @@ router.get("/kas/transaksi/:id", async (req, res): Promise<void> => {
   });
 });
 
-// ─── GET /api/kas/summary — total masuk, keluar, saldo ────────────────────
-router.get("/kas/summary", async (_req, res): Promise<void> => {
+// ─── GET /api/kas/summary — total masuk, keluar, saldo (+ per jenis kas) ──
+// ?kategori=... membatasi total utk satu jenis kas (dashboard ikut filter UI).
+router.get("/kas/summary", async (req, res): Promise<void> => {
+  const kategori = typeof req.query.kategori === "string" ? (req.query.kategori as string).trim() : "";
+  const where = kategori ? "WHERE kategori = $1" : "";
+  const args: any[] = kategori ? [kategori] : [];
   const result = await pool.query(
     `SELECT
        COALESCE(SUM(jumlah) FILTER (WHERE tipe = 'masuk'), 0)::bigint  AS total_masuk,
        COALESCE(SUM(jumlah) FILTER (WHERE tipe = 'keluar'), 0)::bigint AS total_keluar,
        COUNT(*)::int AS jumlah_transaksi
-     FROM kas_transaksi`,
+     FROM kas_transaksi ${where}`,
+    args,
   );
   const r = result.rows[0];
   const totalMasuk   = Number(r.total_masuk);
   const totalKeluar  = Number(r.total_keluar);
-  res.json({ totalMasuk, totalKeluar, saldo: totalMasuk - totalKeluar, jumlahTransaksi: r.jumlah_transaksi });
+  // Breakdown per jenis kas — selalu semua kategori (dashboard per-kas).
+  const per = await pool.query(
+    `SELECT kategori,
+       COALESCE(SUM(jumlah) FILTER (WHERE tipe = 'masuk'), 0)::bigint  AS masuk,
+       COALESCE(SUM(jumlah) FILTER (WHERE tipe = 'keluar'), 0)::bigint AS keluar,
+       COUNT(*)::int AS n
+     FROM kas_transaksi GROUP BY kategori ORDER BY kategori ASC`,
+  );
+  res.json({
+    totalMasuk, totalKeluar, saldo: totalMasuk - totalKeluar, jumlahTransaksi: r.jumlah_transaksi,
+    perKategori: per.rows.map(k => ({
+      kategori: k.kategori as string,
+      masuk: Number(k.masuk),
+      keluar: Number(k.keluar),
+      saldo: Number(k.masuk) - Number(k.keluar),
+      jumlahTransaksi: k.n as number,
+    })),
+  });
 });
 
 // ─── POST /api/kas/transaksi — buat transaksi manual / OCR ────────────────

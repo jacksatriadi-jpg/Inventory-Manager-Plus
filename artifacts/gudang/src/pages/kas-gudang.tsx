@@ -33,7 +33,8 @@ interface KasRecord {
   userName: string;
   createdAt: string;
 }
-interface Summary { totalMasuk: number; totalKeluar: number; saldo: number; jumlahTransaksi: number; }
+interface PerKategori { kategori: string; masuk: number; keluar: number; saldo: number; jumlahTransaksi: number; }
+interface Summary { totalMasuk: number; totalKeluar: number; saldo: number; jumlahTransaksi: number; perKategori: PerKategori[]; }
 
 const fmt = (n: number) => "Rp " + new Intl.NumberFormat("id-ID").format(n);
 
@@ -148,7 +149,7 @@ export default function KasGudang() {
   const loadData = useCallback(async () => {
     try {
       const [sumRes, recRes] = await Promise.all([
-        fetch("/api/kas/summary"),
+        fetch(`/api/kas/summary${filterKategori ? `?kategori=${encodeURIComponent(filterKategori)}` : ""}`),
         fetch(`/api/kas/transaksi?${new URLSearchParams({ ...(search ? { search } : {}), ...(filterKategori ? { kategori: filterKategori } : {}) }).toString()}`),
       ]);
       if (sumRes.ok) setSummary(await sumRes.json());
@@ -571,9 +572,36 @@ export default function KasGudang() {
         </CardContent></Card>
         <Card><CardContent className="p-5 flex items-center gap-4">
           <div className="p-3 bg-primary/10 rounded-full"><Wallet className="w-6 h-6 text-primary" /></div>
-          <div><p className="text-xs uppercase font-semibold text-muted-foreground">Saldo Kas</p><p className="text-xl font-bold">{summary ? fmt(summary.saldo) : "-"}</p></div>
+          <div><p className="text-xs uppercase font-semibold text-muted-foreground">Saldo Kas{filterKategori ? ` — ${filterKategori}` : ""}</p><p className="text-xl font-bold">{summary ? fmt(summary.saldo) : "-"}</p></div>
         </CardContent></Card>
       </div>
+
+      {/* Dashboard per jenis kas — muncul saat ada >1 kategori */}
+      {(summary?.perKategori ?? []).length > 1 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {summary!.perKategori.map(k => (
+            <Card key={k.kategori} className={filterKategori === k.kategori ? "ring-2 ring-primary" : ""}>
+              <CardContent className="p-5 flex items-center gap-4">
+                <div className="p-3 bg-primary/10 rounded-full"><Wallet className="w-6 h-6 text-primary" /></div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs uppercase font-semibold text-muted-foreground truncate">{k.kategori}</p>
+                  <p className="text-xl font-bold">{fmt(k.saldo)}</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    <span className="text-green-600">+{new Intl.NumberFormat("id-ID").format(k.masuk)}</span>
+                    {" · "}
+                    <span className="text-red-600">-{new Intl.NumberFormat("id-ID").format(k.keluar)}</span>
+                    {" · "}
+                    {k.jumlahTransaksi} trx
+                  </p>
+                </div>
+                <Button variant="outline" size="sm" onClick={() => setFilterKategori(filterKategori === k.kategori ? "" : k.kategori)}>
+                  {filterKategori === k.kategori ? "Lepas" : "Filter"}
+                </Button>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
       {/* Form input */}
       {view === "kas" && (<>
