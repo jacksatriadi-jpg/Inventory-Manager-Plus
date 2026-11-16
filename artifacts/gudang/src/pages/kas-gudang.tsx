@@ -148,14 +148,15 @@ export default function KasGudang() {
 
   const loadData = useCallback(async () => {
     try {
+      const authH = { Authorization: `Bearer ${token ?? ""}` };
       const [sumRes, recRes] = await Promise.all([
-        fetch(`/api/kas/summary${filterKategori ? `?kategori=${encodeURIComponent(filterKategori)}` : ""}`),
-        fetch(`/api/kas/transaksi?${new URLSearchParams({ ...(search ? { search } : {}), ...(filterKategori ? { kategori: filterKategori } : {}) }).toString()}`),
+        fetch(`/api/kas/summary${filterKategori ? `?kategori=${encodeURIComponent(filterKategori)}` : ""}`, { headers: authH }),
+        fetch(`/api/kas/transaksi?${new URLSearchParams({ ...(search ? { search } : {}), ...(filterKategori ? { kategori: filterKategori } : {}) }).toString()}`, { headers: authH }),
       ]);
       if (sumRes.ok) setSummary(await sumRes.json());
       if (recRes.ok) setRecords(await recRes.json());
     } catch { /* ignore */ } finally { setIsLoading(false); }
-  }, [search, filterKategori]);
+  }, [search, filterKategori, token]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -493,7 +494,7 @@ export default function KasGudang() {
     try {
       const res = await fetch("/api/kas/transaksi", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token ?? ""}` },
         body: JSON.stringify({
         tipe, metode, jumlah: amt,
         kategori,
@@ -536,7 +537,7 @@ export default function KasGudang() {
     if (!deleteTarget) return;
     setDeleting(true);
     try {
-      const res = await fetch(`/api/kas/transaksi/${deleteTarget.id}`, { method: "DELETE" });
+      const res = await fetch(`/api/kas/transaksi/${deleteTarget.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token ?? ""}` } });
       if (res.ok) { toast({ title: "Transaksi dihapus" }); setDeleteTarget(null); loadData(); }
       else toast({ title: "Gagal menghapus", variant: "destructive" });
     } finally { setDeleting(false); }
