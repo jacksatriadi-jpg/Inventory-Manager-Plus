@@ -130,8 +130,12 @@ export function Layout({ children }: LayoutProps) {
   const menuItems = isGuest
     ? ALL_MENUS.filter(m => ["/dashboard", "/riwayat"].includes(m.href))
     : ALL_MENUS.filter(menu => {
-        // Kas Gudang khusus untuk user Bendahara
-        if (menu.href === "/kas-gudang") return user?.role === "bendahara";
+        // Kas Gudang: role bendahara, ATAU user dgn akses eksplisit
+        // ("/kas-gudang" = kas default saja; "kas:all" = semua jenis kas).
+        if (menu.href === "/kas-gudang") {
+          const acc = (user?.menuAccess as string[]) || [];
+          return user?.role === "bendahara" || acc.includes("/kas-gudang") || acc.includes("kas:all");
+        }
         // Retur: kapabilitas "retur:gudang" saja tetap memberi akses menu /retur
         if (menu.href === "/retur") {
           const acc = (user?.menuAccess as string[]) || [];

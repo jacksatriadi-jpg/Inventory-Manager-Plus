@@ -26,6 +26,18 @@ async function storeKasPhoto(dataUrl: string | null, name: string): Promise<{ fi
 
 const router: IRouter = Router();
 
+// ─── Scope jenis kas per user ─────────────────────────────────────────────
+// master / bendahara / user dgn cap "kas:all"  → semua jenis kas
+// user dengan akses dasar "/kas-gudang"        → hanya kategori default
+const DEFAULT_KAS = "Kas Gudang";
+async function kasScope(req: Request, res: Response): Promise<"all" | "default" | null> {
+  const actor = await requireActor(req, res);
+  if (!actor) return null;
+  if (actor.role === "master" || actor.role === "bendahara") return "all";
+  if (actor.menuAccess.includes("kas:all")) return "all";
+  return "default";
+}
+
 // ─── GET /api/kas/file/:fileId — stream bytes foto bukti/selfie dari Drive ──
 // DriveImg di halaman kas memakai endpoint ini, BUKAN /api/retur/file/:id yang
 // mengunci akses ke pengguna modul Retur (akun khusus kas akan dapat 403).
@@ -45,14 +57,22 @@ router.get("/kas/file/:fileId", async (req, res): Promise<void> => {
 
 // ─── GET /api/kas/transaksi — daftar transaksi (filter: tipe, search) ─────
 router.get("/kas/transaksi", async (req, res): Promise<void> => {
+  const scope = await kasScope(req, res);
+  if (!scope) return;
   const tipe   = typeof req.query.tipe   === "string" && ["masuk", "keluar"].includes(req.query.tipe as string) ? req.query.tipe as string : null;
   const search = typeof req.query.search === "string" ? (req.query.search as string).trim() : "";
   const kategori = typeof req.query.kategori === "string" ? (req.query.kategori as string).trim() : "";
 
+  if (scope === "default" && kategori && kategori !== DEFAULT_KAS) {
+    res.status(403).json({ error: "Anda hanya dapat mengakses jenis kas default" }); return;
+  }
   const args: any[] = [];
   const conds: string[] = [];
+  if (scope === "default") {
+    args.push(DEFAULT_KAS); conds.push(`k.kategori = $${args.length}`);
+  }
   if (tipe)   { args.push(tipe); conds.push(`k.tipe = $${args.length}`); }
-  if (kategori) { args.push(kategori); conds.push(`k.kategori = $${args.length}`); }
+  if (kategori && scope === "all") { args.push(kategori); conds.push(`k.kategori = $${args.length}`); }
   if (search) { args.push(`%${search}%`); conds.push(`(k.keterangan ILIKE $${args.length} OR u.username ILIKE $${args.length})`); }
   const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
 
@@ -84,6 +104,8 @@ router.get("/kas/transaksi", async (req, res): Promise<void> => {
 
 // ─── GET /api/kas/transaksi/:id — detail (termasuk foto bukti) ────────────
 router.get("/kas/transaksi/:id", async (req, res): Promise<void> => {
+  const scope = await kasScope(req, res);
+  if (!scope) return;
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
   const result = await pool.query(
@@ -93,6 +115,9 @@ router.get("/kas/transaksi/:id", async (req, res): Promise<void> => {
     [id],
   );
   if (result.rowCount === 0) { res.status(404).json({ error: "Transaksi tidak ditemukan" }); return; }
+  if (scope === "default" && (result.rows[0].kategori as string || DEFAULT_KAS) !== DEFAULT_KAS) {
+    res.status(404).json({ error: "Transaksi tidak ditemukan" }); return;
+  }
   const r = result.rows[0];
   res.json({
     id: r.id, tipe: r.tipe, metode: r.metode, jumlah: Number(r.jumlah),
@@ -106,9 +131,17 @@ router.get("/kas/transaksi/:id", async (req, res): Promise<void> => {
 // ─── GET /api/kas/summary — total masuk, keluar, saldo (+ per jenis kas) ──
 // ?kategori=... membatasi total utk satu jenis kas (dashboard ikut filter UI).
 router.get("/kas/summary", async (req, res): Promise<void> => {
+  const scope = await kasScope(req, res);
+  if (!scope) return;
   const kategori = typeof req.query.kategori === "string" ? (req.query.kategori as string).trim() : "";
-  const where = kategori ? "WHERE kategori = $1" : "";
-  const args: any[] = kategori ? [kategori] : [];
+  const args: any[] = [];
+  const conds: string[] = [];
+  if (scope === "default") { args.push(DEFAULT_KAS); conds.push(`kategori = $${args.length}`); }
+  else if (kategori) {
+    if (kategori !== DEFAULT_KAS) { res.status(403).json({ error: "Anda hanya dapat mengakses jenis kas default" }); return; }
+    args.push(kategori); conds.push(`kategori = $${args.length}`);
+  }
+  const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
   const result = await pool.query(
     `SELECT
        COALESCE(SUM(jumlah) FILTER (WHERE tipe = 'masuk'), 0)::bigint  AS total_masuk,
@@ -120,13 +153,17 @@ router.get("/kas/summary", async (req, res): Promise<void> => {
   const r = result.rows[0];
   const totalMasuk   = Number(r.total_masuk);
   const totalKeluar  = Number(r.total_keluar);
-  // Breakdown per jenis kas — selalu semua kategori (dashboard per-kas).
+  // Breakdown per jenis kas — utk scope "default" hanya baris default.
+  const perConds: string[] = scope === "default" ? [`kategori = $1`] : [];
+  const perArgs: any[] = scope === "default" ? [DEFAULT_KAS] : [];
+  const perWhere = perConds.length ? "WHERE " + perConds.join(" AND ") : "";
   const per = await pool.query(
     `SELECT kategori,
        COALESCE(SUM(jumlah) FILTER (WHERE tipe = 'masuk'), 0)::bigint  AS masuk,
        COALESCE(SUM(jumlah) FILTER (WHERE tipe = 'keluar'), 0)::bigint AS keluar,
        COUNT(*)::int AS n
-     FROM kas_transaksi GROUP BY kategori ORDER BY kategori ASC`,
+     FROM kas_transaksi ${perWhere} GROUP BY kategori ORDER BY kategori ASC`,
+    perArgs,
   );
   res.json({
     totalMasuk, totalKeluar, saldo: totalMasuk - totalKeluar, jumlahTransaksi: r.jumlah_transaksi,
@@ -142,6 +179,8 @@ router.get("/kas/summary", async (req, res): Promise<void> => {
 
 // ─── POST /api/kas/transaksi — buat transaksi manual / OCR ────────────────
 router.post("/kas/transaksi", async (req, res): Promise<void> => {
+  const scope = await kasScope(req, res);
+  if (!scope) return;
   const { tipe, metode, jumlah, keterangan, buktiImage, userId } = req.body ?? {};
   // Jenis kas: default "Kas Gudang"; kategori custom harus sudah ada di kas_kategori.
   let kat = "Kas Gudang";
@@ -149,6 +188,9 @@ router.post("/kas/transaksi", async (req, res): Promise<void> => {
     kat = (req.body as { kategori: string }).kategori.trim().slice(0, 40);
     const kc = await pool.query("SELECT id FROM kas_kategori WHERE nama = $1", [kat]);
     if (kc.rowCount === 0) { res.status(400).json({ error: `Jenis kas "${kat}" tidak dikenal — tambahkan dulu di halaman Kas Gudang` }); return; }
+  }
+  if (scope === "default" && kat !== DEFAULT_KAS) {
+    res.status(403).json({ error: "Anda hanya dapat mencatat pada jenis kas default" }); return;
   }
 
   if (!["masuk", "keluar"].includes(tipe)) { res.status(400).json({ error: "Tipe harus 'masuk' atau 'keluar'" }); return; }
@@ -179,8 +221,15 @@ router.post("/kas/transaksi", async (req, res): Promise<void> => {
 
 // ─── DELETE /api/kas/transaksi/:id ────────────────────────────────────────
 router.delete("/kas/transaksi/:id", async (req, res): Promise<void> => {
+  const scope = await kasScope(req, res);
+  if (!scope) return;
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
+  const pre = await pool.query("SELECT kategori FROM kas_transaksi WHERE id = $1", [id]);
+  if (pre.rowCount === 0) { res.status(404).json({ error: "Transaksi tidak ditemukan" }); return; }
+  if (scope === "default" && (pre.rows[0].kategori as string || DEFAULT_KAS) !== DEFAULT_KAS) {
+    res.status(404).json({ error: "Transaksi tidak ditemukan" }); return;
+  }
   const result = await pool.query("DELETE FROM kas_transaksi WHERE id = $1 RETURNING bukti_file_id", [id]);
   if (result.rowCount && result.rowCount > 0) {
     const f = result.rows[0].bukti_file_id;
@@ -192,9 +241,13 @@ router.delete("/kas/transaksi/:id", async (req, res): Promise<void> => {
 
 // ─── Kas kategori (jenis kas) — 100% aditif, baris lama tak pernah disentuh ──
 router.get("/kas/kategori", async (req, res): Promise<void> => {
-  if (!(await requireActor(req, res))) return;
+  const scope = await kasScope(req, res);
+  if (!scope) return;
   try {
-    const result = await pool.query("SELECT id, nama, is_default FROM kas_kategori ORDER BY is_default DESC, nama ASC");
+    const sql = scope === "all"
+      ? "SELECT id, nama, is_default FROM kas_kategori ORDER BY is_default DESC, nama ASC"
+      : "SELECT id, nama, is_default FROM kas_kategori WHERE is_default = TRUE ORDER BY is_default DESC, nama ASC";
+    const result = await pool.query(sql);
     res.json(result.rows.map(k => ({ id: k.id, nama: k.nama, isDefault: k.is_default })));
   } catch (err) {
     logger.error({ err }, "Kas: gagal memuat kategori");
