@@ -158,11 +158,11 @@ export async function forceReturTokenRefresh(): Promise<Awaited<ReturnType<typeo
   if (!config?.refresh_token) {
     throw new Error("Tidak ada refresh token — hubungkan ulang akun Drive di tab ini.");
   }
+  // Client segar dengan HANYA refresh token: getAccessToken() pasti jalan
+  // jalur refresh (tanpa access token lama yang mungkin membuat library skip).
   const client = getReturClient();
   client.setCredentials({
-    access_token: config.access_token ?? undefined,
     refresh_token: config.refresh_token,
-    expiry_date: 0,
   });
   const { token } = await client.getAccessToken();
   if (!token) {

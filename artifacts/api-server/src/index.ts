@@ -1,6 +1,12 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 
+// Safety net: unhandled rejection (mis. retry internal googleapis) cukup
+// di-log, jangan matikan server — Node 18 default mengakhiri proses.
+process.on("unhandledRejection", (reason) => {
+  logger.error({ err: reason }, "Unhandled promise rejection (dilog, proses tetap hidup)");
+});
+
 const rawPort = process.env["PORT"];
 
 if (!rawPort) {
