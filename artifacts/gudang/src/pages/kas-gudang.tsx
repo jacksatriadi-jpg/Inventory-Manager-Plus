@@ -14,10 +14,9 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  import { Wallet, ArrowDownCircle, ArrowUpCircle, Trash2, Camera, Loader2, ScanText, ImageOff, RefreshCw,
-    FileDown, Printer, Clock, Pencil, UserPlus, MapPin, Smile, Plus,
-  } from "lucide-react";
+import { Wallet, ArrowDownCircle, ArrowUpCircle, Trash2, Camera, Loader2, ScanText, ImageOff, RefreshCw,
+  FileDown, Printer, Clock, Pencil, UserPlus, MapPin, Smile, Plus,
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import * as XLSX from "xlsx";
@@ -29,6 +28,7 @@ interface KasRecord {
   metode: "manual" | "ocr";
   jumlah: number;
   keterangan: string | null;
+  kategori: string;
   hasBukti: boolean;
   userName: string;
   createdAt: string;
