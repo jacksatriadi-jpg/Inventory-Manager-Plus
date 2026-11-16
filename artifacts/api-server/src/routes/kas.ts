@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import { pool } from "@workspace/db";
 import { logger } from "../lib/logger";
+import { requireActor, requireMaster } from "../lib/request-auth";
 import { ensureReturFolder, ensureChildFolder, uploadReturDataUrl, deleteReturFile, downloadReturFile } from "../lib/retur-drive";
 
 // Foto Kas (bukti transaksi & selfie lembur) disimpan di Google Drive akun Retur,
@@ -46,15 +47,17 @@ router.get("/kas/file/:fileId", async (req, res): Promise<void> => {
 router.get("/kas/transaksi", async (req, res): Promise<void> => {
   const tipe   = typeof req.query.tipe   === "string" && ["masuk", "keluar"].includes(req.query.tipe as string) ? req.query.tipe as string : null;
   const search = typeof req.query.search === "string" ? (req.query.search as string).trim() : "";
+  const kategori = typeof req.query.kategori === "string" ? (req.query.kategori as string).trim() : "";
 
   const args: any[] = [];
   const conds: string[] = [];
   if (tipe)   { args.push(tipe); conds.push(`k.tipe = $${args.length}`); }
+  if (kategori) { args.push(kategori); conds.push(`k.kategori = $${args.length}`); }
   if (search) { args.push(`%${search}%`); conds.push(`(k.keterangan ILIKE $${args.length} OR u.username ILIKE $${args.length})`); }
   const where = conds.length ? "WHERE " + conds.join(" AND ") : "";
 
   const result = await pool.query(
-    `SELECT k.id, k.tipe, k.metode, k.jumlah, k.keterangan,
+    `SELECT k.id, k.tipe, k.metode, k.jumlah, k.keterangan, k.kategori,
             (k.bukti_image IS NOT NULL OR k.bukti_file_id IS NOT NULL) AS has_bukti,
             k.user_id, u.username, k.created_at
      FROM kas_transaksi k
@@ -71,6 +74,7 @@ router.get("/kas/transaksi", async (req, res): Promise<void> => {
     metode: r.metode,
     jumlah: Number(r.jumlah),
     keterangan: r.keterangan ?? null,
+    kategori: (r.kategori as string) || "Kas Gudang",
     hasBukti: r.has_bukti,
     userId: r.user_id,
     userName: r.username,
@@ -83,7 +87,7 @@ router.get("/kas/transaksi/:id", async (req, res): Promise<void> => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
   const result = await pool.query(
-    `SELECT k.id, k.tipe, k.metode, k.jumlah, k.keterangan, k.bukti_image, k.bukti_file_id,
+    `SELECT k.id, k.tipe, k.metode, k.jumlah, k.keterangan, k.kategori, k.bukti_image, k.bukti_file_id,
             k.user_id, u.username, k.created_at
      FROM kas_transaksi k JOIN users u ON u.id = k.user_id WHERE k.id = $1`,
     [id],
@@ -92,7 +96,8 @@ router.get("/kas/transaksi/:id", async (req, res): Promise<void> => {
   const r = result.rows[0];
   res.json({
     id: r.id, tipe: r.tipe, metode: r.metode, jumlah: Number(r.jumlah),
-    keterangan: r.keterangan ?? null, buktiImage: r.bukti_image ?? null, buktiFileId: r.bukti_file_id ?? null,
+    keterangan: r.keterangan ?? null, kategori: (r.kategori as string) || "Kas Gudang",
+    buktiImage: r.bukti_image ?? null, buktiFileId: r.bukti_file_id ?? null,
     userId: r.user_id, userName: r.username,
     createdAt: new Date(r.created_at).toISOString(),
   });
@@ -116,6 +121,13 @@ router.get("/kas/summary", async (_req, res): Promise<void> => {
 // ─── POST /api/kas/transaksi — buat transaksi manual / OCR ────────────────
 router.post("/kas/transaksi", async (req, res): Promise<void> => {
   const { tipe, metode, jumlah, keterangan, buktiImage, userId } = req.body ?? {};
+  // Jenis kas: default "Kas Gudang"; kategori custom harus sudah ada di kas_kategori.
+  let kat = "Kas Gudang";
+  if (typeof (req.body ?? {}).kategori === "string" && (req.body as { kategori: string }).kategori.trim()) {
+    kat = (req.body as { kategori: string }).kategori.trim().slice(0, 40);
+    const kc = await pool.query("SELECT id FROM kas_kategori WHERE nama = $1", [kat]);
+    if (kc.rowCount === 0) { res.status(400).json({ error: `Jenis kas "${kat}" tidak dikenal — tambahkan dulu di halaman Kas Gudang` }); return; }
+  }
 
   if (!["masuk", "keluar"].includes(tipe)) { res.status(400).json({ error: "Tipe harus 'masuk' atau 'keluar'" }); return; }
   if (!["manual", "ocr"].includes(metode)) { res.status(400).json({ error: "Metode harus 'manual' atau 'ocr'" }); return; }
@@ -131,9 +143,9 @@ router.post("/kas/transaksi", async (req, res): Promise<void> => {
   try {
     const stored = await storeKasPhoto(rawBukti, `KAS-BUKTI-${Date.now()}.jpg`);
     const result = await pool.query(
-      `INSERT INTO kas_transaksi (tipe, metode, jumlah, keterangan, bukti_image, bukti_file_id, user_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-      [tipe, metode, Math.round(amt), (typeof keterangan === "string" ? keterangan.trim() : null) || null,
+      `INSERT INTO kas_transaksi (tipe, metode, jumlah, keterangan, kategori, bukti_image, bukti_file_id, user_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [tipe, metode, Math.round(amt), (typeof keterangan === "string" ? keterangan.trim() : null) || null, kat,
        stored.fallback ? rawBukti : null, stored.fileId, userId],
     );
     res.status(201).json({ id: result.rows[0].id, buktiDiDrive: !!stored.fileId });
@@ -154,6 +166,48 @@ router.delete("/kas/transaksi/:id", async (req, res): Promise<void> => {
     res.sendStatus(204); return;
   }
   res.status(404).json({ error: "Transaksi tidak ditemukan" });
+});
+
+// ─── Kas kategori (jenis kas) — 100% aditif, baris lama tak pernah disentuh ──
+router.get("/kas/kategori", async (req, res): Promise<void> => {
+  if (!(await requireActor(req, res))) return;
+  try {
+    const result = await pool.query("SELECT id, nama, is_default FROM kas_kategori ORDER BY is_default DESC, nama ASC");
+    res.json(result.rows.map(k => ({ id: k.id, nama: k.nama, isDefault: k.is_default })));
+  } catch (err) {
+    logger.error({ err }, "Kas: gagal memuat kategori");
+    res.status(500).json({ error: "Gagal memuat kategori" });
+  }
+});
+
+router.post("/kas/kategori", async (req, res): Promise<void> => {
+  if (!(await requireMaster(req, res))) return;
+  const nama = typeof (req.body ?? {}).nama === "string" ? (req.body as { nama: string }).nama.trim() : "";
+  if (nama.length < 2 || nama.length > 40) { res.status(400).json({ error: "Nama kategori 2-40 karakter" }); return; }
+  try {
+    await pool.query("INSERT INTO kas_kategori (nama) VALUES ($1)", [nama]);
+    res.status(201).json({ ok: true, nama });
+  } catch (err: unknown) {
+    const code = typeof err === "object" && err !== null && "code" in err ? (err as { code?: string }).code : undefined;
+    if (code === "23505") { res.status(409).json({ error: `Kategori "${nama}" sudah ada` }); return; }
+    logger.error({ err }, "Kas: gagal tambah kategori");
+    res.status(500).json({ error: "Gagal menambah kategori" });
+  }
+});
+
+router.delete("/kas/kategori/:id", async (req, res): Promise<void> => {
+  if (!(await requireMaster(req, res))) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
+  const chk = await pool.query("SELECT id, nama, is_default FROM kas_kategori WHERE id = $1", [id]);
+  if (chk.rowCount === 0) { res.status(404).json({ error: "Kategori tidak ditemukan" }); return; }
+  const row = chk.rows[0];
+  if (row.is_default) { res.status(400).json({ error: "Kategori bawaan 'Kas Gudang' tidak dapat dihapus" }); return; }
+  const used = await pool.query("SELECT count(*)::int AS n FROM kas_transaksi WHERE kategori = $1", [row.nama]);
+  const n = used.rows[0].n as number;
+  if (n > 0) { res.status(409).json({ error: `Kategori "${row.nama}" masih dipakai ${n} transaksi — tidak dihapus supaya data tetap terlacak` }); return; }
+  await pool.query("DELETE FROM kas_kategori WHERE id = $1", [id]);
+  res.sendStatus(204);
 });
 
 // ═══ LEMBUR: karyawan ═══════════════════════════════════════════════════

@@ -1,4 +1,4 @@
-import { pgTable, text, serial, bigint, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, bigint, integer, timestamp, boolean } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 
 // Kas kecil gudang — transaksi kas masuk/keluar
@@ -10,12 +10,21 @@ export const kasTransaksiTable = pgTable("kas_transaksi", {
   metode: text("metode").notNull().default("manual"),
   jumlah: bigint("jumlah", { mode: "number" }).notNull(),
   keterangan: text("keterangan"),
+  kategori: text("kategori").notNull().default("Kas Gudang"), // jenis kas (default "Kas Gudang" + kategori custom user)
   buktiImage: text("bukti_image"), // data URL base64 (fallback lama; foto baru → Drive)
   userId: integer("user_id").notNull().references(() => usersTable.id),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export type KasTransaksi = typeof kasTransaksiTable.$inferSelect;
+
+// ─── Kas: kategori/jenis kas ("Kas Gudang" default + kategori yang ditentukan user) ──
+export const kasKategoriTable = pgTable("kas_kategori", {
+  id: serial("id").primaryKey(),
+  nama: text("nama").notNull().unique(),
+  isDefault: boolean("is_default").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ─── Lembur: karyawan tetap untuk absensi lembur Sabtu/Minggu ─────────────
 export const lemburKaryawanTable = pgTable("lembur_karyawan", {

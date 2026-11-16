@@ -15,10 +15,11 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
-  Wallet, ArrowDownCircle, ArrowUpCircle, Trash2, Camera, Loader2, ScanText, ImageOff, RefreshCw,
-  FileDown, Printer, Clock, Pencil, UserPlus, MapPin, Smile,
-} from "lucide-react";
+  import { Wallet, ArrowDownCircle, ArrowUpCircle, Trash2, Camera, Loader2, ScanText, ImageOff, RefreshCw,
+    FileDown, Printer, Clock, Pencil, UserPlus, MapPin, Smile, Plus,
+  } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import * as XLSX from "xlsx";
 import jsPDF from "jspdf";
 
@@ -103,13 +104,21 @@ function parseAmountFromOcr(text: string): number | null {
 }
 
 export default function KasGudang() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const { toast } = useToast();
 
   const [summary, setSummary]       = useState<Summary | null>(null);
   const [records, setRecords]       = useState<KasRecord[]>([]);
   const [isLoading, setIsLoading]   = useState(true);
   const [search, setSearch]         = useState("");
+
+  // ── Jenis Kas (kategori): default "Kas Gudang" + kategori yang ditentukan sendiri ──
+  const [kategoriList, setKategoriList]   = useState<{ id: number; nama: string; isDefault: boolean }[]>([]);
+  const [kategori, setKategori]           = useState("Kas Gudang");
+  const [filterKategori, setFilterKategori] = useState("");
+  const [newKategori, setNewKategori]     = useState("");
+  const [savingKategori, setSavingKategori] = useState(false);
+  const isMaster = (user as { role?: string } | null)?.role === "master";
 
   const [tipe, setTipe]             = useState<"masuk" | "keluar">("masuk");
   const [metode, setMetode]         = useState<"manual" | "ocr">("manual");
@@ -139,14 +148,22 @@ export default function KasGudang() {
     try {
       const [sumRes, recRes] = await Promise.all([
         fetch("/api/kas/summary"),
-        fetch(`/api/kas/transaksi${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+        fetch(`/api/kas/transaksi?${new URLSearchParams({ ...(search ? { search } : {}), ...(filterKategori ? { kategori: filterKategori } : {}) }).toString()}`),
       ]);
       if (sumRes.ok) setSummary(await sumRes.json());
       if (recRes.ok) setRecords(await recRes.json());
     } catch { /* ignore */ } finally { setIsLoading(false); }
-  }, [search]);
+  }, [search, filterKategori]);
 
   useEffect(() => { loadData(); }, [loadData]);
+
+  const loadKategori = useCallback(async () => {
+    try {
+      const res = await fetch("/api/kas/kategori", { headers: { Authorization: `Bearer ${token ?? ""}` } });
+      if (res.ok) setKategoriList(await res.json());
+    } catch { /* non-fatal — dropdown tetap punya "Kas Gudang" */ }
+  }, [token]);
+  useEffect(() => { loadKategori(); }, [loadKategori]);
 
   const loadLembur = useCallback(async () => {
     try {
@@ -476,10 +493,11 @@ export default function KasGudang() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tipe, metode, jumlah: amt,
-          keterangan: keterangan.trim() || (tipe === "masuk" ? "Kas masuk" : "Kas keluar"),
-          buktiImage: buktiImage,
-          userId: user.id,
+        tipe, metode, jumlah: amt,
+        kategori,
+        keterangan: keterangan.trim() || (tipe === "masuk" ? "Kas masuk" : "Kas keluar"),
+        buktiImage: buktiImage,
+        userId: user.id,
         }),
       });
       if (!res.ok) {
@@ -492,6 +510,24 @@ export default function KasGudang() {
       setOcrStatus("idle"); setOcrText(""); setMetode("manual");
       loadData();
     } finally { setSubmitting(false); }
+  };
+
+  const handleAddKategori = async () => {
+    const nama = newKategori.trim();
+    if (nama.length < 2) { toast({ title: "Nama kategori minimal 2 karakter", variant: "destructive" }); return; }
+    setSavingKategori(true);
+    try {
+      const res = await fetch("/api/kas/kategori", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token ?? ""}` },
+        body: JSON.stringify({ nama }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { toast({ title: "Gagal menambah kategori", description: d.error, variant: "destructive" }); return; }
+      toast({ title: "Kategori ditambahkan", description: `"${nama}" kini tersedia di dropdown Jenis Kas.` });
+      setNewKategori("");
+      loadKategori();
+    } finally { setSavingKategori(false); }
   };
 
   const handleDelete = async () => {
@@ -543,6 +579,27 @@ export default function KasGudang() {
       <Card>
         <CardHeader><CardTitle className="text-base">Catat Transaksi</CardTitle></CardHeader>
         <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label className="text-sm font-medium">Jenis Kas <span className="text-red-600">*</span></Label>
+            <Select value={kategori} onValueChange={setKategori}>
+              <SelectTrigger className="w-full"><SelectValue placeholder="Pilih jenis kas" /></SelectTrigger>
+              <SelectContent>
+                {kategoriList.length > 0
+                  ? kategoriList.map(k => <SelectItem key={k.id} value={k.nama}>{k.nama}</SelectItem>)
+                  : <SelectItem value="Kas Gudang">Kas Gudang</SelectItem>}
+              </SelectContent>
+            </Select>
+            {isMaster && (
+              <div className="flex items-center gap-2">
+                <Input value={newKategori} onChange={e => setNewKategori(e.target.value)}
+                  placeholder="Tentukan jenis kas baru (mis. Kas Operasional, Kas Proyek)" className="h-8 text-xs flex-1"
+                  onKeyDown={e => { if (e.key === "Enter") handleAddKategori(); }} />
+                <Button size="sm" variant="outline" onClick={handleAddKategori} disabled={savingKategori}>
+                  {savingKategori ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Plus className="w-3.5 h-3.5 mr-1" />} Tambah
+                </Button>
+              </div>
+            )}
+          </div>
           <div className="flex flex-wrap gap-2">
             <Button variant={tipe === "masuk" ? "default" : "outline"} className={tipe === "masuk" ? "bg-green-600 hover:bg-green-700" : ""} onClick={() => setTipe("masuk")}>
               <ArrowDownCircle className="w-4 h-4 mr-2" /> Kas Masuk
@@ -619,6 +676,14 @@ export default function KasGudang() {
             <Button variant="outline" size="sm" onClick={loadData}><RefreshCw className="w-4 h-4" /></Button>
           </div>
         </CardHeader>
+        {kategoriList.length > 1 && (
+          <div className="flex flex-wrap gap-1.5 px-5 pt-3">
+            <Button size="sm" variant={!filterKategori ? "default" : "outline"} onClick={() => setFilterKategori("")}>Semua</Button>
+            {kategoriList.map(k => (
+              <Button key={k.id} size="sm" variant={filterKategori === k.nama ? "default" : "outline"} onClick={() => setFilterKategori(k.nama)}>{k.nama}</Button>
+            ))}
+          </div>
+        )}
         <CardContent>
           {isLoading ? (
             <div className="py-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
@@ -647,7 +712,14 @@ export default function KasGudang() {
                         {r.metode === "ocr" && <Badge variant="outline" className="w-fit text-xs">auto-OCR</Badge>}
                       </div>
                     </td>
-                    <td className="text-sm max-w-[220px] truncate">{r.keterangan ?? "-"}</td>
+                    <td className="text-sm max-w-[220px]">
+                      <div className="truncate">
+                        {r.kategori && r.kategori !== "Kas Gudang" && (
+                          <Badge variant="outline" className="mr-1.5 text-[10px] align-middle">{r.kategori}</Badge>
+                        )}
+                        {r.keterangan ?? "-"}
+                      </div>
+                    </td>
                     <td className={`text-right font-semibold whitespace-nowrap ${r.tipe === "masuk" ? "text-green-600" : "text-red-600"}`}>
                       {r.tipe === "masuk" ? "+" : "-"} {fmt(r.jumlah)}
                     </td>
