@@ -16,7 +16,7 @@ import KasGudang from "@/pages/kas-gudang";
 import Absensi from "@/pages/absensi";
 import { shouldLandOnRetur } from "@/components/retur/shared";
 
-function ProtectedRoute({ component: Component, roles = ["user", "master", "guest"] }: { component: any, roles?: string[] }) {
+function ProtectedRoute({ component: Component, roles = ["user", "master", "guest"], allowAccess = [] }: { component: any, roles?: string[], allowAccess?: string[] }) {
   const { user, isLoading } = useAuth();
   
   if (isLoading) {
@@ -27,7 +27,12 @@ function ProtectedRoute({ component: Component, roles = ["user", "master", "gues
     return <Redirect to="/login" />;
   }
 
-  if (!roles.includes(user.role)) {
+  // Role whitelist, ATAU kapabilitas menuAccess (mis. kas:all utk /kas-gudang) —
+  // harus konsisten dengan filter menu di layout.tsx supaya tidak muncul menu
+  // yang lalu di-redirect balik ke dashboard.
+  const ma = (user as { menuAccess?: unknown }).menuAccess;
+  const hasAccess = roles.includes(user.role) || allowAccess.some(a => Array.isArray(ma) && ma.includes(a));
+  if (!hasAccess) {
     return <Redirect to="/dashboard" />;
   }
 
@@ -45,7 +50,7 @@ function DashboardRoute() {
   const { user, isLoading } = useAuth();
   if (isLoading) return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
   if (shouldLandOnRetur(user)) return <Redirect to="/retur" />;
-  return <ProtectedRoute component={Dashboard} roles={["user", "master", "guest"]} />;
+  return <ProtectedRoute component={Dashboard} roles={["user", "master", "guest", "bendahara"]} />;
 }
 
 export default function AppRouter() {
@@ -72,7 +77,7 @@ export default function AppRouter() {
             <Route path="/material-bekas" component={() => <ProtectedRoute component={MaterialBekas} roles={["user", "master"]} />} />
             <Route path="/retur" component={() => <ProtectedRoute component={Retur} roles={["user", "master"]} />} />
             <Route path="/retur/:path*" component={() => <ProtectedRoute component={Retur} roles={["user", "master"]} />} />
-            <Route path="/kas-gudang" component={() => <ProtectedRoute component={KasGudang} roles={["bendahara"]} />} />
+            <Route path="/kas-gudang" component={() => <ProtectedRoute component={KasGudang} roles={["bendahara"]} allowAccess={["/kas-gudang", "kas:all"]} />} />
             <Route path="/absensi" component={() => <ProtectedRoute component={Absensi} roles={["user", "master", "bendahara"]} />} />
             <Route>404 Not Found</Route>
           </Switch>
