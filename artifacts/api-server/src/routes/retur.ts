@@ -7,6 +7,7 @@ import {
   exchangeReturCodeAndSave,
   disconnectReturDrive,
   getReturDriveStatus,
+  forceReturTokenRefresh,
   uploadReturDataUrl,
   downloadReturFile,
   deleteReturFile,
@@ -500,6 +501,18 @@ router.post("/retur/google/disconnect", async (req, res): Promise<void> => {
   if (!(await requireReturMaster(req, res))) return;
   await disconnectReturDrive();
   res.json({ ok: true });
+});
+
+// ─── POST /api/retur/google/refresh (master) — paksa refresh access token ───────
+router.post("/retur/google/refresh", async (req, res): Promise<void> => {
+  if (!(await requireReturMaster(req, res))) return;
+  try {
+    res.json(await forceReturTokenRefresh());
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Gagal refresh token";
+    logger.error({ err }, "Retur Drive: refresh token manual gagal");
+    res.status(400).json({ error: msg });
+  }
 });
 
 // ─── GET /api/retur/template/:materialId — daftar item ceklist ──────────────────

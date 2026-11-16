@@ -1,6 +1,6 @@
 // Tab PENGATURAN (master): koneksi Google Drive RETUR (akun kedua, terpisah dari backup)
 // dan editor template komponen per material.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useListMaterials } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CloudUpload, Copy, FileText, Link2, Link2Off, Loader2, ListChecks, Plus, Save, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CloudUpload, Copy, FileText, Link2, Link2Off, Loader2, ListChecks, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { MaterialPicker } from "./material-picker";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -18,6 +18,8 @@ import { DEFAULT_RESULT_OPTIONS, ReturTemplateItem, returApi } from "./shared";
 interface DriveStatus {
   connected: boolean;
   email: string | null;
+  tokenExpiry: string | null;
+  refreshTokenPresent: boolean;
 }
 
 export function PengaturanTab() {
@@ -112,19 +114,75 @@ function FormAssignPanel() {
   );
 }
 
+function TokenCountdown({ expiry, now }: { expiry: number; now: number }) {
+  const remaining = expiry - now;
+  const abs = Math.abs(remaining);
+  const h = Math.floor(abs / 3_600_000);
+  const m = Math.floor((abs % 3_600_000) / 60_000);
+  const label = h > 0 ? `${h} j ${m} m` : `${m} m`;
+  const when = new Date(expiry).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  if (remaining > 30 * 60_000) {
+    return (
+      <p className="text-xs text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+        <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+        Token Drive valid sampai <b>{when}</b> (±{label}) — auto-refresh berjalan otomatis.
+      </p>
+    );
+  }
+  if (remaining > 0) {
+    return (
+      <p className="text-xs text-amber-700 dark:text-amber-400 flex items-center gap-1.5">
+        <span className="inline-block h-2 w-2 rounded-full bg-amber-500" />
+        Token Drive akan expired dalam <b>±{label}</b> (s/d {when}) — auto-refresh saat aktivitas berikutnya; bisa klik "Refresh Token".
+      </p>
+    );
+  }
+  return (
+    <p className="text-xs text-red-700 dark:text-red-400 flex items-center gap-1.5">
+      <span className="inline-block h-2 w-2 rounded-full bg-red-500" />
+      Token Drive sudah kedaluwarsa ({when}) — auto-refresh akan terjadi saat aktivitas berikutnya. Bila simpan dokumen gagal, klik "Refresh Token" atau hubungkan ulang akun.
+    </p>
+  );
+}
+
 function DrivePanel() {
   const { toast } = useToast();
   const [status, setStatus] = useState<DriveStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  // Tick utk countdown: jam client bisa selisih dgn server, jadi baseline = waktu fetch.
+  const [now, setNow] = useState(() => Date.now());
+  const fetchedAt = useRef(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   const load = async () => {
     try {
-      setStatus(await returApi<DriveStatus>("/google/status"));
+      const s = await returApi<DriveStatus>("/google/status");
+      setStatus(s);
+      fetchedAt.current = Date.now();
     } catch (e) {
       toast({ title: "Gagal cek status Drive Retur", description: (e as Error).message, variant: "destructive" });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const refreshNow = async () => {
+    setRefreshing(true);
+    try {
+      const s = await returApi<DriveStatus>("/google/refresh", { method: "POST" });
+      setStatus(s);
+      fetchedAt.current = Date.now();
+      setNow(Date.now());
+      toast({ title: "Token di-refresh", description: s.tokenExpiry ? `Valid sampai ${new Date(s.tokenExpiry).toLocaleString("id-ID", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" })}.` : "Token diperbarui." });
+    } catch (e) {
+      toast({ title: "Gagal refresh token", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -164,12 +222,24 @@ function DrivePanel() {
         {loading ? (
           <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Mengecek status...</p>
         ) : status?.connected ? (
-          <div className="flex flex-wrap items-center gap-3">
-            <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">Terhubung</Badge>
-            <span className="text-sm">{status.email ?? "(email tidak tersedia)"}</span>
-            <Button variant="outline" size="sm" onClick={disconnect} disabled={disconnecting}>
-              {disconnecting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Link2Off className="h-4 w-4 mr-2" />} Putuskan
-            </Button>
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">Terhubung</Badge>
+              <span className="text-sm">{status.email ?? "(email tidak tersedia)"}</span>
+              <Button variant="outline" size="sm" onClick={refreshNow} disabled={refreshing}>
+                {refreshing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />} Refresh Token
+              </Button>
+              <Button variant="outline" size="sm" onClick={disconnect} disabled={disconnecting}>
+                {disconnecting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Link2Off className="h-4 w-4 mr-2" />} Putuskan
+              </Button>
+            </div>
+            {status.tokenExpiry ? (
+              <TokenCountdown expiry={new Date(status.tokenExpiry).getTime() - (Date.now() - fetchedAt.current)} now={now} />
+            ) : status.refreshTokenPresent ? (
+              <p className="text-xs text-muted-foreground">
+                <span className="text-amber-600 dark:text-amber-400 font-medium">Waktu kedaluwarsa token tidak diketahui</span> — auto-refresh tetap aktif; gunakan "Refresh Token" bila simpan dokumen gagal.
+              </p>
+            ) : null}
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-3">

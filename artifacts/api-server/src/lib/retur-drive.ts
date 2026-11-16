@@ -131,20 +131,50 @@ export async function disconnectReturDrive(): Promise<void> {
 export async function getReturDriveStatus(): Promise<{
   connected: boolean;
   email: string | null;
+  tokenExpiry: string | null;
+  refreshTokenPresent: boolean;
 }> {
   try {
     const result = await pool.query(
-      "SELECT account_email, access_token FROM retur_gdrive_config LIMIT 1"
+      "SELECT account_email, access_token, refresh_token, token_expiry FROM retur_gdrive_config LIMIT 1"
     );
     const row = result.rows[0];
-    if (!row) return { connected: false, email: null };
+    if (!row) return { connected: false, email: null, tokenExpiry: null, refreshTokenPresent: false };
     return {
       connected: !!row.access_token,
       email: row.account_email ?? null,
+      tokenExpiry: row.token_expiry ? new Date(row.token_expiry).toISOString() : null,
+      refreshTokenPresent: !!row.refresh_token,
     };
   } catch {
-    return { connected: false, email: null };
+    return { connected: false, email: null, tokenExpiry: null, refreshTokenPresent: false };
   }
+}
+
+// Paksa refresh access token sekarang (btn "Refresh Token" di tab Pengaturan).
+// expiry_date=0 -> googleapis pasti refresh, tidak tunggu expired.
+export async function forceReturTokenRefresh(): Promise<Awaited<ReturnType<typeof getReturDriveStatus>>> {
+  const config = await getReturConfigRow();
+  if (!config?.refresh_token) {
+    throw new Error("Tidak ada refresh token — hubungkan ulang akun Drive di tab ini.");
+  }
+  const client = getReturClient();
+  client.setCredentials({
+    access_token: config.access_token ?? undefined,
+    refresh_token: config.refresh_token,
+    expiry_date: 0,
+  });
+  const { token } = await client.getAccessToken();
+  if (!token) {
+    throw new Error("Google menolak refresh token (kadaluarsa/revoked) — hubungkan ulang akun Drive di tab ini.");
+  }
+  const expiryMs = client.credentials.expiry_date;
+  await pool.query(
+    "UPDATE retur_gdrive_config SET access_token = $1, refresh_token = $2, token_expiry = $3, updated_at = NOW() WHERE id = $4",
+    [token, client.credentials.refresh_token ?? config.refresh_token, expiryMs ? new Date(expiryMs) : null, config.id]
+  );
+  logger.info({ account: config.account_email }, "Retur Drive: access token di-refresh manual");
+  return getReturDriveStatus();
 }
 
 // Cari atau buat folder Drive "Retur Gudang Pemaron"; id disimpan di config.
