@@ -542,6 +542,25 @@ router.post("/retur/google/refresh", async (req, res): Promise<void> => {
 });
 
 // ─── GET /api/retur/template/:materialId — daftar item ceklist ──────────────────
+// ─── GET /api/retur/template-status — material mana yang punya template ────────
+// ok = punya baris template ceklist tersimpan ATAU tertaut formulir.
+// Dipakai FE (tab Buat) untuk menandai/menonaktifkan material tanpa template di picker.
+router.get("/retur/template-status", async (req, res): Promise<void> => {
+  if (!(await requireReturUser(req, res))) return;
+  const mats = await pool.query("SELECT id, name, form_key FROM materials");
+  const items = await pool.query("SELECT DISTINCT material_id FROM retur_template_item");
+  const forms = await pool.query("SELECT form_key FROM retur_form_template");
+  const itemSet = new Set<number>((items.rows as { material_id: number }[]).map((x) => x.material_id));
+  const formSet = new Set<string>((forms.rows as { form_key: string }[]).map((x) => x.form_key));
+  res.json({
+    status: (mats.rows as { id: number; name: string; form_key: string | null }[]).map((m) => ({
+      id: m.id,
+      // preset generik TIDAK dihitung sebagai template — sama seperti guard POST /retur.
+      ok: itemSet.has(m.id) || (m.form_key ? formSet.has(m.form_key) : false),
+    })),
+  });
+});
+
 router.get("/retur/template/:materialId", async (req, res): Promise<void> => {
   if (!(await requireReturUser(req, res))) return;
   const materialId = Number(req.params.materialId);
@@ -865,6 +884,15 @@ router.post("/retur", async (req, res): Promise<void> => {
 
     const cfg = await getTemplateConfig(materialId as number); // sudah lolos guard Number.isInteger
     const formTpl = await getFormTemplate(materialId as number); // null = material tanpa template formulir
+    // Material tanpa template tersimpan DAN tanpa formulir tertaut akan menghasilkan
+    // dokumen retur tanpa data berarti — tolak sejak awal (bug dokumen #34/#36).
+    // Catatan: presetForMaterialName adalah fallback generik, BUKAN konfigurasi template.
+    if (cfg.size === 0 && !formTpl) {
+      res.status(400).json({ error: `Material "${materialName}" belum punya template ceklist/formulir — hubungi admin untuk mengatur template sebelum membuat retur` });
+      return;
+    }
+    // Item ceklist yang diharapkan = baris template tersimpan; jika belum ada, preset generik.
+    const expectedLabels = cfg.size > 0 ? [...cfg.keys()] : presetForMaterialName(materialName);
     const allowedFormKeys = formTpl ? formFieldKeys(formTpl.definition) : new Set<string>();
     const fieldLabelByKey = new Map<string, string>();
     if (formTpl) {
@@ -887,6 +915,13 @@ router.post("/retur", async (req, res): Promise<void> => {
       const label = typeof u.label === "string" && u.label.trim() ? u.label.trim() : `Unit ${i + 1}`;
       const v = validateCekItems(u.items, cfg, "pengawas");
       if (!v.ok) { res.status(400).json({ error: `Material "${materialName}" unit "${label}": ${v.error}` }); return; }
+      // Server WAJIBKAN seluruh item template terisi — dulu items [] lolos begitu saja.
+      const gotLabels = new Set(v.items.map((x) => x.label));
+      const missingLabels = expectedLabels.filter((l) => !gotLabels.has(l));
+      if (missingLabels.length > 0) {
+        res.status(400).json({ error: `Material "${materialName}" unit "${label}": ceklist belum lengkap — belum diisi: ${missingLabels.join(", ")}` });
+        return;
+      }
       // formData: hanya key milik definisi form material; string kosong dibuang.
       let unitFormData: Record<string, string> | null = null;
       if (formTpl) {

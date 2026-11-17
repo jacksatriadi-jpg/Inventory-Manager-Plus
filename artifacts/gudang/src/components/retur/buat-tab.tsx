@@ -1,7 +1,7 @@
 // Tab BUAT: pengawas membuat dokumen retur — foto TUG10 (mandatori, kompresi 1280/0.72),
 // MULTI-MATERIAL: satu dokumen berisi beberapa grup material; tiap grup punya repeater unit
 // dan ceklist dari template material masing-masing (material tidak boleh dobel dalam 1 dokumen).
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useListMaterials } from "@workspace/api-client-react";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -69,6 +69,13 @@ const makeUnit = (n: number, labels: string[]): UnitForm => ({
 export function BuatTab() {
   const { toast } = useToast();
   const { data: materials } = useListMaterials();
+  // Material tanpa template ceklist/formulir tidak bisa dipakai retur (guard juga di API).
+  const [tplOkIds, setTplOkIds] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    returApi<{ status: { id: number; ok: boolean }[] }>("/template-status")
+      .then((d) => setTplOkIds(new Set(d.status.filter((s) => s.ok).map((s) => String(s.id)))))
+      .catch(() => { /* gagal load: biarkan API yang menegah saat simpan */ });
+  }, []);
   const { user } = useAuth();
 
   const [tug10, setTug10] = useState("");
@@ -353,7 +360,7 @@ export function BuatTab() {
               <CardContent className="space-y-4">
                 <div className="space-y-2">
                   <Label>Material <span className="text-red-600">*</span></Label>
-                  <MaterialPicker materials={(materials ?? []).filter((m) => !taken.has(String(m.id)))} value={g.materialId} onChange={(id) => loadMaterialIntoGroup(gi, id)} invalid={!g.materialId} />
+                  <MaterialPicker materials={(materials ?? []).filter((m) => !taken.has(String(m.id)))} value={g.materialId} onChange={(id) => loadMaterialIntoGroup(gi, id)} invalid={!g.materialId} templateOkIds={tplOkIds ?? undefined} />
                   {!g.materialId && <p className="text-xs text-destructive">Wajib dipilih sebelum dokumen dapat disimpan.</p>}
                 </div>
               </CardContent>

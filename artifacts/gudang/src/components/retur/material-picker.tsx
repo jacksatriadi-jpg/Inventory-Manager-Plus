@@ -24,11 +24,13 @@ export function MaterialPicker({
   value,
   onChange,
   invalid,
+  templateOkIds,
 }: {
   materials: MaterialOption[] | undefined;
   value: string;
   onChange: (id: string) => void;
   invalid?: boolean; // tampil bertanda wajib (mis. material belum dipilih)
+  templateOkIds?: Set<string>; // diisi (mis. tab Buat): material DI LUAR set ini ditandai "belum ada template" & tidak bisa dipilih
 }) {
   const [open, setOpen] = useState(false);
   const list = materials ?? [];
@@ -67,7 +69,9 @@ export function MaterialPicker({
                     key={m.id}
                     // id di awal nilai pencarian: unik per material, pencarian teks tetap cocok
                     value={`${mid} ${m.code ?? ""} ${m.name}`}
+                    disabled={templateOkIds ? !templateOkIds.has(mid) : false}
                     onSelect={() => {
+                      if (templateOkIds && !templateOkIds.has(mid)) return;
                       onChange(mid);
                       setOpen(false);
                     }}
@@ -75,6 +79,9 @@ export function MaterialPicker({
                     <Check className={cn("mr-2 h-4 w-4", value === mid ? "opacity-100" : "opacity-0")} />
                     <span className="font-mono text-xs mr-2 text-muted-foreground">{m.code}</span>
                     {m.name}
+                    {templateOkIds && !templateOkIds.has(mid) && (
+                      <span className="ml-2 text-xs text-amber-600">(belum ada template)</span>
+                    )}
                   </CommandItem>
                 );
               })}
