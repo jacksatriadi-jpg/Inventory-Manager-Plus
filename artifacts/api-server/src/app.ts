@@ -351,6 +351,8 @@ async function setupDatabase() {
         UNIQUE(dokumen_id, material_id)
       );
     `);
+    // Notifikasi penolakan verifikasi: dokumen bisa sudah dihapus → dokumen_id boleh NULL.
+    await pool.query("ALTER TABLE retur_notifikasi ALTER COLUMN dokumen_id DROP NOT NULL");
     // Backfill data lama (idempotent): unit = material dokumen; daftar material = material dokumen.
     await pool.query(`
       UPDATE retur_unit u SET material_id = d.material_id

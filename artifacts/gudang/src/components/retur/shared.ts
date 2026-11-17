@@ -94,7 +94,7 @@ export interface FormKeputusan { code: string; meterLayak?: string; meterTidakLa
 
 export interface ReturNotifikasi {
   id: number;
-  dokumenId: number;
+  dokumenId: number | null; // null = dokumen sudah dihapus (mis. penolakan verifikasi)
   message: string;
   createdAt: string;
 }

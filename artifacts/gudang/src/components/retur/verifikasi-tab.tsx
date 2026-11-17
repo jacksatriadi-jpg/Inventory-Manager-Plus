@@ -11,6 +11,10 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogCancel, AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 import { ArrowLeft, Camera, ImageOff, ImagePlus, Loader2, PackageX, Paperclip } from "lucide-react";
 import { DriveImg } from "./drive-img";
 import {
@@ -46,6 +50,9 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
   const [cfgByMaterial, setCfgByMaterial] = useState<Record<number, Record<string, ItemCfgEntry>>>({});
   const [formDefByMaterial, setFormDefByMaterial] = useState<Record<number, FormDefinition | null>>({});
   const [kesimpulanByUnit, setKesimpulanByUnit] = useState<Record<number, FormKeputusan | null>>({});
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectAlasan, setRejectAlasan] = useState("");
+  const [rejecting, setRejecting] = useState(false);
 
   const itemFileRef = useRef<HTMLInputElement>(null);
   const itemGalleryRef = useRef<HTMLInputElement>(null); // foto dari galeri device
@@ -236,6 +243,25 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
       toast({ title: "Gagal memverifikasi", description: (e as Error).message, variant: "destructive" });
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const rejectVerify = async () => {
+    if (!detail) return;
+    const alasan = rejectAlasan.trim();
+    if (!alasan) return;
+    setRejecting(true);
+    try {
+      await returApi(`/${detail.id}/tolak-verifikasi`, { method: "POST", body: JSON.stringify({ alasan }) });
+      toast({ title: "Verifikasi ditolak", description: `Dokumen #${detail.id} dihapus; alasan dikirim ke notifikasi pengawas & gudang.` });
+      setRejectOpen(false); setRejectAlasan("");
+      setDetail(null); setShowTug10(false);
+      loadDocs();
+      notifyReturChanged();
+    } catch (e) {
+      toast({ title: "Gagal menolak verifikasi", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setRejecting(false);
     }
   };
 
@@ -444,12 +470,35 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
           </CardContent>
         </Card>
 
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <Button variant="outline" onClick={() => { setDetail(null); setShowTug10(false); }}>Batal</Button>
+          <Button variant="destructive" onClick={() => setRejectOpen(true)}>Tolak Verifikasi</Button>
           <Button onClick={submit} disabled={submitting}>
             {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />} Kirim Verifikasi Gudang
           </Button>
         </div>
+
+        <AlertDialog open={rejectOpen} onOpenChange={(v) => { setRejectOpen(v); if (!v) setRejectAlasan(""); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Tolak verifikasi dokumen #{detail.id}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Seluruh data retur dokumen ini (unit, ceklist, foto, data material, file Drive) akan DIHAPUS permanen.
+                Alasan di bawah dikirim sebagai notifikasi ke pengawas pembuat dokumen dan petugas gudang.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <Label className="text-xs font-medium">Alasan penolakan (wajib)</Label>
+            <Textarea rows={3} value={rejectAlasan} onChange={(e) => setRejectAlasan(e.target.value)}
+              placeholder="Contoh: material tidak sesuai fisik, foto tidak jelas, dokumen salah input..." maxLength={500} />
+            <AlertDialogFooter>
+              <AlertDialogCancel>Batal</AlertDialogCancel>
+              <AlertDialogAction disabled={!rejectAlasan.trim() || rejecting}
+                onClick={(e) => { e.preventDefault(); void rejectVerify(); }}>
+                {rejecting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}Tolak &amp; Hapus
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <input ref={itemFileRef} type="file" accept="image/*" capture="environment" className="hidden"
           onChange={(e) => { handleItemFile(e.target.files?.[0] ?? null); e.target.value = ""; }} />

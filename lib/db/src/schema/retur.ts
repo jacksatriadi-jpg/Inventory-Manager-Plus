@@ -112,7 +112,7 @@ export type ReturFormTemplate = typeof returFormTemplateTable.$inferSelect;
 export const returNotifikasiTable = pgTable("retur_notifikasi", {
   id: serial("id").primaryKey(),
   userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
-  dokumenId: integer("dokumen_id").notNull().references(() => returDokumenTable.id, { onDelete: "cascade" }),
+  dokumenId: integer("dokumen_id").references(() => returDokumenTable.id, { onDelete: "cascade" }), // NULL = notifikasi sistem (mis. penolakan verifikasi) yang dokumennya sudah dihapus
   message: text("message").notNull(),
   readAt: timestamp("read_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

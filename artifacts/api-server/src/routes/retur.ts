@@ -1213,6 +1213,64 @@ router.delete("/retur/:id", async (req, res): Promise<void> => {
   res.json({ ok: true, id });
 });
 
+// ─── POST /api/retur/:id/tolak-verifikasi (gudang) — penolakan verifikasi ───────
+// Dokumen pending DIHAPUS (sama seperti hapus manual) dengan WAJIB menyertakan
+// alasan; alasan dikirim sebagai notifikasi in-app ke pengawas pembuat + user gudang.
+// Notifikasi disisipkan SETELAH dokumen dihapus → dokumen_id NULL (riwayat pesan tetap ada).
+router.post("/retur/:id/tolak-verifikasi", async (req, res): Promise<void> => {
+  const actor = await requireGudang(req, res);
+  if (!actor) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "ID tidak valid" }); return; }
+  const alasanRaw = bodyObject(req).alasan;
+  const alasan = typeof alasanRaw === "string" ? alasanRaw.trim() : "";
+  if (!alasan) { res.status(400).json({ error: "Alasan penolakan wajib diisi" }); return; }
+  if (alasan.length > 500) { res.status(400).json({ error: "Alasan maksimal 500 karakter" }); return; }
+
+  const doc = await pool.query("SELECT status, pengawas_id, tug10_file_id, folder_file_id FROM retur_dokumen WHERE id = $1", [id]);
+  if (doc.rows.length === 0) { res.status(404).json({ error: "Dokumen retur tidak ditemukan" }); return; }
+  const docRow = doc.rows[0] as { status: string; pengawas_id: number; tug10_file_id: string | null; folder_file_id: string | null }; // kolom sesuai SELECT
+  if (docRow.status !== "checked_supervisor") { res.status(400).json({ error: "Dokumen sudah selesai diverifikasi — tidak bisa ditolak" }); return; }
+
+  const message = `Retur #${id} DITOLAK oleh petugas gudang ${actor.username} — alasan: ${alasan}`;
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM retur_notifikasi WHERE dokumen_id = $1", [id]);
+    await client.query("DELETE FROM retur_item_cek WHERE unit_id IN (SELECT id FROM retur_unit WHERE dokumen_id = $1)", [id]);
+    await client.query("DELETE FROM retur_unit WHERE dokumen_id = $1", [id]);
+    await client.query("DELETE FROM retur_dokumen WHERE id = $1", [id]);
+    await client.query(
+      `INSERT INTO retur_notifikasi (user_id, dokumen_id, message)
+       SELECT u.id, NULL, $1
+       FROM users u
+       WHERE (u.id = $2 OR ((u.role = 'master' OR u.menu_access @> '["retur:gudang"]'::jsonb) AND u.id <> $3))
+       GROUP BY u.id`,
+      [message, docRow.pengawas_id, actor.id],
+    );
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    logger.error({ err, docId: id }, "Retur: gagal menolak verifikasi");
+    res.status(500).json({ error: "Gagal menolak verifikasi" });
+    return;
+  } finally {
+    client.release();
+  }
+
+  // Aset Drive ikut dihapus (best-effort), mengikuti pola DELETE manual.
+  if (docRow.folder_file_id) {
+    try {
+      await deleteReturFile(docRow.folder_file_id);
+    } catch (err) {
+      logger.warn({ err, fileId: docRow.folder_file_id, docId: id }, "Retur: gagal hapus folder Drive (dokumen sudah dihapus dari DB)");
+    }
+  }
+
+  logger.info({ docId: id, actor: actor.username, alasan }, "Retur: verifikasi ditolak gudang — dokumen dihapus + notifikasi alasan terkirim");
+  res.json({ ok: true, id });
+});
+
 // ─── POST /api/retur/:id/verify (gudang) — verifikasi + SN + ceklist gudang ─────
 interface VerifyUnit {
   unitId: number;

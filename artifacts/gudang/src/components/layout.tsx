@@ -99,10 +99,10 @@ function ReturNotifications() {
             <DropdownMenuItem
               key={n.id}
               className="flex flex-col items-start gap-0.5 py-2 cursor-pointer whitespace-normal"
-              onClick={() => { markRead([n.id]); setLocation(`/retur?tab=verifikasi&dok=${n.dokumenId}`); }}
+              onClick={() => { markRead([n.id]); if (n.dokumenId != null) setLocation(`/retur?tab=verifikasi&dok=${n.dokumenId}`); }}
             >
               <span className="text-xs leading-snug">{n.message}</span>
-              <span className="text-[10px] text-muted-foreground">{fmtTanggal(n.createdAt)} · dokumen #{n.dokumenId}</span>
+              <span className="text-[10px] text-muted-foreground">{fmtTanggal(n.createdAt)} · {n.dokumenId != null ? `dokumen #${n.dokumenId}` : "dokumen dihapus"}</span>
             </DropdownMenuItem>
           ))
         )}
