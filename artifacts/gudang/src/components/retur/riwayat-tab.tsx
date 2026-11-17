@@ -17,6 +17,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -28,7 +30,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/lib/auth";
-import { CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Paperclip, Pencil, Printer, Search, Trash2 } from "lucide-react";
+import { Ban, CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Paperclip, Pencil, Printer, Search, Trash2 } from "lucide-react";
 import { DriveImg } from "./drive-img";
 import { buildFormWorkbook, buildMultiFormWorkbook, formFilename, type FormWorkbookEntry } from "./form-xlsx";
 import type { FormDefinition } from "./shared";
@@ -68,10 +70,26 @@ export function RiwayatTab() {
   const canDelete = gudangView;
   const [toDelete, setToDelete] = useState<ReturDokumen | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [toReject, setToReject] = useState<ReturDokumen | null>(null);
+  const [rejectAlasan, setRejectAlasan] = useState("");
+  const [rejecting, setRejecting] = useState(false);
 
   // Filter server-side; q didebounce 300 ms. Gudang hanya melihat dokumen selesai;
 // vendor/pengawas melihat semua dokumen miliknya (pending+selesai) supaya formulir
 // bisa langsung dicetak setelah dokumen disimpan.
+  const handleReject = async () => {
+    if (!toReject || !rejectAlasan.trim()) return;
+    setRejecting(true);
+    try {
+      await returApi(`/${toReject.id}/tolak-verifikasi`, { method: "POST", body: JSON.stringify({ alasan: rejectAlasan.trim() }) });
+      toast({ title: "Verifikasi ditolak", description: `Dokumen #${toReject.id} dihapus; alasan dikirim ke notifikasi pengawas & gudang.` });
+      setToReject(null); setRejectAlasan("");
+      notifyReturChanged(); loadDocs();
+    } catch (e) {
+      toast({ title: "Gagal menolak verifikasi", description: (e as Error).message, variant: "destructive" });
+    } finally { setRejecting(false); }
+  };
+
   const loadDocs = useCallback(() => {
     const params = new URLSearchParams();
     if (gudangView) params.set("status", "completed");
@@ -556,6 +574,12 @@ export function RiwayatTab() {
                         <Button size="sm" variant="ghost" onClick={() => setEditDoc(d)} aria-label={`Koreksi hasil verifikasi dokumen ${d.id}`}>
                           <Pencil className="h-4 w-4" />
                         </Button>
+                        {d.status !== "completed" && (
+                          <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
+                            onClick={() => setToReject(d)} aria-label={`Tolak verifikasi dokumen ${d.id}`}>
+                            <Ban className="h-4 w-4" />
+                          </Button>
+                        )}
                         <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
                           onClick={() => setToDelete(d)} aria-label={`Hapus dokumen ${d.id}`}>
                           <Trash2 className="h-4 w-4" />
@@ -589,6 +613,28 @@ export function RiwayatTab() {
           <AlertDialogCancel>Batal</AlertDialogCancel>
           <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90" onClick={handleDelete}>
             {deleting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Hapus
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    <AlertDialog open={toReject !== null} onOpenChange={(open) => { if (!open) { setToReject(null); setRejectAlasan(""); } }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Tolak verifikasi dokumen #{toReject?.id}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            Dokumen masih menunggu verifikasi gudang. Menolaknya akan MENGHAPUS permanen dokumen ini
+            (unit, ceklist, foto, data material, file Drive). Alasan di bawah dikirim sebagai notifikasi
+            ke pengawas pembuat dokumen dan petugas gudang.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <Label className="text-xs font-medium">Alasan penolakan (wajib)</Label>
+        <Textarea rows={3} value={rejectAlasan} onChange={(e) => setRejectAlasan(e.target.value)}
+          placeholder="Contoh: material tidak sesuai fisik, foto tidak jelas, dokumen salah input..." maxLength={500} />
+        <AlertDialogFooter>
+          <AlertDialogCancel>Batal</AlertDialogCancel>
+          <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            disabled={!rejectAlasan.trim() || rejecting} onClick={handleReject}>
+            {rejecting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Tolak &amp; Hapus
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
