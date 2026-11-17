@@ -12,10 +12,14 @@ export interface ReturTemplateItem {
 
 export interface LampiranFile { name: string; fileId: string; webViewLink: string }
 
+// Material dalam satu dokumen retur (multi-material); jumlahUnit = deklaratif sampling per material.
+export interface ReturDocMaterial { id: number; name: string; jumlahUnit: number | null }
+
 export interface ReturDokumen {
   id: number;
   materialId: number;
   materialName: string;
+  materials?: ReturDocMaterial[]; // daftar material dokumen (multi-material)
   status: "checked_supervisor" | "completed";
   jumlahUnit: number | null; // mode sampling: total unit deklaratif; unit terisi = sampel
   lampiran: LampiranFile[]; // dokumen lampiran (hanya terisi utk material sampling)
@@ -49,6 +53,8 @@ export interface ReturItemCek {
 export interface ReturUnitDetail {
   id: number;
   label: string;
+  materialId?: number; // material milik unit ini (multi-material per dokumen)
+  materialName?: string;
   sn: string | null;
   keputusan: Keputusan | null; // disposisi gudang per unit; null = belum diverifikasi
   formData?: Record<string, string> | null; // isian "A. DATA MATERIAL" utk Cetak Formulir

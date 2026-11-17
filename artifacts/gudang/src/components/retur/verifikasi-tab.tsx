@@ -27,6 +27,8 @@ interface GudangItemForm {
 
 const emptyForm: GudangItemForm = { hasil: "", catatan: "", foto: "" };
 
+interface ItemCfgEntry { options: string[] | null; tipeInput: "opsi" | "teks"; fotoWajib: boolean }
+
 export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
   const { toast } = useToast();
   const [docs, setDocs] = useState<ReturDokumen[]>([]);
@@ -40,9 +42,9 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
   const [keputusanByUnit, setKeputusanByUnit] = useState<Record<number, Keputusan | "">>({});
   const [gudangCatatan, setGudangCatatan] = useState("");
   const [itemForms, setItemForms] = useState<Record<number, Record<string, GudangItemForm>>>({});
-  const [cfgByLabel, setCfgByLabel] = useState<Record<string, { options: string[] | null; tipeInput: "opsi" | "teks"; fotoWajib: boolean }>>({});
-  // Template formulir material (Cetak Formulir) — kesimpulan K6/K7/K8 per unit diisi gudang di sini.
-  const [formDef, setFormDef] = useState<FormDefinition | null>(null);
+  // Multi-material: config komponen & template formulir disimpan PER MATERIAL milik unit.
+  const [cfgByMaterial, setCfgByMaterial] = useState<Record<number, Record<string, ItemCfgEntry>>>({});
+  const [formDefByMaterial, setFormDefByMaterial] = useState<Record<number, FormDefinition | null>>({});
   const [kesimpulanByUnit, setKesimpulanByUnit] = useState<Record<number, FormKeputusan | null>>({});
 
   const itemFileRef = useRef<HTMLInputElement>(null);
@@ -50,8 +52,11 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
   const photoTarget = useRef<{ unitId: number; label: string } | null>(null);
 
   // Komponen tanpa entri config (dokumen lama/preset) = opsi bawaan + foto wajib.
-  const cfgFor = (label: string) => cfgByLabel[label] ?? { options: null as string[] | null, tipeInput: "opsi" as const, fotoWajib: true };
-  const optionsFor = (label: string) => cfgFor(label).options ?? DEFAULT_RESULT_OPTIONS;
+  const unitMat = (u: { materialId?: number }) => u.materialId ?? detail?.materialId ?? 0;
+  const cfgFor = (u: { materialId?: number }, label: string): ItemCfgEntry =>
+    (cfgByMaterial[unitMat(u)] ?? {})[label] ?? { options: null, tipeInput: "opsi", fotoWajib: true };
+  const optionsFor = (u: { materialId?: number }, label: string) => cfgFor(u, label).options ?? DEFAULT_RESULT_OPTIONS;
+  const formDefFor = (u: { materialId?: number }): FormDefinition | null => formDefByMaterial[unitMat(u)] ?? null;
 
   const loadDocs = async () => {
     try {
@@ -78,19 +83,25 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
         toast({ title: "Dokumen sudah diverifikasi", description: `Dokumen #${id} berstatus selesai — buka lewat tab Riwayat.`, variant: "destructive" });
         return;
       }
-      let cfg: Record<string, { options: string[] | null; tipeInput: "opsi" | "teks"; fotoWajib: boolean }> = {};
-      let fdef: FormDefinition | null = null;
-      try {
-        const materialId = d.materialId; // dari respons detail — tidak bergantung state list
-        if (materialId != null) {
-          const t = await returApi<{ items: ReturTemplateItem[] }>(`/template/${materialId}`);
-          cfg = Object.fromEntries((t.items ?? []).map((i) => [i.label, { options: i.options, tipeInput: i.tipeInput ?? "opsi", fotoWajib: i.fotoWajibGudang !== false }]));
-          const fd = await returApi<{ formKey: string | null; definition: FormDefinition | null }>(`/form-def/${materialId}`);
-          fdef = fd.formKey ? fd.definition : null;
-        }
-      } catch { /* material tanpa template = pakai bawaan */ }
-      setFormDef(fdef);
-      setCfgByLabel(cfg);
+      // Setiap material dalam dokumen punya template ceklist & formulir sendiri.
+      const cfg: Record<number, Record<string, ItemCfgEntry>> = {};
+      const fdefByMat: Record<number, FormDefinition | null> = {};
+      const matIds = Array.from(new Set(
+        [d.materialId, ...(d.materials ?? []).map((m) => m.id), ...d.units.map((u) => u.materialId ?? d.materialId)]
+          .filter((x): x is number => x != null),
+      ));
+      await Promise.all(matIds.map(async (mid) => {
+        try {
+          const t = await returApi<{ items: ReturTemplateItem[] }>(`/template/${mid}`);
+          cfg[mid] = Object.fromEntries((t.items ?? []).map((i) => [i.label, { options: i.options, tipeInput: i.tipeInput ?? "opsi", fotoWajib: i.fotoWajibGudang !== false }]));
+        } catch { /* material tanpa template = pakai bawaan */ }
+        try {
+          const fd = await returApi<{ formKey: string | null; definition: FormDefinition | null }>(`/form-def/${mid}`);
+          fdefByMat[mid] = fd.formKey ? fd.definition : null;
+        } catch { fdefByMat[mid] = null; }
+      }));
+      setCfgByMaterial(cfg);
+      setFormDefByMaterial(fdefByMat);
       const sn: Record<number, string> = {};
       const keputusan: Record<number, Keputusan | ""> = {};
       const kesimpulan: Record<number, FormKeputusan | null> = {};
@@ -107,7 +118,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
           // Default: hasil + catatan salinan cek pengawas (tetap bisa diedit). Nilai hanya
           // disalin bila masih ada di opsi komponen (template berubah -> kosong).
           const pw = u.items.find((it) => it.stage === "pengawas" && it.itemLabel === l);
-          const teks = (cfg[l]?.tipeInput ?? "opsi") === "teks";
+          const teks = ((cfg[u.materialId ?? d.materialId] ?? {})[l]?.tipeInput ?? "opsi") === "teks";
           // item input-form: salin nilai bebas pengawas (kecuali placeholder lama "ISI DI KOLOM CATATAN")
           const salinTeks = teks && pw && pw.hasil && !/^isi di kolom catatan$/i.test(pw.hasil);
           // opsi: SELALU salin hasil pengawas — nilai yang tak lagi ada di daftar opsi (template
@@ -169,9 +180,9 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
       toast({ title: "Keputusan unit wajib dipilih", description: `Pilih "Layak Pakai (Standby)" atau "Tidak Layak Pakai (Usul Hapus)" untuk unit: ${keputusanKosong.join(", ")}`, variant: "destructive" });
       return;
     }
-    const formOpts = formDef?.kesimpulan?.options ?? [];
-    if (formOpts.length > 0) {
-      const tanpaKesimpulan = detail.units.filter((u) => !kesimpulanByUnit[u.id]?.code).map((u) => u.label);
+    const butuhKesimpulan = detail.units.filter((u) => (formDefFor(u)?.kesimpulan?.options?.length ?? 0) > 0);
+    if (butuhKesimpulan.length > 0) {
+      const tanpaKesimpulan = butuhKesimpulan.filter((u) => !kesimpulanByUnit[u.id]?.code).map((u) => u.label);
       if (tanpaKesimpulan.length > 0) {
         toast({ title: "Kesimpulan formulir wajib dipilih", description: `Pilih kesimpulan (K6/K7/K8) untuk unit: ${tanpaKesimpulan.join(", ")}`, variant: "destructive" });
         return;
@@ -182,7 +193,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
     for (const u of detail.units) {
       const pwFotoLabels = new Set(u.items.filter((it) => it.stage === "pengawas" && it.fotoFileId).map((it) => it.itemLabel));
       for (const [label, f] of Object.entries(itemForms[u.id] ?? {})) {
-        if (f.hasil && !f.foto && cfgFor(label).fotoWajib && pwFotoLabels.has(label)) tanpaFoto.push(`${u.label} — ${label}`);
+        if (f.hasil && !f.foto && cfgFor(u, label).fotoWajib && pwFotoLabels.has(label)) tanpaFoto.push(`${u.label} — ${label}`);
       }
     }
     if (tanpaFoto.length > 0) {
@@ -197,11 +208,12 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
           gudangCatatan: gudangCatatan.trim(),
           units: detail.units.map((u) => {
             const fk = kesimpulanByUnit[u.id];
+            const unitPunyaKesimpulan = (formDefFor(u)?.kesimpulan?.options?.length ?? 0) > 0;
             return {
             unitId: u.id,
             sn: (snByUnit[u.id] ?? "").trim(),
             keputusan: keputusanByUnit[u.id],
-            ...(formOpts.length > 0 && fk?.code ? {
+            ...(unitPunyaKesimpulan && fk?.code ? {
               formKeputusan: {
                 code: fk.code,
                 ...(fk.meterLayak?.trim() ? { meterLayak: fk.meterLayak.trim() } : {}),
@@ -239,7 +251,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
             <Button variant="ghost" size="sm" onClick={() => { setDetail(null); setShowTug10(false); }}>
               <ArrowLeft className="h-4 w-4 mr-1" /> Kembali
             </Button>
-            <h3 className="text-lg font-bold">Retur #{detail.id} — {detail.materialName}</h3>
+            <h3 className="text-lg font-bold">Retur #{detail.id} — {(detail.materials?.length ?? 0) > 1 ? (detail.materials as { name: string }[]).map((m) => m.name).join(" + ") : detail.materialName}</h3>
             <Badge variant="secondary" className="capitalize">{detail.status === "checked_supervisor" ? "Menunggu verifikasi" : detail.status}</Badge>
             {detail.jumlahUnit && detail.jumlahUnit > detail.units.length && (
               <Badge className="bg-sky-100 text-sky-800">Sampling: {detail.units.length} unit contoh untuk {detail.jumlahUnit} unit</Badge>
@@ -273,10 +285,11 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
           for (const it of u.items) if (!labels.includes(it.itemLabel)) labels.push(it.itemLabel);
           const pengawasOf = (label: string): ReturItemCek | undefined =>
             u.items.find((it) => it.stage === "pengawas" && it.itemLabel === label);
+          const fd = formDefFor(u); // definisi formulir material milik unit ini
           return (
             <Card key={u.id}>
               <CardHeader className="py-3 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
-                <CardTitle className="text-base">{u.label}{u.sn ? ` — SN ${u.sn}` : ""}</CardTitle>
+                <CardTitle className="text-base">{(detail.materials?.length ?? 0) > 1 && u.materialName ? <span className="text-muted-foreground">{u.materialName} — </span> : null}{u.label}{u.sn ? ` — SN ${u.sn}` : ""}</CardTitle>
                 <div className="flex items-center gap-2">
                   <Label className="text-xs text-muted-foreground">SN MIMS (wajib)</Label>
                   <Input className="h-8 w-52 text-sm font-mono" placeholder="TUG10/..."
@@ -297,13 +310,13 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                   ))}
                   {!keputusanByUnit[u.id] && <span className="text-xs text-destructive">belum dipilih</span>}
                 </div>
-                {formDef?.kesimpulan?.options?.length ? (
+                {fd?.kesimpulan?.options?.length ? (
                   <div className="mb-4 space-y-2 border-t border-border/50 pt-3">
                     <p className="text-xs font-medium">
-                      Kesimpulan formulir inspeksi (wajib — tercetak di Cetak Formulir {formDef.formCode}):
+                      Kesimpulan formulir inspeksi (wajib — tercetak di Cetak Formulir {fd.formCode}):
                     </p>
                     <div className="flex flex-wrap items-center gap-2">
-                      {formDef.kesimpulan.options.map((o) => (
+                      {fd.kesimpulan.options.map((o) => (
                         <Button key={o.code} size="sm" type="button"
                           variant={kesimpulanByUnit[u.id]?.code === o.code ? "default" : "outline"}
                           onClick={() => setKesimpulanByUnit((prev) => ({
@@ -317,7 +330,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                       ))}
                       {!kesimpulanByUnit[u.id]?.code && <span className="text-xs text-destructive">belum dipilih</span>}
                     </div>
-                    {formDef.kesimpulan.mode === "meter" && kesimpulanByUnit[u.id] && (
+                    {fd.kesimpulan.mode === "meter" && kesimpulanByUnit[u.id] && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-xl">
                         <div className="space-y-1">
                           <Label className="text-xs">Panjang bekas layak pakai (meter)</Label>
@@ -355,7 +368,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                       {labels.map((label) => {
                         const pw = pengawasOf(label);
                         const f = itemForms[u.id]?.[label] ?? emptyForm;
-                        const fotoWajibEfektif = cfgFor(label).fotoWajib && !!pw?.fotoFileId;
+                        const fotoWajibEfektif = cfgFor(u, label).fotoWajib && !!pw?.fotoFileId;
                         return (
                           <TableRow key={label}>
                             <TableCell className="text-sm max-w-[220px]">
@@ -378,7 +391,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                               {pw?.fotoFileId ? <DriveImg fileId={pw.fotoFileId} alt={`Foto pengawas: ${label}`} /> : <ImageOff className="h-4 w-4 text-muted-foreground/50" />}
                             </TableCell>
                             <TableCell>
-                              {cfgFor(label).tipeInput === "teks" ? (
+                              {cfgFor(u, label).tipeInput === "teks" ? (
                                 <Input className="h-8 w-28 text-xs" placeholder="Ketik hasil..." value={f.hasil}
                                   onChange={(e) => setItem(u.id, label, { hasil: e.target.value })} />
                               ) : (
@@ -387,7 +400,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                                   <SelectContent>
                                     <SelectItem value="skip">Kosong (lewati)</SelectItem>
                                     {(() => {
-                                      const opts = optionsFor(label);
+                                      const opts = optionsFor(u, label);
                                       const shown = f.hasil && !opts.includes(f.hasil) ? [...opts, f.hasil] : opts;
                                       return shown.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>);
                                     })()}
@@ -479,7 +492,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
               {docs.map((d) => (
                 <TableRow key={d.id}>
                   <TableCell className="font-mono">{d.id}</TableCell>
-                  <TableCell>{d.materialName}</TableCell>
+                  <TableCell title={(d.materials ?? []).map((m) => m.name).join(", ")}>{(d.materials?.length ?? 0) > 1 ? `${d.materials![0].name} +${d.materials!.length - 1}` : d.materialName}</TableCell>
                   <TableCell>{d.pengawasName ?? "-"}</TableCell>
                   <TableCell>{d.unitCount}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{fmtTanggal(d.checkedAt)}</TableCell>

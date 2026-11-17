@@ -337,6 +337,30 @@ async function setupDatabase() {
       ALTER TABLE retur_unit ADD COLUMN IF NOT EXISTS form_data JSONB;
       ALTER TABLE retur_unit ADD COLUMN IF NOT EXISTS form_keputusan JSONB;
     `);
+    // Multi-material per dokumen retur: tiap unit punya material_id sendiri;
+    // retur_dokumen_material = daftar material dokumen + jumlah_unit sampling per material.
+    await pool.query(`
+      ALTER TABLE retur_unit ADD COLUMN IF NOT EXISTS material_id INTEGER REFERENCES materials(id);
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS retur_dokumen_material (
+        id SERIAL PRIMARY KEY,
+        dokumen_id INTEGER NOT NULL REFERENCES retur_dokumen(id) ON DELETE CASCADE,
+        material_id INTEGER NOT NULL REFERENCES materials(id),
+        jumlah_unit INTEGER,
+        UNIQUE(dokumen_id, material_id)
+      );
+    `);
+    // Backfill data lama (idempotent): unit = material dokumen; daftar material = material dokumen.
+    await pool.query(`
+      UPDATE retur_unit u SET material_id = d.material_id
+      FROM retur_dokumen d WHERE u.dokumen_id = d.id AND u.material_id IS NULL;
+    `);
+    await pool.query(`
+      INSERT INTO retur_dokumen_material (dokumen_id, material_id, jumlah_unit)
+      SELECT d.id, d.material_id, d.jumlah_unit FROM retur_dokumen d
+      ON CONFLICT (dokumen_id, material_id) DO NOTHING;
+    `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS retur_form_template (
         id SERIAL PRIMARY KEY,

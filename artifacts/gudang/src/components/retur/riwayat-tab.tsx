@@ -169,7 +169,7 @@ export function RiwayatTab() {
         r += 2;
         const info: [string, string][] = [
           ["Tanggal", fmtTanggal(detail.createdAt)],
-          ["Material", detail.materialName],
+          ["Material", (detail.materials?.length ?? 0) > 1 ? (detail.materials as { name: string }[]).map((m) => m.name).join(", ") : detail.materialName],
           ["Pengawas", detail.pengawasName ?? "-"],
           ["Gudang", detail.gudangName ?? "-"],
           ["Status", "Selesai diverifikasi"],
@@ -276,7 +276,7 @@ export function RiwayatTab() {
         doc.setFontSize(9); doc.setFont("helvetica", "normal");
         const info: [string, string][] = [
           ["Tanggal", fmtTanggal(detail.createdAt)],
-          ["Material", detail.materialName],
+          ["Material", (detail.materials?.length ?? 0) > 1 ? (detail.materials as { name: string }[]).map((m) => m.name).join(", ") : detail.materialName],
           ["Status", "Selesai diverifikasi"],
           ["Pengawas", detail.pengawasName ?? "-"],
           ["Gudang", detail.gudangName ?? "-"],
@@ -398,17 +398,22 @@ export function RiwayatTab() {
       const skipped: string[] = [];
       for (const id of ids) {
         const detail = await returApi<ReturDetail>(`/${id}`);
-        let def: FormDefinition | null = null;
-        try {
-          const fd = await returApi<{ formKey: string | null; definition: FormDefinition | null }>(`/form-def/${detail.materialId}`);
-          def = fd.formKey ? fd.definition : null;
-        } catch { def = null; }
-        if (!def) { skipped.push(`#${id} (${detail.materialName})`); continue; }
-        entries.push({ def, detail });
+        // Multi-material: ambil definisi formulir tiap material yang punya unit di dokumen ini.
+        const matIds = Array.from(new Set(detail.units.map((u) => u.materialId ?? detail.materialId)));
+        const defsByMaterial: Record<number, FormDefinition> = {};
+        for (const mid of matIds) {
+          try {
+            const fd = await returApi<{ formKey: string | null; definition: FormDefinition | null }>(`/form-def/${mid}`);
+            if (fd.formKey && fd.definition) defsByMaterial[mid] = fd.definition;
+          } catch { /* material tanpa assignment formulir */ }
+        }
+        const def = matIds.map((m) => defsByMaterial[m]).find((x) => x) ?? null;
+        if (!def) { skipped.push(`#${id} (${detail.materials?.map((m) => m.name).join(", ") ?? detail.materialName})`); continue; }
+        entries.push({ def, detail, defsByMaterial });
       }
       if (entries.length === 1) {
-        const { def, detail } = entries[0];
-        const wb = buildFormWorkbook(def, detail);
+        const { def, detail, defsByMaterial } = entries[0];
+        const wb = buildFormWorkbook(def, detail, defsByMaterial);
         const buf = await wb.xlsx.writeBuffer();
         downloadBlob(
           new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
@@ -519,7 +524,7 @@ export function RiwayatTab() {
                     <Checkbox checked={selected.has(d.id)} onCheckedChange={() => toggle(d.id)} aria-label={`Pilih dokumen ${d.id}`} />
                   </TableCell>
                   <TableCell className="font-mono">{d.id}</TableCell>
-                  <TableCell>{d.materialName}</TableCell>
+                  <TableCell title={(d.materials ?? []).map((m) => m.name).join(", ")}>{(d.materials?.length ?? 0) > 1 ? `${d.materials![0].name} +${d.materials!.length - 1}` : d.materialName}</TableCell>
                   <TableCell>{d.pengawasName ?? "-"}</TableCell>
                   <TableCell>{d.gudangName ?? "-"}</TableCell>
                   <TableCell>
@@ -575,7 +580,7 @@ export function RiwayatTab() {
         <AlertDialogHeader>
           <AlertDialogTitle>Hapus dokumen retur #{toDelete?.id}?</AlertDialogTitle>
           <AlertDialogDescription>
-            Dokumen <b>{toDelete?.materialName}</b> beserta unit, hasil ceklist, dan notifikasinya akan
+            Dokumen <b>{(toDelete?.materials?.length ?? 0) > 1 ? (toDelete?.materials as { name: string }[]).map((m) => m.name).join(", ") : toDelete?.materialName}</b> beserta unit, hasil ceklist, dan notifikasinya akan
             dihapus permanen dari database. Foto TUG10 dan foto ceklist di Google Drive juga ikut dihapus.
             Tindakan ini tidak bisa dibatalkan.
           </AlertDialogDescription>

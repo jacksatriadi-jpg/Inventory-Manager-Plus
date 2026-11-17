@@ -245,6 +245,7 @@ interface ReturDetail {
   gudangCompany: string | null;
   formKey: string | null; // template formulir material ini (Cetak Formulir)
   unitCount: number;
+  materials: { id: number; name: string; jumlahUnit: number | null }[]; // multi-material per dokumen
   createdAt: string;
   checkedAt: string;
   completedAt: string | null;
@@ -254,6 +255,8 @@ interface ReturDetail {
 interface ReturUnitDetail {
   id: number;
   label: string;
+  materialId: number; // material milik unit ini (multi-material per dokumen)
+  materialName: string;
   sn: string | null;
   keputusan: "layak_pakai" | "usul_hapus" | null; // disposisi gudang, diisi saat verifikasi
   formData: Record<string, string> | null; // isian "A. DATA MATERIAL" utk cetak formulir
@@ -292,12 +295,15 @@ interface DocJoinedRow {
   checked_at: Date;
   completed_at: Date | null;
   unit_count?: number;
+  materials?: { id: number; name: string; jumlahUnit: number | null }[] | null;
   keputusan_values?: string[] | null;
 }
 
 interface UnitRow {
   id: number;
   label: string;
+  material_id: number;
+  material_name: string;
   sn: string | null;
   keputusan: "layak_pakai" | "usul_hapus" | null; // dicegah CHECK constraint di DB
   form_data: Record<string, string> | null;
@@ -332,7 +338,12 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
   const d = docRes.rows[0] as DocJoinedRow; // kolom sesuai SELECT
 
   const unitsRes = await pool.query(
-    "SELECT id, label, sn, keputusan, form_data, form_keputusan FROM retur_unit WHERE dokumen_id = $1 ORDER BY id",
+    `SELECT u.id, u.label, u.sn, u.keputusan, u.form_data, u.form_keputusan,
+            COALESCE(u.material_id, d.material_id) AS material_id, um.name AS material_name
+     FROM retur_unit u
+     JOIN retur_dokumen d ON d.id = u.dokumen_id
+     JOIN materials um ON um.id = COALESCE(u.material_id, d.material_id)
+     WHERE u.dokumen_id = $1 ORDER BY u.id`,
     [dokumenId],
   );
   const unitRows = unitsRes.rows as UnitRow[];
@@ -350,6 +361,8 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
   const units: ReturUnitDetail[] = unitRows.map((u) => ({
     id: u.id,
     label: u.label,
+    materialId: u.material_id,
+    materialName: u.material_name,
     sn: u.sn,
     keputusan: u.keputusan,
     formData: u.form_data ?? null,
@@ -365,6 +378,18 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
         fotoLink: it.foto_link,
       })),
   }));
+
+  // Daftar material dokumen (multi-material); fallback utk data lama tanpa junction rows.
+  const matsRes = await pool.query(
+    `SELECT dm.material_id, m.name, dm.jumlah_unit
+     FROM retur_dokumen_material dm JOIN materials m ON m.id = dm.material_id
+     WHERE dm.dokumen_id = $1 ORDER BY dm.id`,
+    [dokumenId],
+  );
+  const materials = matsRes.rows.length > 0
+    ? (matsRes.rows as { material_id: number; name: string; jumlah_unit: number | null }[])
+        .map((x) => ({ id: x.material_id, name: x.name, jumlahUnit: x.jumlah_unit }))
+    : [{ id: d.material_id, name: d.material_name, jumlahUnit: d.jumlah_unit ?? null }];
 
   return {
     id: d.id,
@@ -385,6 +410,7 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
     gudangCompany: d.gudang_company ?? null,
     formKey: d.form_key ?? null,
     unitCount: unitRows.length,
+    materials,
     createdAt: new Date(d.created_at).toISOString(),
     checkedAt: new Date(d.checked_at).toISOString(),
     completedAt: d.completed_at ? new Date(d.completed_at).toISOString() : null,
@@ -792,38 +818,89 @@ router.post("/retur", async (req, res): Promise<void> => {
   if (!actor) return;
 
   const body = bodyObject(req);
-  const materialId = body.materialId;
   const tug10Photo = body.tug10Photo;
   const catatan = body.catatan;
-  const unitsRaw = body.units;
-  const jumlahUnitRaw = body.jumlahUnit;
   const lampiranRaw = body.lampiran;
 
-  if (!Number.isInteger(materialId)) { res.status(400).json({ error: "materialId tidak valid" }); return; }
   if (!isImageDataUrl(tug10Photo)) { res.status(400).json({ error: "Foto TUG10 wajib diunggah (format image)" }); return; }
-  if (!Array.isArray(unitsRaw) || unitsRaw.length === 0) { res.status(400).json({ error: "Minimal 1 unit harus diisi" }); return; }
 
-  const mat = await pool.query("SELECT id, name, sampling_enabled FROM materials WHERE id = $1", [materialId]);
-  if (mat.rows.length === 0) { res.status(400).json({ error: "Material tidak ditemukan" }); return; }
-  const matRow = mat.rows[0] as { id: number; name: string; sampling_enabled: boolean }; // kolom sesuai SELECT
-  const materialName = matRow.name;
+  // Dua bentuk payload: multi-material { materials: [{materialId, units, jumlahUnit?}] }
+  // atau legacy satu material { materialId, units, jumlahUnit } di level atas.
+  const groupsRaw = Array.isArray(body.materials)
+    ? (body.materials as unknown[])
+    : [{ materialId: body.materialId, units: body.units, jumlahUnit: body.jumlahUnit }];
+  if (groupsRaw.length === 0 || groupsRaw.length > 10) { res.status(400).json({ error: "Jumlah material dalam satu dokumen harus 1-10" }); return; }
 
-  // Mode sampling: total unit deklaratif disimpan di dokumen; unit terisi = sampel perwakilan.
-  let jumlahUnit: number | null = null;
-  if (matRow.sampling_enabled) {
-    // Mode sampling: jumlah unit deklaratif WAJIB — tanpa ini dokumen sampling tampak seperti dokumen normal.
-    if (jumlahUnitRaw === undefined || jumlahUnitRaw === null) {
-      res.status(400).json({ error: "Jumlah unit wajib diisi untuk material mode sampling" }); return;
+  interface GroupValid { materialId: number; materialName: string; sampling: boolean; jumlahUnit: number | null; units: ValidUnit[] }
+  const groups: GroupValid[] = [];
+  const seenMat = new Set<number>();
+  for (let gi = 0; gi < groupsRaw.length; gi++) {
+    if (!groupsRaw[gi] || typeof groupsRaw[gi] !== "object") { res.status(400).json({ error: `Material ${gi + 1} tidak valid` }); return; }
+    const g = groupsRaw[gi] as Record<string, unknown>;
+    const materialId = g.materialId;
+    if (!Number.isInteger(materialId)) { res.status(400).json({ error: `Material ${gi + 1}: materialId tidak valid` }); return; }
+    if (seenMat.has(materialId as number)) { res.status(400).json({ error: `Material ${gi + 1}: material sama tidak boleh didaftarkan dua kali dalam satu dokumen` }); return; }
+    seenMat.add(materialId as number);
+    const unitsRaw = g.units;
+    if (!Array.isArray(unitsRaw) || unitsRaw.length === 0) { res.status(400).json({ error: `Material ${gi + 1}: minimal 1 unit harus diisi` }); return; }
+
+    const mat = await pool.query("SELECT id, name, sampling_enabled FROM materials WHERE id = $1", [materialId]);
+    if (mat.rows.length === 0) { res.status(400).json({ error: `Material ${gi + 1} tidak ditemukan` }); return; }
+    const matRow = mat.rows[0] as { id: number; name: string; sampling_enabled: boolean }; // kolom sesuai SELECT
+    const materialName = matRow.name;
+
+    // Mode sampling: total unit deklaratif per material; unit terisi = sampel perwakilan.
+    let jumlahUnit: number | null = null;
+    if (matRow.sampling_enabled) {
+      const jumlahUnitRaw = g.jumlahUnit;
+      // Mode sampling: jumlah unit deklaratif WAJIB — tanpa ini dokumen sampling tampak seperti dokumen normal.
+      if (jumlahUnitRaw === undefined || jumlahUnitRaw === null) {
+        res.status(400).json({ error: `Jumlah unit wajib diisi untuk material mode sampling (${materialName})` }); return;
+      }
+      if (!Number.isInteger(jumlahUnitRaw) || (jumlahUnitRaw as number) < 1) {
+        res.status(400).json({ error: `Jumlah unit "${materialName}" harus bilangan bulat >= 1` }); return;
+      }
+      jumlahUnit = jumlahUnitRaw as number;
     }
-    if (!Number.isInteger(jumlahUnitRaw) || (jumlahUnitRaw as number) < 1) {
-      res.status(400).json({ error: "Jumlah unit harus bilangan bulat >= 1" }); return;
+
+    const cfg = await getTemplateConfig(materialId as number); // sudah lolos guard Number.isInteger
+    const formTpl = await getFormTemplate(materialId as number); // null = material tanpa template formulir
+    const allowedFormKeys = formTpl ? formFieldKeys(formTpl.definition) : new Set<string>();
+    const units: ValidUnit[] = [];
+    for (let i = 0; i < unitsRaw.length; i++) {
+      const entry = unitsRaw[i];
+      if (!entry || typeof entry !== "object") { res.status(400).json({ error: `Unit ${i + 1} tidak valid` }); return; }
+      const u = entry as Record<string, unknown>; // fields parsed via typeof guards below
+      const label = typeof u.label === "string" && u.label.trim() ? u.label.trim() : `Unit ${i + 1}`;
+      const v = validateCekItems(u.items, cfg, "pengawas");
+      if (!v.ok) { res.status(400).json({ error: `Material "${materialName}" unit "${label}": ${v.error}` }); return; }
+      // formData: hanya key milik definisi form material; string kosong dibuang.
+      let unitFormData: Record<string, string> | null = null;
+      if (formTpl) {
+        const fd: Record<string, string> = {};
+        const raw = u.formData;
+        if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+          for (const [k, val] of Object.entries(raw as Record<string, unknown>)) {
+            if (!allowedFormKeys.has(k)) continue;
+            if (typeof val !== "string" || !val.trim()) continue;
+            if (val.trim().length > 200) { res.status(400).json({ error: `Unit "${label}": field "${k}" maksimal 200 karakter` }); return; }
+            fd[k] = val.trim();
+          }
+        }
+        unitFormData = Object.keys(fd).length > 0 ? fd : null;
+      }
+      units.push({ label, items: v.items, formData: unitFormData });
     }
-    jumlahUnit = jumlahUnitRaw as number;
+    groups.push({ materialId: materialId as number, materialName, sampling: matRow.sampling_enabled, jumlahUnit, units });
   }
-  // Lampiran (hanya mode sampling): gambar/PDF <=8MB, maks 10 file — diunggah ke folder dokumen di Drive.
+  const anySampling = groups.some((g) => g.sampling);
+  const totalUnits = groups.reduce((a, g) => a + g.units.length, 0);
+  const materialNames = groups.map((g) => g.materialName);
+
+  // Lampiran (hanya bila ada material sampling): gambar/PDF <=8MB, maks 10 file — diunggah ke folder dokumen di Drive.
   type LampiranInput = { name: string; dataUrl: string };
   const lampiranInputs: LampiranInput[] = [];
-  if (matRow.sampling_enabled && Array.isArray(lampiranRaw)) {
+  if (anySampling && Array.isArray(lampiranRaw)) {
     if (lampiranRaw.length > 10) { res.status(400).json({ error: "Maksimal 10 dokumen lampiran" }); return; }
     for (const lfRaw of lampiranRaw) {
       const lf = lfRaw as Record<string, unknown>;
@@ -837,73 +914,54 @@ router.post("/retur", async (req, res): Promise<void> => {
     }
   }
 
-  const cfg = await getTemplateConfig(materialId as number); // sudah lolos guard Number.isInteger
-  const formTpl = await getFormTemplate(materialId as number); // null = material tanpa template formulir
-  const allowedFormKeys = formTpl ? formFieldKeys(formTpl.definition) : new Set<string>();
-  const units: ValidUnit[] = [];
-  for (let i = 0; i < unitsRaw.length; i++) {
-    const entry = unitsRaw[i];
-    if (!entry || typeof entry !== "object") { res.status(400).json({ error: `Unit ${i + 1} tidak valid` }); return; }
-    const u = entry as Record<string, unknown>; // fields parsed via typeof guards below
-    const label = typeof u.label === "string" && u.label.trim() ? u.label.trim() : `Unit ${i + 1}`;
-    const v = validateCekItems(u.items, cfg, "pengawas");
-    if (!v.ok) { res.status(400).json({ error: `Unit "${label}": ${v.error}` }); return; }
-    // formData: hanya key milik definisi form material; string kosong dibuang.
-    let unitFormData: Record<string, string> | null = null;
-    if (formTpl) {
-      const fd: Record<string, string> = {};
-      const raw = u.formData;
-      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-        for (const [k, val] of Object.entries(raw as Record<string, unknown>)) {
-          if (!allowedFormKeys.has(k)) continue;
-          if (typeof val !== "string" || !val.trim()) continue;
-          if (val.trim().length > 200) { res.status(400).json({ error: `Unit "${label}": field "${k}" maksimal 200 karakter` }); return; }
-          fd[k] = val.trim();
-        }
-      }
-      unitFormData = Object.keys(fd).length > 0 ? fd : null;
-    }
-    units.push({ label, items: v.items, formData: unitFormData });
-  }
-
   const drive = await getReturDriveStatus();
   if (!drive.connected) { res.status(400).json({ error: DRIVE_NOT_CONNECTED_MSG }); return; }
 
   // Foto ditata per folder: Retur/RETUR-<tanggal>-<material>/Unit <n> - <label>/.
+  // Dokumen multi-material: folder "<material> Unit <n> - <label>" per unit.
   // Gagal upload → 502; tidak ada baris DB yang ditulis sebelum upload selesai.
   const stamp = Date.now();
   let docFolderId = "";
   let tug10File: DriveFile;
   let lampiranFiles: LampiranFile[] = [];
-  const unitFiles: (DriveFile | null)[][] = [];
-  const unitFolderIds: string[] = [];
+  const unitFiles: (DriveFile | null)[][][] = []; // [group][unit][item]
+  const unitFolderIds: string[][] = [];           // [group][unit]
   try {
     const root = await ensureReturFolder();
-    docFolderId = await ensureChildFolder(
-      `RETUR-${formatFolderStamp(new Date())}-${sanitizeFolderName(materialName)}`,
-      root,
-    );
+    const docFolderName = groups.length === 1
+      ? `RETUR-${formatFolderStamp(new Date())}-${sanitizeFolderName(materialNames[0])}`
+      : `RETUR-${formatFolderStamp(new Date())}-${sanitizeFolderName(materialNames[0])}+${groups.length}Material`;
+    docFolderId = await ensureChildFolder(docFolderName, root);
     tug10File = await uploadReturDataUrl(tug10Photo, `TUG10.${extFromDataUrl(tug10Photo)}`, docFolderId);
     lampiranFiles = await Promise.all(lampiranInputs.map(async (lf, li) => {
       const ext = lf.dataUrl.startsWith("data:application/pdf") ? "pdf" : extFromDataUrl(lf.dataUrl);
       const up = await uploadReturDataUrl(lf.dataUrl, `Lampiran-${li + 1}-${sanitizeFolderName(lf.name)}.${ext}`, docFolderId);
       return { name: lf.name, fileId: up.fileId, webViewLink: up.webViewLink };
     }));
-    for (let ui = 0; ui < units.length; ui++) {
-      const unitFolder = await ensureChildFolder(
-        `Unit ${ui + 1} - ${sanitizeFolderName(units[ui].label)}`,
-        docFolderId,
-      );
-      unitFolderIds.push(unitFolder);
-      const files: (DriveFile | null)[] = [];
-      for (let ii = 0; ii < units[ui].items.length; ii++) {
-        const it = units[ui].items[ii];
-        // Item tanpa foto (komponen tidak wajib foto) -> tidak ada file Drive, fileId null.
-        files.push(it.foto
-          ? await uploadReturDataUrl(it.foto, `U${ui + 1}-I${ii + 1}-${stamp}.${extFromDataUrl(it.foto)}`, unitFolder)
-          : null);
+    for (let gi = 0; gi < groups.length; gi++) {
+      const g = groups[gi];
+      const folders: string[] = [];
+      const filesPerUnit: (DriveFile | null)[][] = [];
+      for (let ui = 0; ui < g.units.length; ui++) {
+        const unitFolder = await ensureChildFolder(
+          groups.length === 1
+            ? `Unit ${ui + 1} - ${sanitizeFolderName(g.units[ui].label)}`
+            : `${sanitizeFolderName(g.materialName)} Unit ${ui + 1} - ${sanitizeFolderName(g.units[ui].label)}`,
+          docFolderId,
+        );
+        folders.push(unitFolder);
+        const files: (DriveFile | null)[] = [];
+        for (let ii = 0; ii < g.units[ui].items.length; ii++) {
+          const it = g.units[ui].items[ii];
+          // Item tanpa foto (komponen tidak wajib foto) -> tidak ada file Drive, fileId null.
+          files.push(it.foto
+            ? await uploadReturDataUrl(it.foto, `U${gi + 1}-${ui + 1}-I${ii + 1}-${stamp}.${extFromDataUrl(it.foto)}`, unitFolder)
+            : null);
+        }
+        filesPerUnit.push(files);
       }
-      unitFiles.push(files);
+      unitFolderIds.push(folders);
+      unitFiles.push(filesPerUnit);
     }
   } catch (err: unknown) {
     logger.error({ err }, "Retur: upload foto ke Drive gagal");
@@ -919,37 +977,48 @@ router.post("/retur", async (req, res): Promise<void> => {
       `INSERT INTO retur_dokumen (material_id, tug10_file_id, tug10_link, folder_file_id, catatan, pengawas_id, jumlah_unit, lampiran)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) RETURNING id`,
       [
-        materialId,
+        groups[0].materialId,
         tug10File.fileId,
         tug10File.webViewLink || null,
         docFolderId,
         typeof catatan === "string" && catatan.trim() ? catatan.trim() : null,
         actor.id,
-        jumlahUnit,
+        groups.length === 1 ? groups[0].jumlahUnit : null, // multi: jumlah_unit per material ada di junction
         JSON.stringify(lampiranFiles),
       ],
     );
     const docRow = docRes.rows[0] as { id: number }; // RETURNING id
     dokumenId = docRow.id;
 
-    for (let ui = 0; ui < units.length; ui++) {
-      const unitRes = await client.query(
-        "INSERT INTO retur_unit (dokumen_id, label, folder_file_id, form_data) VALUES ($1, $2, $3, $4::jsonb) RETURNING id",
-        [dokumenId, units[ui].label, unitFolderIds[ui], units[ui].formData ? JSON.stringify(units[ui].formData) : null],
+    // Daftar material dokumen + jumlah_unit sampling per material.
+    for (const g of groups) {
+      await client.query(
+        `INSERT INTO retur_dokumen_material (dokumen_id, material_id, jumlah_unit) VALUES ($1, $2, $3)`,
+        [dokumenId, g.materialId, g.jumlahUnit],
       );
-      const unitRow = unitRes.rows[0] as { id: number }; // RETURNING id
-      const unitId = unitRow.id;
-      for (let ii = 0; ii < units[ui].items.length; ii++) {
-        const it = units[ui].items[ii];
-        await client.query(
-          `INSERT INTO retur_item_cek (unit_id, stage, item_label, hasil, catatan, foto_file_id, foto_link)
-           VALUES ($1, 'pengawas', $2, $3, $4, $5, $6)`,
-          [unitId, it.label, it.hasil, it.catatan, unitFiles[ui][ii]?.fileId ?? null, unitFiles[ui][ii]?.webViewLink ?? null],
+    }
+
+    for (let gi = 0; gi < groups.length; gi++) {
+      for (let ui = 0; ui < groups[gi].units.length; ui++) {
+        const unit = groups[gi].units[ui];
+        const unitRes = await client.query(
+          "INSERT INTO retur_unit (dokumen_id, material_id, label, folder_file_id, form_data) VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING id",
+          [dokumenId, groups[gi].materialId, unit.label, unitFolderIds[gi][ui], unit.formData ? JSON.stringify(unit.formData) : null],
         );
+        const unitRow = unitRes.rows[0] as { id: number }; // RETURNING id
+        const unitId = unitRow.id;
+        for (let ii = 0; ii < unit.items.length; ii++) {
+          const it = unit.items[ii];
+          await client.query(
+            `INSERT INTO retur_item_cek (unit_id, stage, item_label, hasil, catatan, foto_file_id, foto_link)
+             VALUES ($1, 'pengawas', $2, $3, $4, $5, $6)`,
+            [unitId, it.label, it.hasil, it.catatan, unitFiles[gi][ui][ii]?.fileId ?? null, unitFiles[gi][ui][ii]?.webViewLink ?? null],
+          );
+        }
       }
     }
 
-    const message = `Retur ${materialName} (${units.length} unit) oleh ${actor.username} selesai diceklist — menunggu verifikasi gudang.`;
+    const message = `Retur ${materialNames.join(", ")} (${totalUnits} unit) oleh ${actor.username} selesai diceklist — menunggu verifikasi gudang.`;
     await client.query(
       `INSERT INTO retur_notifikasi (user_id, dokumen_id, message)
        SELECT u.id, $1, $2
@@ -989,7 +1058,12 @@ router.get("/retur", async (req, res): Promise<void> => {
   const args: (string | number)[] = [];
   if (!isGudang) { args.push(actor.id); conds.push(`d.pengawas_id = $${args.length}`); }
   if (statusF) { args.push(statusF); conds.push(`d.status = $${args.length}`); }
-  if (q) { args.push(`%${q}%`); conds.push(`(m.name ILIKE $${args.length} OR m.code ILIKE $${args.length})`); }
+  if (q) {
+    args.push(`%${q}%`);
+    conds.push(`(m.name ILIKE $${args.length} OR m.code ILIKE $${args.length}
+      OR EXISTS (SELECT 1 FROM retur_dokumen_material dq JOIN materials m3 ON m3.id = dq.material_id
+                 WHERE dq.dokumen_id = d.id AND (m3.name ILIKE $${args.length} OR m3.code ILIKE $${args.length})))`);
+  }
   if (keputusanF) { args.push(keputusanF); conds.push(`EXISTS (SELECT 1 FROM retur_unit fu WHERE fu.dokumen_id = d.id AND fu.keputusan = $${args.length})`); }
 
   const result = await pool.query(
@@ -998,6 +1072,9 @@ router.get("/retur", async (req, res): Promise<void> => {
             d.pengawas_id, p.username AS pengawas_name,
             d.gudang_id, g.username AS gudang_name,
             (SELECT COUNT(*)::int FROM retur_unit u WHERE u.dokumen_id = d.id) AS unit_count,
+            (SELECT json_agg(json_build_object('id', m2.id, 'name', m2.name, 'jumlahUnit', dm.jumlah_unit) ORDER BY dm.id)
+             FROM retur_dokumen_material dm JOIN materials m2 ON m2.id = dm.material_id
+             WHERE dm.dokumen_id = d.id) AS materials,
             (SELECT array_agg(DISTINCT u.keputusan) FROM retur_unit u
               WHERE u.dokumen_id = d.id AND u.keputusan IS NOT NULL) AS keputusan_values,
             d.created_at, d.checked_at, d.completed_at
@@ -1027,6 +1104,9 @@ router.get("/retur", async (req, res): Promise<void> => {
       gudangId: d.gudang_id,
       gudangName: d.gudang_name,
       unitCount: d.unit_count ?? 0,
+      materials: Array.isArray(d.materials) && d.materials.length > 0
+        ? (d.materials as { id: number; name: string; jumlahUnit: number | null }[])
+        : [{ id: d.material_id, name: d.material_name, jumlahUnit: d.jumlah_unit ?? null }],
       keputusan: Array.isArray(d.keputusan_values) ? (d.keputusan_values.length === 1 ? d.keputusan_values[0] : d.keputusan_values.length > 1 ? "campur" : null) : null,
       createdAt: new Date(d.created_at).toISOString(),
       checkedAt: new Date(d.checked_at).toISOString(),
@@ -1150,13 +1230,31 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   if (!Array.isArray(unitsRaw)) { res.status(400).json({ error: "units harus array" }); return; }
 
   const docUnitsRes = await pool.query(
-    "SELECT id, label, folder_file_id FROM retur_unit WHERE dokumen_id = $1 ORDER BY id",
+    `SELECT u.id, u.label, u.folder_file_id, COALESCE(u.material_id, d.material_id) AS material_id
+     FROM retur_unit u JOIN retur_dokumen d ON d.id = u.dokumen_id
+     WHERE u.dokumen_id = $1 ORDER BY u.id`,
     [id],
   );
-  const docUnits = docUnitsRes.rows as { id: number; label: string; folder_file_id: string | null }[];
+  const docUnits = docUnitsRes.rows as { id: number; label: string; folder_file_id: string | null; material_id: number }[];
   const docUnitIds = new Set<number>(docUnits.map((u) => u.id));
+  const unitMatById = new Map<number, number>(docUnits.map((u) => [u.id, u.material_id]));
 
-  const cfg = await getTemplateConfig(docRow.material_id);
+  // Multi-material: config template & opsi kesimpulan per material milik unit (di-cache).
+  const cfgCache = new Map<number, Awaited<ReturnType<typeof getTemplateConfig>>>();
+  const optsCache = new Map<number, { code: string; label?: string }[]>();
+  const cfgForMat = async (mid: number) => {
+    if (!cfgCache.has(mid)) cfgCache.set(mid, await getTemplateConfig(mid));
+    return cfgCache.get(mid)!;
+  };
+  const optsForMat = async (mid: number) => {
+    if (!optsCache.has(mid)) {
+      const t = await getFormTemplate(mid);
+      optsCache.set(mid, t && Array.isArray((t.definition.kesimpulan as Record<string, unknown> | undefined)?.options)
+        ? ((t.definition.kesimpulan as { options: { code: string; label?: string }[] }).options)
+        : []);
+    }
+    return optsCache.get(mid)!;
+  };
   // Peta: unit -> label item yang punya foto dari tahap pengawas (dasar aturan "ikuti pengawas").
   const pwFotoRes = await pool.query(
     `SELECT unit_id, item_label FROM retur_item_cek
@@ -1169,10 +1267,6 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
     pwFotoByUnit.get(row.unit_id)!.add(row.item_label);
   }
 
-  const formTpl = await getFormTemplate(docRow.material_id);
-  const kesimpulanOpts = formTpl && Array.isArray((formTpl.definition.kesimpulan as Record<string, unknown> | undefined)?.options)
-    ? ((formTpl.definition.kesimpulan as { options: { code: string; label?: string }[] }).options)
-    : [];
   const verifyUnits: VerifyUnit[] = [];
   const payloadUnitIds = new Set<number>();
   for (const entry of unitsRaw as unknown[]) {
@@ -1197,7 +1291,8 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
     }
     // Wajib foto gudang MENGIKUTI pengawas: hanya item yang difoto pengawas pada unit ini
     // yang menuntut foto gudang; flag template tetap harus on juga (AND).
-    const unitCfg = new Map(cfg);
+    const unitMatId = unitMatById.get(unitId) ?? docRow.material_id;
+    const unitCfg = new Map(await cfgForMat(unitMatId));
     for (const [label, c] of unitCfg) {
       if (c.fotoWajibGudang && !(pwFotoByUnit.get(unitId)?.has(label))) {
         unitCfg.set(label, { ...c, fotoWajibGudang: false });
@@ -1207,6 +1302,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
     if (!v.ok) { res.status(400).json({ error: `SN "${sn}": ${v.error}` }); return; }
     // Kesimpulan formulir: wajib bila material punya template form dgn opsi kesimpulan.
     let formKeputusan: VerifyUnit["formKeputusan"] = null;
+    const kesimpulanOpts = await optsForMat(unitMatId);
     if (kesimpulanOpts.length > 0) {
       const fk = u.formKeputusan as Record<string, unknown> | null | undefined;
       const code = typeof fk?.code === "string" ? fk.code : "";

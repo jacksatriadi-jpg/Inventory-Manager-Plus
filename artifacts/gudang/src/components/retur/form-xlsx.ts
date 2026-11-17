@@ -129,22 +129,29 @@ function rowCells(ws: ExcelJS.Worksheet, r: number, from: string, to: string, fn
   for (let col = start; col <= end; col++) row.getCell(col).address && fn(row.getCell(col).address);
 }
 
-export function buildFormWorkbook(def: FormDefinition, detail: ReturDetail) {
+// defsByMaterial: dokumen multi-material — tiap unit pakai definisi formulir material miliknya.
+export function buildFormWorkbook(def: FormDefinition, detail: ReturDetail, defsByMaterial?: Record<number, FormDefinition>) {
   const wb = new ExcelJS.Workbook();
-  detail.units.forEach((unit, ui) => buildFormSheet(wb, def, detail, unit, ui));
+  const multi = (detail.materials?.length ?? 0) > 1;
+  detail.units.forEach((unit, ui) => {
+    const d = (unit.materialId != null && defsByMaterial?.[unit.materialId]) || def;
+    buildFormSheet(wb, d, detail, unit, ui, multi ? (unit.materialName ?? detail.materialName) : undefined);
+  });
   return wb;
 }
 
 // Cetak banyak dokumen (material) sekaligus: SATU file Excel, satu sheet per unit per
 // dokumen. Sampling tetap 1 unit per material — sheet dinamai "<material> Dok<id>" agar
 // tidak bentrok antar dokumen (satu material bisa muncul di dokumen berbeda).
-export interface FormWorkbookEntry { def: FormDefinition; detail: ReturDetail }
+export interface FormWorkbookEntry { def: FormDefinition; detail: ReturDetail; defsByMaterial?: Record<number, FormDefinition> }
 
 export function buildMultiFormWorkbook(entries: FormWorkbookEntry[]) {
   const wb = new ExcelJS.Workbook();
-  for (const { def, detail } of entries) {
-    detail.units.forEach((unit, ui) =>
-      buildFormSheet(wb, def, detail, unit, ui, `${detail.materialName} Dok${detail.id}`));
+  for (const { def, detail, defsByMaterial } of entries) {
+    detail.units.forEach((unit, ui) => {
+      const d = (unit.materialId != null && defsByMaterial?.[unit.materialId]) || def;
+      buildFormSheet(wb, d, detail, unit, ui, `${unit.materialName ?? detail.materialName} Dok${detail.id}`);
+    });
   }
   return wb;
 }

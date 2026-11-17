@@ -30,6 +30,9 @@ export type ReturDokumen = typeof returDokumenTable.$inferSelect;
 export const returUnitTable = pgTable("retur_unit", {
   id: serial("id").primaryKey(),
   dokumenId: integer("dokumen_id").notNull().references(() => returDokumenTable.id, { onDelete: "cascade" }),
+  // material_id = material milik unit ini (multi-material per dokumen). NULL pada data lama
+  // = material dokumen (d.material_id).
+  materialId: integer("material_id").references(() => materialsTable.id),
   label: text("label").notNull(),
   // keputusan = disposisi gudang per unit (diisi saat verifikasi): 'layak_pakai' | 'usul_hapus'; NULL = belum diverifikasi.
   keputusan: text("keputusan"), // CHECK di DDL runtime app.ts
@@ -47,6 +50,16 @@ export const returUnitTable = pgTable("retur_unit", {
 ]);
 
 export type ReturUnit = typeof returUnitTable.$inferSelect;
+
+// ─── Daftar material dalam satu dokumen retur (multi-material) + jumlah_unit sampling per material ─
+export const returDokumenMaterialTable = pgTable("retur_dokumen_material", {
+  id: serial("id").primaryKey(),
+  dokumenId: integer("dokumen_id").notNull().references(() => returDokumenTable.id, { onDelete: "cascade" }),
+  materialId: integer("material_id").notNull().references(() => materialsTable.id),
+  jumlahUnit: integer("jumlah_unit"), // sampling per material; NULL = non-sampling
+}, (table) => [
+  uniqueIndex("retur_dokumen_material_doc_mat_uidx").on(table.dokumenId, table.materialId),
+]);
 
 // ─── Template daftar komponen ceklist per material ────────────────────────────────
 export const returTemplateItemTable = pgTable("retur_template_item", {
