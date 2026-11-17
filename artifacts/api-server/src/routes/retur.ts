@@ -866,6 +866,19 @@ router.post("/retur", async (req, res): Promise<void> => {
     const cfg = await getTemplateConfig(materialId as number); // sudah lolos guard Number.isInteger
     const formTpl = await getFormTemplate(materialId as number); // null = material tanpa template formulir
     const allowedFormKeys = formTpl ? formFieldKeys(formTpl.definition) : new Set<string>();
+    const fieldLabelByKey = new Map<string, string>();
+    if (formTpl) {
+      const flds = (formTpl.definition.fields ?? {}) as Record<string, unknown>;
+      for (const side of ["left", "right"]) {
+        const arr = Array.isArray(flds[side]) ? (flds[side] as unknown[]) : [];
+        for (const item of arr) {
+          if (item && typeof item === "object") {
+            const o = item as Record<string, unknown>;
+            if (typeof o.key === "string") fieldLabelByKey.set(o.key, typeof o.label === "string" ? o.label : o.key);
+          }
+        }
+      }
+    }
     const units: ValidUnit[] = [];
     for (let i = 0; i < unitsRaw.length; i++) {
       const entry = unitsRaw[i];
@@ -886,6 +899,12 @@ router.post("/retur", async (req, res): Promise<void> => {
             if (val.trim().length > 200) { res.status(400).json({ error: `Unit "${label}": field "${k}" maksimal 200 karakter` }); return; }
             fd[k] = val.trim();
           }
+        }
+        // Field "A. DATA MATERIAL" mandatory untuk material dengan template formulir.
+        const missingForm = [...allowedFormKeys].filter((k) => !fd[k]);
+        if (missingForm.length > 0) {
+          res.status(400).json({ error: `Material "${materialName}" unit "${label}": isian data material wajib diisi — belum: ${missingForm.map((k) => fieldLabelByKey.get(k) ?? k).join(", ")}` });
+          return;
         }
         unitFormData = Object.keys(fd).length > 0 ? fd : null;
       }

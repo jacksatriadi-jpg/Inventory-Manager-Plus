@@ -212,6 +212,18 @@ export function BuatTab() {
     }
     const dup = groups.map((g) => g.materialId).filter((v, i, a) => a.indexOf(v) !== i);
     if (dup.length > 0) { toast({ title: "Material ganda dalam satu dokumen", description: `Material "${nameOf(dup[0])}" dipilih lebih dari sekali.`, variant: "destructive" }); return; }
+    const formKosong: string[] = [];
+    groups.forEach((g) => {
+      if (!g.formDef) return; // material tanpa template formulir: isian data material tidak berlaku
+      const fl = [...(g.formDef.fields?.left ?? []), ...(g.formDef.fields?.right ?? [])];
+      g.units.forEach((u, ui) => fl.forEach((f) => {
+        if (!(u.formData?.[f.key] ?? "").trim()) formKosong.push(`${nameOf(g.materialId)} — Unit ${ui + 1} — ${f.label}`);
+      }));
+    });
+    if (formKosong.length > 0) {
+      toast({ title: "Data material wajib diisi", description: `Isian formulir belum lengkap: ${formKosong.slice(0, 6).join("; ")}${formKosong.length > 6 ? `; +${formKosong.length - 6} lainnya` : ""}`, variant: "destructive" });
+      return;
+    }
     const tanpaFoto: string[] = [];
     groups.forEach((g) => {
       g.units.forEach((u, ui) => u.items.forEach((it) => {
@@ -396,12 +408,12 @@ export function BuatTab() {
                     <div className="mb-4 rounded-md border border-border/60 bg-muted/30 p-3 space-y-3">
                       <div>
                         <p className="text-sm font-medium">Data Material — {g.formDef.formCode}</p>
-                        <p className="text-xs text-muted-foreground">Isian ini tercetak pada bagian &quot;A. DATA MATERIAL&quot; formulir inspeksi. Boleh dikosongkan bila belum diketahui.</p>
+                        <p className="text-xs text-muted-foreground">Isian ini tercetak pada bagian &quot;A. DATA MATERIAL&quot; formulir inspeksi. <b>Semua isian wajib diisi</b>.</p>
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {[...(g.formDef.fields?.left ?? []), ...(g.formDef.fields?.right ?? [])].map((f) => (
                           <div key={f.key} className="space-y-1">
-                            <Label className="text-xs">{f.label}{f.hint ? <span className="text-muted-foreground font-normal"> — {f.hint}</span> : ""}</Label>
+                            <Label className="text-xs">{f.label} <span className="text-red-600 font-bold" title="Wajib diisi">*</span>{f.hint ? <span className="text-muted-foreground font-normal"> — {f.hint}</span> : ""}</Label>
                             <Input className="h-8 text-xs" placeholder={f.hint ?? f.label}
                               value={unit.formData?.[f.key] ?? ""}
                               onChange={(e) => setFormValue(gi, ui, f.key, e.target.value)} />
