@@ -30,7 +30,7 @@ import {
 import { useAuth } from "@/lib/auth";
 import { CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Paperclip, Pencil, Printer, Search, Trash2 } from "lucide-react";
 import { DriveImg } from "./drive-img";
-import { buildFormWorkbook, formFilename } from "./form-xlsx";
+import { buildFormWorkbook, buildMultiFormWorkbook, formFilename, type FormWorkbookEntry } from "./form-xlsx";
 import type { FormDefinition } from "./shared";
 import {
   hasilDisplay, ReturDetail, ReturDokumen, ReturTemplateItem,
@@ -394,7 +394,7 @@ export function RiwayatTab() {
     if (ids.length === 0) { toast({ title: "Pilih minimal satu dokumen", variant: "destructive" }); return; }
     setExporting("form");
     try {
-      let ok = 0;
+      const entries: FormWorkbookEntry[] = [];
       const skipped: string[] = [];
       for (const id of ids) {
         const detail = await returApi<ReturDetail>(`/${id}`);
@@ -404,15 +404,28 @@ export function RiwayatTab() {
           def = fd.formKey ? fd.definition : null;
         } catch { def = null; }
         if (!def) { skipped.push(`#${id} (${detail.materialName})`); continue; }
+        entries.push({ def, detail });
+      }
+      if (entries.length === 1) {
+        const { def, detail } = entries[0];
         const wb = buildFormWorkbook(def, detail);
         const buf = await wb.xlsx.writeBuffer();
         downloadBlob(
           new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
           formFilename(detail),
         );
-        ok++;
+      } else if (entries.length > 1) {
+        // Banyak dokumen terpilih: SATU file Excel berisi sheet per material/dokumen.
+        const wb = buildMultiFormWorkbook(entries);
+        const buf = await wb.xlsx.writeBuffer();
+        const tgl = new Date().toISOString().slice(0, 10);
+        downloadBlob(
+          new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }),
+          `Formulir-Inspeksi-${entries.length}Dok-${tgl}.xlsx`,
+        );
       }
-      if (ok > 0) toast({ title: `${ok} formulir inspeksi terunduh` });
+      const ok = entries.length;
+      if (ok > 0) toast({ title: `${ok} formulir inspeksi terunduh${ok > 1 ? " dalam 1 file Excel (sheet per material)" : ""}` });
       if (skipped.length > 0) {
         toast({ title: "Beberapa dokumen dilewati", description: `Belum ada template formulir: ${skipped.join("; ")} — assign material ke formulir di tab Pengaturan.`, variant: "destructive" });
       }

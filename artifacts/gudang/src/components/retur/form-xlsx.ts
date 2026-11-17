@@ -96,8 +96,10 @@ function labelsClose(rowLabel: string, itemKey: string): boolean {
   return Math.min(a.length, itemKey.length) >= 12 && editDistance(a, itemKey) <= 2;
 }
 
-function sheetName(label: string, idx: number): string {
-  const clean = (label || `Unit ${idx + 1}`).replace(/[[\]:*?/\\']/g, " ").slice(0, 28);
+function sheetName(label: string, idx: number, prefix?: string): string {
+  const base = label || `Unit ${idx + 1}`;
+  const raw = prefix ? `${prefix} ${base}` : base;
+  const clean = raw.replace(/[\[\]:*?/\\']/g, " ").slice(0, 31);
   return clean || `Unit ${idx + 1}`;
 }
 
@@ -127,31 +129,28 @@ function rowCells(ws: ExcelJS.Worksheet, r: number, from: string, to: string, fn
   for (let col = start; col <= end; col++) row.getCell(col).address && fn(row.getCell(col).address);
 }
 
-const MAX_FORM_SHEETS = 200;
-
 export function buildFormWorkbook(def: FormDefinition, detail: ReturDetail) {
   const wb = new ExcelJS.Workbook();
   detail.units.forEach((unit, ui) => buildFormSheet(wb, def, detail, unit, ui));
-  // Mode sampling: jumlahUnit = total unit yang diretur tapi hanya unit contoh yang
-  // dicek & tersimpan. Cetak formulir tetap SATU SHEET PER UNIT RETUR — unit non-contoh
-  // dirender blank (kop & data material terisi, ceklist kosong untuk diisi manual).
-  const total = Math.min(Math.max(detail.units.length, detail.jumlahUnit ?? 0), MAX_FORM_SHEETS);
-  for (let ui = detail.units.length; ui < total; ui++) {
-    buildFormSheet(wb, def, detail, {
-      id: 0,
-      label: `Unit ${ui + 1}`,
-      sn: null,
-      keputusan: null,
-      formData: null,
-      formKeputusan: null,
-      items: [],
-    }, ui);
+  return wb;
+}
+
+// Cetak banyak dokumen (material) sekaligus: SATU file Excel, satu sheet per unit per
+// dokumen. Sampling tetap 1 unit per material — sheet dinamai "<material> Dok<id>" agar
+// tidak bentrok antar dokumen (satu material bisa muncul di dokumen berbeda).
+export interface FormWorkbookEntry { def: FormDefinition; detail: ReturDetail }
+
+export function buildMultiFormWorkbook(entries: FormWorkbookEntry[]) {
+  const wb = new ExcelJS.Workbook();
+  for (const { def, detail } of entries) {
+    detail.units.forEach((unit, ui) =>
+      buildFormSheet(wb, def, detail, unit, ui, `${detail.materialName} Dok${detail.id}`));
   }
   return wb;
 }
 
-function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: ReturDetail, unit: ReturUnitDetail, unitIdx: number): void {
-  const ws = wb.addWorksheet(sheetName(unit.label, unitIdx));
+function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: ReturDetail, unit: ReturUnitDetail, unitIdx: number, prefix?: string): void {
+  const ws = wb.addWorksheet(sheetName(unit.label, unitIdx, prefix));
   ws.columns = COL_W.map((width) => ({ width }));
   const items = finalItems(unit);
   const matched = new Set<string>();
