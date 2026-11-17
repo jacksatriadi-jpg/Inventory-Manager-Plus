@@ -99,22 +99,24 @@ export interface ReturNotifikasi {
   createdAt: string;
 }
 
-export type Hasil = "ada" | "hilang" | "rusak";
+export type Hasil = "ada" | "hilang" | "rusak" | "baik";
 
 export const HASIL_LABEL: Record<Hasil, string> = {
   ada: "Lengkap",
   hilang: "Hilang",
   rusak: "Rusak",
+  baik: "Baik",
 };
 
 export const HASIL_BADGE: Record<Hasil, string> = {
   ada: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
+  baik: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400",
   hilang: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
   rusak: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400",
 };
 
-// Opsi hasil bawaan; tiap komponen bisa punya opsi kustom (GET /template/:id -> items[].options).
-export const DEFAULT_RESULT_OPTIONS = ["Lengkap", "Hilang", "Rusak"];
+// Opsi hasil bawaan (2 pilihan); tiap komponen bisa punya opsi kustom (GET /template/:id -> items[].options).
+export const DEFAULT_RESULT_OPTIONS = ["Baik", "Rusak"];
 
 // Kode bawaan dipetakan ke labelnya; opsi kustom tampil apa adanya.
 export function hasilDisplay(h: string): string {

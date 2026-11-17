@@ -123,9 +123,11 @@ function extFromDataUrl(dataUrl: string): string {
   return sub === "jpeg" ? "jpg" : sub;
 }
 
-export const DEFAULT_RESULT_OPTIONS = ["Lengkap", "Hilang", "Rusak"];
-const HASIL_CODE_TO_LABEL: Record<string, string> = { ada: "Lengkap", hilang: "Hilang", rusak: "Rusak" };
-const HASIL_LABEL_TO_CODE: Record<string, string> = { lengkap: "ada", hilang: "hilang", rusak: "rusak" };
+// Opsi bawaan ceklist = 2 pilihan (Baik/Rusak). Kode lama (ada=Lengkap, hilang=Hilang)
+// tetap valid & tampil untuk data historis; "baik" = kode baru.
+export const DEFAULT_RESULT_OPTIONS = ["Baik", "Rusak"];
+const HASIL_CODE_TO_LABEL: Record<string, string> = { ada: "Lengkap", hilang: "Hilang", rusak: "Rusak", baik: "Baik" };
+const HASIL_LABEL_TO_CODE: Record<string, string> = { lengkap: "ada", hilang: "hilang", rusak: "rusak", baik: "baik" };
 
 
 interface ValidItem {
