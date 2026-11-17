@@ -127,9 +127,26 @@ function rowCells(ws: ExcelJS.Worksheet, r: number, from: string, to: string, fn
   for (let col = start; col <= end; col++) row.getCell(col).address && fn(row.getCell(col).address);
 }
 
+const MAX_FORM_SHEETS = 200;
+
 export function buildFormWorkbook(def: FormDefinition, detail: ReturDetail) {
   const wb = new ExcelJS.Workbook();
   detail.units.forEach((unit, ui) => buildFormSheet(wb, def, detail, unit, ui));
+  // Mode sampling: jumlahUnit = total unit yang diretur tapi hanya unit contoh yang
+  // dicek & tersimpan. Cetak formulir tetap SATU SHEET PER UNIT RETUR — unit non-contoh
+  // dirender blank (kop & data material terisi, ceklist kosong untuk diisi manual).
+  const total = Math.min(Math.max(detail.units.length, detail.jumlahUnit ?? 0), MAX_FORM_SHEETS);
+  for (let ui = detail.units.length; ui < total; ui++) {
+    buildFormSheet(wb, def, detail, {
+      id: 0,
+      label: `Unit ${ui + 1}`,
+      sn: null,
+      keputusan: null,
+      formData: null,
+      formKeputusan: null,
+      items: [],
+    }, ui);
+  }
   return wb;
 }
 
