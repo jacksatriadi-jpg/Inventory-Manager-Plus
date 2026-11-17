@@ -190,7 +190,7 @@ export function RiwayatTab() {
         }
         r += 2;
         for (const u of detail.units) {
-          ws.getCell(r, 1).value = `Unit ${u.label} — SN ${u.sn ?? "-"} — Keputusan: ${u.keputusan ? KEPUTUSAN_LABEL[u.keputusan] : "-"}`;
+          ws.getCell(r, 1).value = `Unit ${u.label} — No. Inspeksi ${u.sn ?? "-"} — Keputusan: ${u.keputusan ? KEPUTUSAN_LABEL[u.keputusan] : "-"}`;
           ws.getCell(r, 1).font = { bold: true };
           r += 1;
           const header = ws.getRow(r);
@@ -320,7 +320,7 @@ export function RiwayatTab() {
         for (const u of detail.units) {
           ensure(14);
           doc.setFont("helvetica", "bold"); doc.setFontSize(11);
-          doc.text(`Unit ${u.label} — SN ${u.sn ?? "-"} — Keputusan: ${u.keputusan ? KEPUTUSAN_LABEL[u.keputusan] : "-"}`, margin, y); y += 5;
+          doc.text(`Unit ${u.label} — No. Inspeksi ${u.sn ?? "-"} — Keputusan: ${u.keputusan ? KEPUTUSAN_LABEL[u.keputusan] : "-"}`, margin, y); y += 5;
           doc.setFontSize(8);
           const colW = [52, 24, 40, 24, 46];
           const colX = [margin];
@@ -693,7 +693,7 @@ function EditVerifyDialog({ doc, onClose }: { doc: ReturDokumen | null; onClose:
           <div className="space-y-4">
             {detail.units.map((u) => (
               <div key={u.id} className="space-y-2">
-                <div className="text-sm font-medium">{u.label}{u.sn ? <> — SN <span className="font-mono">{u.sn}</span></> : null}</div>
+                <div className="text-sm font-medium">{u.label}{u.sn ? <> — No. Inspeksi <span className="font-mono">{u.sn}</span></> : null}</div>
                 <Table>
                   <TableHeader>
                     <TableRow>

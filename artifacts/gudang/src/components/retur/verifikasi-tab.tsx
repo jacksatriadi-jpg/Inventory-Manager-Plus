@@ -1,5 +1,5 @@
 // Tab VERIFIKASI (gudang): daftar dokumen status checked_supervisor, panel per unit dgn
-// input SN MIMS wajib, tabel pembanding data pengawas (kiri) vs form gudang (kanan),
+// input Nomor Inspeksi wajib, tabel pembanding data pengawas (kiri) vs form gudang (kanan),
 // lalu POST /retur/:id/verify.
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -172,7 +172,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
     if (!detail) return;
     const snKosong = detail.units.filter((u) => !(snByUnit[u.id] ?? "").trim()).map((u) => u.label);
     if (snKosong.length > 0) {
-      toast({ title: "SN MIMS wajib diisi tiap unit", description: `Unit: ${snKosong.join(", ")}`, variant: "destructive" });
+      toast({ title: "Nomor Inspeksi wajib diisi tiap unit", description: `Unit: ${snKosong.join(", ")}`, variant: "destructive" });
       return;
     }
     const keputusanKosong = detail.units.filter((u) => !keputusanByUnit[u.id]).map((u) => u.label);
@@ -289,9 +289,9 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
           return (
             <Card key={u.id}>
               <CardHeader className="py-3 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
-                <CardTitle className="text-base">{(detail.materials?.length ?? 0) > 1 && u.materialName ? <span className="text-muted-foreground">{u.materialName} — </span> : null}{u.label}{u.sn ? ` — SN ${u.sn}` : ""}</CardTitle>
+                <CardTitle className="text-base">{(detail.materials?.length ?? 0) > 1 && u.materialName ? <span className="text-muted-foreground">{u.materialName} — </span> : null}{u.label}{u.sn ? ` — No. Inspeksi ${u.sn}` : ""}</CardTitle>
                 <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground">SN MIMS (wajib)</Label>
+                  <Label className="text-xs text-muted-foreground">Nomor Inspeksi (wajib)</Label>
                   <Input className="h-8 w-52 text-sm font-mono" placeholder="TUG10/..."
                     value={snByUnit[u.id] ?? ""}
                     onChange={(e) => setSnByUnit((prev) => ({ ...prev, [u.id]: e.target.value }))} />

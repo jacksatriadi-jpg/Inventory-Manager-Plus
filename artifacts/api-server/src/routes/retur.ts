@@ -1302,7 +1302,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
     }
     payloadUnitIds.add(unitId);
     const sn = typeof u.sn === "string" ? u.sn.trim() : "";
-    if (!sn) { res.status(400).json({ error: "SN wajib diisi" }); return; }
+    if (!sn) { res.status(400).json({ error: "Nomor Inspeksi wajib diisi" }); return; }
     const keputusanRaw = u.keputusan;
     if (keputusanRaw !== "layak_pakai" && keputusanRaw !== "usul_hapus") {
       res.status(400).json({ error: `Unit "${docUnits.find((du) => du.id === unitId)?.label}" wajib diputuskan: pilih "Layak Pakai (Standby)" atau "Tidak Layak Pakai (Usul Hapus)"` });
@@ -1318,7 +1318,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
       }
     }
     const v = validateCekItems(u.items, unitCfg, "gudang");
-    if (!v.ok) { res.status(400).json({ error: `SN "${sn}": ${v.error}` }); return; }
+    if (!v.ok) { res.status(400).json({ error: `Nomor Inspeksi "${sn}": ${v.error}` }); return; }
     // Kesimpulan formulir: wajib bila material punya template form dgn opsi kesimpulan.
     let formKeputusan: VerifyUnit["formKeputusan"] = null;
     const kesimpulanOpts = await optsForMat(unitMatId);
@@ -1337,7 +1337,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   // SETIAP unit dokumen wajib hadir di payload
   for (const du of docUnits) {
     if (!payloadUnitIds.has(du.id)) {
-      res.status(400).json({ error: `Unit "${du.label}" belum diverifikasi (SN wajib diisi)` });
+      res.status(400).json({ error: `Unit "${du.label}" belum diverifikasi (Nomor Inspeksi wajib diisi)` });
       return;
     }
   }
@@ -1346,7 +1346,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   const snList = verifyUnits.map((u) => u.sn);
   const seenSn = new Set<string>();
   for (const sn of snList) {
-    if (seenSn.has(sn)) { res.status(409).json({ error: `SN sudah digunakan: ${sn}` }); return; }
+    if (seenSn.has(sn)) { res.status(409).json({ error: `Nomor Inspeksi sudah digunakan: ${sn}` }); return; }
     seenSn.add(sn);
   }
   const snDup = await pool.query(
@@ -1355,7 +1355,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   );
   if (snDup.rows.length > 0) {
     const dupRow = snDup.rows[0] as { sn: string }; // kolom sesuai SELECT
-    res.status(409).json({ error: `SN sudah digunakan: ${dupRow.sn}` });
+    res.status(409).json({ error: `Nomor Inspeksi sudah digunakan: ${dupRow.sn}` });
     return;
   }
 
@@ -1445,7 +1445,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
         [snList, id],
       );
       const dupRow = dup.rows[0] as { sn: string } | undefined; // kolom sesuai SELECT
-      res.status(409).json({ error: `SN sudah digunakan: ${dupRow ? dupRow.sn : snList[0]}` });
+      res.status(409).json({ error: `Nomor Inspeksi sudah digunakan: ${dupRow ? dupRow.sn : snList[0]}` });
       return;
     }
     logger.error({ err }, "Retur verify: simpan gagal");

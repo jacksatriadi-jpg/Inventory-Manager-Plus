@@ -26,7 +26,7 @@ export const returDokumenTable = pgTable("retur_dokumen", {
 
 export type ReturDokumen = typeof returDokumenTable.$inferSelect;
 
-// ─── Unit fisik dalam satu dokumen retur; sn = nomor seri MIMS (diisi gudang) ─────
+// ─── Unit fisik dalam satu dokumen retur; sn = nomor inspeksi (diisi gudang; dulu bernama SN MIMS) ─────
 export const returUnitTable = pgTable("retur_unit", {
   id: serial("id").primaryKey(),
   dokumenId: integer("dokumen_id").notNull().references(() => returDokumenTable.id, { onDelete: "cascade" }),
