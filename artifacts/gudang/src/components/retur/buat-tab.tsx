@@ -2,7 +2,7 @@
 // MULTI-MATERIAL: satu dokumen berisi beberapa grup material; tiap grup punya repeater unit
 // dan ceklist dari template material masing-masing (material tidak boleh dobel dalam 1 dokumen).
 import { useEffect, useRef, useState } from "react";
-import { useListMaterials } from "@workspace/api-client-react";
+
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -12,7 +12,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Camera, FileText, ImageOff, ImagePlus, Loader2, PackageX, Paperclip, Plus, Trash2, Building2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { DEFAULT_RESULT_OPTIONS, FormDefinition, ReturTemplateItem, readFileCompressed, returApi } from "./shared";
+import { DEFAULT_RESULT_OPTIONS, FormDefinition, ReturTemplateItem, readFileCompressed, returApi, useReturMaterials } from "./shared";
 import { MaterialPicker } from "./material-picker";
 
 interface ItemForm {
@@ -68,7 +68,7 @@ const makeUnit = (n: number, labels: string[]): UnitForm => ({
 
 export function BuatTab() {
   const { toast } = useToast();
-  const { data: materials } = useListMaterials();
+  const { data: materials } = useReturMaterials();
   // Material tanpa template ceklist/formulir tidak bisa dipakai retur (guard juga di API).
   const [tplOkIds, setTplOkIds] = useState<Set<string> | null>(null);
   useEffect(() => {

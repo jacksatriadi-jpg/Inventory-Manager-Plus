@@ -150,7 +150,7 @@ export const ListMaterialsResponseItem = zod.object({
   "name": zod.string(),
   "code": zod.string(),
   "description": zod.string().nullish(),
-  "kategori": zod.enum(['scan', 'non-scan']),
+  "kategori": zod.enum(['scan', 'non-scan', 'retur']),
   "createdAt": zod.string()
 })
 export const ListMaterialsResponse = zod.array(ListMaterialsResponseItem)
@@ -165,7 +165,7 @@ export const CreateMaterialBody = zod.object({
   "name": zod.string(),
   "code": zod.string(),
   "description": zod.string().optional(),
-  "kategori": zod.enum(['scan', 'non-scan']).default(createMaterialBodyKategoriDefault)
+  "kategori": zod.enum(['scan', 'non-scan', 'retur']).default(createMaterialBodyKategoriDefault)
 })
 
 
@@ -181,7 +181,7 @@ export const GetMaterialResponse = zod.object({
   "name": zod.string(),
   "code": zod.string(),
   "description": zod.string().nullish(),
-  "kategori": zod.enum(['scan', 'non-scan']),
+  "kategori": zod.enum(['scan', 'non-scan', 'retur']),
   "createdAt": zod.string()
 })
 
@@ -197,7 +197,7 @@ export const UpdateMaterialBody = zod.object({
   "name": zod.string().optional(),
   "code": zod.string().optional(),
   "description": zod.string().nullish(),
-  "kategori": zod.enum(['scan', 'non-scan']).optional()
+  "kategori": zod.enum(['scan', 'non-scan', 'retur']).optional()
 })
 
 export const UpdateMaterialResponse = zod.object({
@@ -205,7 +205,7 @@ export const UpdateMaterialResponse = zod.object({
   "name": zod.string(),
   "code": zod.string(),
   "description": zod.string().nullish(),
-  "kategori": zod.enum(['scan', 'non-scan']),
+  "kategori": zod.enum(['scan', 'non-scan', 'retur']),
   "createdAt": zod.string()
 })
 

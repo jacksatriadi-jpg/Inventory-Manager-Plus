@@ -1,7 +1,7 @@
 // Tab PENGATURAN (master): koneksi Google Drive RETUR (akun kedua, terpisah dari backup)
 // dan editor template komponen per material.
 import { useEffect, useRef, useState } from "react";
-import { useListMaterials } from "@workspace/api-client-react";
+
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +13,7 @@ import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, CloudUpload, Copy, FileT
 import { Checkbox } from "@/components/ui/checkbox";
 import { MaterialPicker } from "./material-picker";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { DEFAULT_RESULT_OPTIONS, ReturTemplateItem, returApi } from "./shared";
+import { DEFAULT_RESULT_OPTIONS, ReturTemplateItem, returApi, useReturMaterials } from "./shared";
 
 interface DriveStatus {
   connected: boolean;
@@ -36,7 +36,7 @@ export function PengaturanTab() {
 // Tanpa assignment, tombol "Cetak Formulir" di Riwayat melewatkan dokumen material ini.
 function FormAssignPanel() {
   const { toast } = useToast();
-  const { data: materials } = useListMaterials();
+  const { data: materials } = useReturMaterials();
   const [forms, setForms] = useState<{ formKey: string; name: string }[]>([]);
   const [materialId, setMaterialId] = useState("");
   const [current, setCurrent] = useState("none");
@@ -268,7 +268,7 @@ const mapTemplateRows = (items: ReturTemplateItem[]): TemplateRowUi[] =>
 
 function TemplateEditor() {
   const { toast } = useToast();
-  const { data: materials } = useListMaterials();
+  const { data: materials } = useReturMaterials();
   const [materialId, setMaterialId] = useState("");
   const [rows, setRows] = useState<TemplateRowUi[]>([]);
   const [openRow, setOpenRow] = useState<number | null>(null);

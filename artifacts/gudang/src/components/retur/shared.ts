@@ -1,4 +1,5 @@
 // Shared types, auth fetch helper, dan utilitas untuk modul Retur Material.
+import { useEffect, useState } from "react";
 // Endpoint: prefix /api/retur, auth Bearer (key localStorage "token", sama dgn lib/auth.tsx).
 
 export interface ReturTemplateItem {
@@ -11,6 +12,21 @@ export interface ReturTemplateItem {
 }
 
 export interface LampiranFile { name: string; fileId: string; webViewLink: string }
+
+// Material utk picker retur: SEMUA kategori termasuk 'retur' (material khusus retur,
+// yang disembunyikan /materials dari material master/scan).
+export interface ReturMaterial { id: number; code?: string; name: string }
+export function useReturMaterials() {
+  const [data, setData] = useState<ReturMaterial[] | undefined>(undefined);
+  useEffect(() => {
+    let live = true;
+    returApi<{ materials: { id: number; code: string | null; name: string }[] }>("/materials")
+      .then((d) => { if (live) setData(d.materials.map((m) => ({ id: m.id, code: m.code ?? undefined, name: m.name }))); })
+      .catch(() => { if (live) setData([]); });
+    return () => { live = false; };
+  }, []);
+  return { data };
+}
 
 // Material dalam satu dokumen retur (multi-material); jumlahUnit = deklaratif sampling per material.
 export interface ReturDocMaterial { id: number; name: string; jumlahUnit: number | null }

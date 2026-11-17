@@ -544,6 +544,15 @@ router.post("/retur/google/refresh", async (req, res): Promise<void> => {
 });
 
 // ─── GET /api/retur/template/:materialId — daftar item ceklist ──────────────────
+// ─── GET /api/retur/materials — daftar material utk picker retur ───────────────
+// Semua kategori (scan/non-scan/retur) — menu retur memang boleh memakai keduanya;
+// menu lain memakai /materials yang menyembunyikan kategori 'retur'.
+router.get("/retur/materials", async (req, res): Promise<void> => {
+  if (!(await requireReturUser(req, res))) return;
+  const r = await pool.query("SELECT id, code, name, kategori FROM materials ORDER BY created_at");
+  res.json({ materials: r.rows });
+});
+
 // ─── GET /api/retur/template-status — material mana yang punya template ────────
 // ok = punya baris template ceklist tersimpan ATAU tertaut formulir.
 // Dipakai FE (tab Buat) untuk menandai/menonaktifkan material tanpa template di picker.

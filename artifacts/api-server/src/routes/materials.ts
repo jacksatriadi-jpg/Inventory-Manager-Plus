@@ -1,7 +1,7 @@
 import { Router } from "express";
 import type { IRouter } from "express";
 import { db, materialsTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   ListMaterialsResponse,
   CreateMaterialBody,
@@ -27,7 +27,11 @@ function materialToJson(m: any) {
 }
 
 router.get("/materials", async (req, res): Promise<void> => {
-  const materials = await db.select().from(materialsTable).orderBy(materialsTable.createdAt);
+  // kategori 'retur' = material khusus menu retur — tersembunyi dari material master/scan.
+  const includeRetur = req.query.includeRetur === "1";
+  const materials = await db.select().from(materialsTable)
+    .where(includeRetur ? undefined : sql`kategori IS DISTINCT FROM 'retur'`)
+    .orderBy(materialsTable.createdAt);
   res.json(ListMaterialsResponse.parse(materials.map(materialToJson)));
 });
 
