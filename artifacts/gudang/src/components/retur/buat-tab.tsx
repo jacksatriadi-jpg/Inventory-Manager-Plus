@@ -214,6 +214,7 @@ export function BuatTab() {
 
   const save = async () => {
     if (!tug10) { toast({ title: "Foto TUG10 wajib diunggah", variant: "destructive" }); return; }
+    if (!catatan.trim()) { toast({ title: "Nomor Pengembalian (TUG 10) wajib diisi", description: "Masukkan nomor TUG 10 pada kolom Nomor Pengembalian sebelum menyimpan.", variant: "destructive" }); return; }
     if (groups.some((g) => !g.materialId)) {
       toast({ title: "Pilih material untuk semua grup", description: "Grup tanpa material harus dipilih materialnya atau dihapus dulu.", variant: "destructive" }); return;
     }
@@ -327,12 +328,12 @@ export function BuatTab() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base flex items-center gap-2"><PackageX className="h-4 w-4" /> Catatan Dokumen</CardTitle>
+            <CardTitle className="text-base flex items-center gap-2"><PackageX className="h-4 w-4" /> Nomor Pengembalian (TUG 10)</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label>Catatan dokumen (opsional)</Label>
-              <Textarea value={catatan} onChange={(e) => setCatatan(e.target.value)} placeholder="Catatan dari pengawas... (berlaku untuk semua material di dokumen ini)" rows={4} />
+              <Label>Nomor Pengembalian (TUG 10) <span className="text-red-600 font-bold" title="Wajib diisi">*</span></Label>
+              <Textarea value={catatan} onChange={(e) => setCatatan(e.target.value)} placeholder="Masukkan Nomor Pengembalian / Nomor TUG 10... (berlaku untuk semua material di dokumen ini)" rows={4} />
             </div>
             <p className="text-xs text-muted-foreground">Satu dokumen bisa memuat beberapa material berbeda — tiap material punya unit &amp; daftar pemeriksaan sendiri. Tambahkan lewat tombol &quot;Tambah Material&quot; di bawah.</p>
           </CardContent>

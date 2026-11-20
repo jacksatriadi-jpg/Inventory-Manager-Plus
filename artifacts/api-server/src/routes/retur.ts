@@ -853,6 +853,7 @@ router.post("/retur", async (req, res): Promise<void> => {
   const lampiranRaw = body.lampiran;
 
   if (!isImageDataUrl(tug10Photo)) { res.status(400).json({ error: "Foto TUG10 wajib diunggah (format image)" }); return; }
+  if (typeof catatan !== "string" || !catatan.trim()) { res.status(400).json({ error: "Nomor Pengembalian (TUG 10) wajib diisi" }); return; }
 
   // Dua bentuk payload: multi-material { materials: [{materialId, units, jumlahUnit?}] }
   // atau legacy satu material { materialId, units, jumlahUnit } di level atas.
