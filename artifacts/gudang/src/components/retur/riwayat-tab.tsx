@@ -30,7 +30,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/lib/auth";
-import { Ban, CheckCircle2, Download, FileSpreadsheet, FileText, Loader2, Paperclip, Pencil, Printer, Search, Trash2 } from "lucide-react";
+import { Ban, CheckCircle2, ClipboardList, Download, FileSpreadsheet, FileText, Loader2, Paperclip, Pencil, Printer, Search, Trash2 } from "lucide-react";
 import { DriveImg } from "./drive-img";
 import { buildFormWorkbook, buildMultiFormWorkbook, formFilename, type FormWorkbookEntry } from "./form-xlsx";
 import type { FormDefinition } from "./shared";
@@ -73,6 +73,11 @@ export function RiwayatTab() {
   const [toReject, setToReject] = useState<ReturDokumen | null>(null);
   const [rejectAlasan, setRejectAlasan] = useState("");
   const [rejecting, setRejecting] = useState(false);
+  // Nomor Inspeksi per dokumen — hanya master, diisi setelah verifikasi selesai.
+  const isMaster = user?.role === "master";
+  const [toInspeksi, setToInspeksi] = useState<ReturDokumen | null>(null);
+  const [inspeksiValue, setInspeksiValue] = useState("");
+  const [savingInspeksi, setSavingInspeksi] = useState(false);
 
   // Filter server-side; q didebounce 300 ms. Gudang hanya melihat dokumen selesai;
 // vendor/pengawas melihat semua dokumen miliknya (pending+selesai) supaya formulir
@@ -88,6 +93,19 @@ export function RiwayatTab() {
     } catch (e) {
       toast({ title: "Gagal menolak verifikasi", description: (e as Error).message, variant: "destructive" });
     } finally { setRejecting(false); }
+  };
+
+  const handleSaveInspeksi = async () => {
+    if (!toInspeksi) return;
+    setSavingInspeksi(true);
+    try {
+      await returApi(`/${toInspeksi.id}/inspeksi`, { method: "PUT", body: JSON.stringify({ nomorInspeksi: inspeksiValue.trim() }) });
+      toast({ title: inspeksiValue.trim() ? "Nomor inspeksi tersimpan" : "Nomor inspeksi dikosongkan", description: `Dokumen #${toInspeksi.id}.` });
+      setToInspeksi(null); setInspeksiValue("");
+      loadDocs();
+    } catch (e) {
+      toast({ title: "Gagal menyimpan nomor inspeksi", description: (e as Error).message, variant: "destructive" });
+    } finally { setSavingInspeksi(false); }
   };
 
   const loadDocs = useCallback(() => {
@@ -191,6 +209,7 @@ export function RiwayatTab() {
           ["Pengawas", detail.pengawasName ?? "-"],
           ["Gudang", detail.gudangName ?? "-"],
           ["Status", "Selesai diverifikasi"],
+          ["Nomor Inspeksi", detail.nomorInspeksi ?? "(belum diisi)"],
           ["Catatan", detail.catatan ?? "-"],
           ["Catatan Gudang", detail.gudangCatatan ?? "-"],
         ];
@@ -208,7 +227,7 @@ export function RiwayatTab() {
         }
         r += 2;
         for (const u of detail.units) {
-          ws.getCell(r, 1).value = `Unit ${u.label} — No. Inspeksi ${u.sn ?? "-"} — Keputusan: ${u.keputusan ? KEPUTUSAN_LABEL[u.keputusan] : "-"}`;
+          ws.getCell(r, 1).value = `Unit ${u.label}${u.sn ? ` — No. Inspeksi unit (data lama): ${u.sn}` : ""} — Keputusan: ${u.keputusan ? KEPUTUSAN_LABEL[u.keputusan] : "-"}`;
           ws.getCell(r, 1).font = { bold: true };
           r += 1;
           const header = ws.getRow(r);
@@ -296,6 +315,7 @@ export function RiwayatTab() {
           ["Tanggal", fmtTanggal(detail.createdAt)],
           ["Material", (detail.materials?.length ?? 0) > 1 ? (detail.materials as { name: string }[]).map((m) => m.name).join(", ") : detail.materialName],
           ["Status", "Selesai diverifikasi"],
+          ["Nomor Inspeksi", detail.nomorInspeksi ?? "(belum diisi)"],
           ["Pengawas", detail.pengawasName ?? "-"],
           ["Gudang", detail.gudangName ?? "-"],
         ];
@@ -338,7 +358,7 @@ export function RiwayatTab() {
         for (const u of detail.units) {
           ensure(14);
           doc.setFont("helvetica", "bold"); doc.setFontSize(11);
-          doc.text(`Unit ${u.label} — No. Inspeksi ${u.sn ?? "-"} — Keputusan: ${u.keputusan ? KEPUTUSAN_LABEL[u.keputusan] : "-"}`, margin, y); y += 5;
+          doc.text(`Unit ${u.label}${u.sn ? ` — No. Inspeksi unit (data lama): ${u.sn}` : ""} — Keputusan: ${u.keputusan ? KEPUTUSAN_LABEL[u.keputusan] : "-"}`, margin, y); y += 5;
           doc.setFontSize(8);
           const colW = [52, 24, 40, 24, 46];
           const colX = [margin];
@@ -564,7 +584,16 @@ export function RiwayatTab() {
                         ? <Badge className={KEPUTUSAN_BADGE[d.keputusan]}>{KEPUTUSAN_LABEL[d.keputusan]}</Badge>
                         : <span className="text-xs text-muted-foreground">-</span>}
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{fmtTanggal(d.completedAt)}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">
+                    {fmtTanggal(d.completedAt)}
+                    {isMaster && d.status === "completed" && !d.nomorInspeksi && (
+                      <div>
+                        <Badge className="mt-1 bg-amber-100 text-amber-800" title="Klik tombol Nomor Inspeksi pada kolom Aksi untuk mengisi">
+                          belum ada No. Inspeksi
+                        </Badge>
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <DriveImg fileId={d.tug10FileId} alt={`TUG10 #${d.id}`} />
                   </TableCell>
@@ -574,6 +603,11 @@ export function RiwayatTab() {
                         <Button size="sm" variant="ghost" onClick={() => setEditDoc(d)} aria-label={`Koreksi hasil verifikasi dokumen ${d.id}`}>
                           <Pencil className="h-4 w-4" />
                         </Button>
+                        {isMaster && d.status === "completed" && (
+                          <Button size="sm" variant="ghost" onClick={() => { setToInspeksi(d); setInspeksiValue(d.nomorInspeksi ?? ""); }} aria-label={`Nomor Inspeksi dokumen ${d.id}`}>
+                            <ClipboardList className="h-4 w-4" />
+                          </Button>
+                        )}
                         {d.status !== "completed" && (
                           <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive"
                             onClick={() => setToReject(d)} aria-label={`Tolak verifikasi dokumen ${d.id}`}>
@@ -635,6 +669,26 @@ export function RiwayatTab() {
           <AlertDialogAction className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             disabled={!rejectAlasan.trim() || rejecting} onClick={handleReject}>
             {rejecting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Tolak &amp; Hapus
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    <AlertDialog open={toInspeksi !== null} onOpenChange={(open) => { if (!open) { setToInspeksi(null); setInspeksiValue(""); } }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Nomor Inspeksi dokumen #{toInspeksi?.id}</AlertDialogTitle>
+          <AlertDialogDescription>
+            Nomor inspeksi tingkat dokumen (TUG) — hanya admin yang mengisi, setelah verifikasi selesai.
+            Nilai ini yang tampil pada hasil Export Excel/PDF (Cetak Formulir tidak menampilkan nomor inspeksi).
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <Label className="text-xs font-medium">Nomor Inspeksi</Label>
+        <Input value={inspeksiValue} onChange={(e) => setInspeksiValue(e.target.value)}
+          placeholder="mis. INS/2026/00123" maxLength={100} />
+        <AlertDialogFooter>
+          <AlertDialogCancel>Batal</AlertDialogCancel>
+          <AlertDialogAction disabled={savingInspeksi} onClick={(e) => { e.preventDefault(); void handleSaveInspeksi(); }}>
+            {savingInspeksi ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : null}Simpan
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

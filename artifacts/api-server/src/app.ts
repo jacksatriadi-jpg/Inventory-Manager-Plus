@@ -313,6 +313,8 @@ async function setupDatabase() {
     await pool.query(`ALTER TABLE retur_dokumen ADD COLUMN IF NOT EXISTS jumlah_unit INTEGER;`);
     // lampiran: daftar {name,fileId,webViewLink} dokumen pendukung dokumen sampling (diunggah ke Drive).
     await pool.query(`ALTER TABLE retur_dokumen ADD COLUMN IF NOT EXISTS lampiran JSONB NOT NULL DEFAULT '[]'::jsonb;`);
+    // nomor_inspeksi: nomor inspeksi tingkat dokumen TUG — diisi master dari Riwayat setelah verifikasi.
+    await pool.query(`ALTER TABLE retur_dokumen ADD COLUMN IF NOT EXISTS nomor_inspeksi TEXT;`);
     // unique (unit_id, stage, item_label): cegah baris cek ganda untuk item yang sama per unit per tahap.
     // Dedup data lama dulu (pertahankan id terbesar) supaya index bisa dibuat.
     await pool.query(`

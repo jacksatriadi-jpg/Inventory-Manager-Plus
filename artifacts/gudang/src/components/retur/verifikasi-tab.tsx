@@ -1,5 +1,6 @@
 // Tab VERIFIKASI (gudang): daftar dokumen status checked_supervisor, panel per unit dgn
-// input Nomor Inspeksi wajib, tabel pembanding data pengawas (kiri) vs form gudang (kanan),
+// nomor inspeksi kini per dokumen diisi master dari Riwayat (bukan di tab ini);
+// tabel pembanding data pengawas (kiri) vs form gudang (kanan),
 // lalu POST /retur/:id/verify.
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -27,6 +28,7 @@ interface GudangItemForm {
   hasil: string; // "" = dilewati; selain itu = salah satu nilai opsi komponen tsb
   catatan: string;
   foto: string;
+  ikutPengawas?: boolean; // true = slot foto memakai ulang foto pengawas (prefill), belum diganti
 }
 
 const emptyForm: GudangItemForm = { hasil: "", catatan: "", foto: "" };
@@ -42,7 +44,6 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [showTug10, setShowTug10] = useState(false);
-  const [snByUnit, setSnByUnit] = useState<Record<number, string>>({});
   const [keputusanByUnit, setKeputusanByUnit] = useState<Record<number, Keputusan | "">>({});
   const [gudangCatatan, setGudangCatatan] = useState("");
   const [itemForms, setItemForms] = useState<Record<number, Record<string, GudangItemForm>>>({});
@@ -109,12 +110,10 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
       }));
       setCfgByMaterial(cfg);
       setFormDefByMaterial(fdefByMat);
-      const sn: Record<number, string> = {};
       const keputusan: Record<number, Keputusan | ""> = {};
       const kesimpulan: Record<number, FormKeputusan | null> = {};
       const forms: Record<number, Record<string, GudangItemForm>> = {};
       for (const u of d.units) {
-        sn[u.id] = u.sn ?? "";
         keputusan[u.id] = u.keputusan ?? "";
         kesimpulan[u.id] = u.formKeputusan ?? null;
         const labels: string[] = [];
@@ -130,11 +129,10 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
           const salinTeks = teks && pw && pw.hasil && !/^isi di kolom catatan$/i.test(pw.hasil);
           // opsi: SELALU salin hasil pengawas — nilai yang tak lagi ada di daftar opsi (template
           // diubah setelah dokumen dibuat) tetap terpilih; render menambahkannya ke daftar opsi.
-          return [l, { hasil: pw && (salinTeks || (!teks && pw.hasil)) ? pw.hasil : "", catatan: pw?.catatan ?? "", foto: "" }];
+          return [l, { hasil: pw && (salinTeks || (!teks && pw.hasil)) ? pw.hasil : "", catatan: pw?.catatan ?? "", foto: "", ikutPengawas: !!pw?.fotoFileId }];
         }));
       }
       setDetail(d);
-      setSnByUnit(sn);
       setItemForms(forms);
       setKeputusanByUnit(keputusan);
       setKesimpulanByUnit(kesimpulan);
@@ -160,7 +158,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
         ...prev,
         [target.unitId]: {
           ...prev[target.unitId],
-          [target.label]: { ...prev[target.unitId][target.label], foto: dataUrl },
+          [target.label]: { ...prev[target.unitId][target.label], foto: dataUrl, ikutPengawas: false },
         },
       }));
     } catch {
@@ -177,11 +175,6 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
 
   const submit = async () => {
     if (!detail) return;
-    const snKosong = detail.units.filter((u) => !(snByUnit[u.id] ?? "").trim()).map((u) => u.label);
-    if (snKosong.length > 0) {
-      toast({ title: "Nomor Inspeksi wajib diisi tiap unit", description: `Unit: ${snKosong.join(", ")}`, variant: "destructive" });
-      return;
-    }
     const keputusanKosong = detail.units.filter((u) => !keputusanByUnit[u.id]).map((u) => u.label);
     if (keputusanKosong.length > 0) {
       toast({ title: "Keputusan unit wajib dipilih", description: `Pilih "Layak Pakai (Standby)" atau "Tidak Layak Pakai (Usul Hapus)" untuk unit: ${keputusanKosong.join(", ")}`, variant: "destructive" });
@@ -200,7 +193,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
     for (const u of detail.units) {
       const pwFotoLabels = new Set(u.items.filter((it) => it.stage === "pengawas" && it.fotoFileId).map((it) => it.itemLabel));
       for (const [label, f] of Object.entries(itemForms[u.id] ?? {})) {
-        if (f.hasil && !f.foto && cfgFor(u, label).fotoWajib && pwFotoLabels.has(label)) tanpaFoto.push(`${u.label} — ${label}`);
+        if (f.hasil && !f.foto && !f.ikutPengawas && cfgFor(u, label).fotoWajib && pwFotoLabels.has(label)) tanpaFoto.push(`${u.label} — ${label}`);
       }
     }
     if (tanpaFoto.length > 0) {
@@ -218,7 +211,6 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
             const unitPunyaKesimpulan = (formDefFor(u)?.kesimpulan?.options?.length ?? 0) > 0;
             return {
             unitId: u.id,
-            sn: (snByUnit[u.id] ?? "").trim(),
             keputusan: keputusanByUnit[u.id],
             ...(unitPunyaKesimpulan && fk?.code ? {
               formKeputusan: {
@@ -229,7 +221,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
             } : {}),
             items: Object.entries(itemForms[u.id] ?? {})
               .filter(([, f]) => f.hasil)
-              .map(([label, f]) => ({ label, hasil: f.hasil, catatan: f.catatan, foto: f.foto })),
+              .map(([label, f]) => ({ label, hasil: f.hasil, catatan: f.catatan, ...(f.foto ? { foto: f.foto } : f.ikutPengawas ? { fotoIkutPengawas: true } : {}) })),
             };
           }),
         }),
@@ -315,13 +307,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
           return (
             <Card key={u.id}>
               <CardHeader className="py-3 flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
-                <CardTitle className="text-base">{(detail.materials?.length ?? 0) > 1 && u.materialName ? <span className="text-muted-foreground">{u.materialName} — </span> : null}{u.label}{u.sn ? ` — No. Inspeksi ${u.sn}` : ""}</CardTitle>
-                <div className="flex items-center gap-2">
-                  <Label className="text-xs text-muted-foreground">Nomor Inspeksi (wajib)</Label>
-                  <Input className="h-8 w-52 text-sm font-mono" placeholder="TUG10/..."
-                    value={snByUnit[u.id] ?? ""}
-                    onChange={(e) => setSnByUnit((prev) => ({ ...prev, [u.id]: e.target.value }))} />
-                </div>
+                <CardTitle className="text-base">{(detail.materials?.length ?? 0) > 1 && u.materialName ? <span className="text-muted-foreground">{u.materialName} — </span> : null}</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="flex flex-wrap items-center gap-2 mb-4">
@@ -378,7 +364,7 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                   <p className="text-sm text-muted-foreground">Unit ini tanpa item pemeriksaan.</p>
                 ) : (
                   <>
-                  <p className="text-xs text-muted-foreground mb-2">Komponen bertanda <span className="text-red-600 font-bold">*</span> wajib difoto — aturannya mengikuti pengawas: hanya komponen yang difoto pengawas yang menuntut foto gudang (verifikasi ditolak bila hasil diisi tanpa foto). Hasil &amp; catatan gudang terisi otomatis mengikuti cek pengawas — ubah seperlunya bila hasil gudang berbeda.</p>
+                  <p className="text-xs text-muted-foreground mb-2">Komponen bertanda <span className="text-red-600 font-bold">*</span> wajib difoto — aturannya mengikuti pengawas: hanya komponen yang difoto pengawas yang menuntut foto gudang (verifikasi ditolak bila hasil diisi tanpa foto). Hasil &amp; catatan gudang terisi otomatis mengikuti cek pengawas — ubah seperlunya bila hasil gudang berbeda. Foto gudang otomatis terisi sama dengan foto pengawas — klik Ganti/Galeri untuk menggantinya.</p>
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -440,15 +426,24 @@ export function VerifikasiTab({ initialDok }: { initialDok?: number | null }) {
                             </TableCell>
                             <TableCell>
                               <div className="flex items-center gap-2">
-                                <Button size="sm" variant={f.hasil && !f.foto && fotoWajibEfektif ? "destructive" : "outline"}
+                                <Button size="sm" variant={f.hasil && !f.foto && !f.ikutPengawas && fotoWajibEfektif ? "destructive" : "outline"}
                                   onClick={() => { photoTarget.current = { unitId: u.id, label }; itemFileRef.current?.click(); }}>
-                                  <Camera className="h-3.5 w-3.5 mr-1" /> {f.foto ? "Ganti" : "Foto"}
+                                  <Camera className="h-3.5 w-3.5 mr-1" /> {f.foto || f.ikutPengawas ? "Ganti" : "Foto"}
                                 </Button>
                                 <Button size="sm" variant="outline"
                                   onClick={() => { photoTarget.current = { unitId: u.id, label }; itemGalleryRef.current?.click(); }}>
                                   <ImagePlus className="h-3.5 w-3.5 mr-1" /> Galeri
                                 </Button>
-                                {f.foto && <img src={f.foto} alt={`Foto gudang: ${label}`} className="h-10 w-10 rounded border object-cover" />}
+                                {f.foto
+                                  ? <img src={f.foto} alt={`Foto gudang: ${label}`} className="h-10 w-10 rounded border object-cover" />
+                                  : f.ikutPengawas && pw?.fotoFileId
+                                    ? (
+                                      <div className="flex flex-col items-center gap-0.5">
+                                        <DriveImg fileId={pw.fotoFileId} alt={`Foto gudang (sama dengan pengawas): ${label}`} className="h-10 w-10" />
+                                        <span className="text-[10px] text-muted-foreground whitespace-nowrap">sama dgn pengawas</span>
+                                      </div>
+                                    )
+                                    : null}
                               </div>
                             </TableCell>
                           </TableRow>

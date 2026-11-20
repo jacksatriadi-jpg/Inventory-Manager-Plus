@@ -135,6 +135,7 @@ interface ValidItem {
   hasil: string;
   catatan: string | null;
   foto: string;
+  fotoIkutPengawas?: boolean; // stage gudang: memakai ulang foto pengawas (tanpa upload duplikat)
 }
 
 type ItemsResult = { ok: true; items: ValidItem[] } | { ok: false; error: string };
@@ -211,7 +212,10 @@ function validateCekItems(itemsRaw: unknown, cfg: Map<string, ItemCfg>, stage: "
     const hv = validateHasil(label, hasil, c.options, c.tipeInput);
     if (!hv.ok) return { ok: false, error: hv.error };
     const foto = isImageDataUrl(it.foto) ? (it.foto as string) : "";
-    if (!foto && (stage === "pengawas" ? c.fotoWajibPengawas : c.fotoWajibGudang)) {
+    // Stage gudang boleh memakai ulang foto pengawas (slot terisi tanpa upload duplikat) —
+    // tetap valid selama pengawas memang memfoto item ini pada unit yang sama (cek di caller).
+    const fotoIkutPengawas = stage === "gudang" && !foto && it.fotoIkutPengawas === true;
+    if (!foto && !fotoIkutPengawas && (stage === "pengawas" ? c.fotoWajibPengawas : c.fotoWajibGudang)) {
       return { ok: false, error: `Foto wajib untuk item "${label}" (format image)` };
     }
     items.push({
@@ -219,6 +223,7 @@ function validateCekItems(itemsRaw: unknown, cfg: Map<string, ItemCfg>, stage: "
       hasil: hv.value,
       catatan: typeof it.catatan === "string" && it.catatan.trim() ? it.catatan.trim() : null,
       foto,
+      ...(fotoIkutPengawas ? { fotoIkutPengawas: true } : {}),
     });
   }
   return { ok: true, items };
@@ -239,6 +244,7 @@ interface ReturDetail {
   tug10Link: string | null;
   catatan: string | null;
   gudangCatatan: string | null;
+  nomorInspeksi: string | null; // diisi master dari Riwayat setelah verifikasi (tingkat dokumen)
   pengawasId: number;
   pengawasName: string;
   pengawasCompany: string | null; // nama perusahaan vendor pengawas (blok tanda tangan formulir)
@@ -284,6 +290,7 @@ interface DocJoinedRow {
   tug10_link: string | null;
   catatan: string | null;
   gudang_catatan: string | null;
+  nomor_inspeksi: string | null;
   jumlah_unit: number | null;
   lampiran: unknown;
   pengawas_id: number;
@@ -325,7 +332,7 @@ interface ItemCekRow {
 async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> {
   const docRes = await pool.query(
     `SELECT d.id, d.material_id, m.name AS material_name, m.form_key, d.status, d.jumlah_unit, d.lampiran,
-            d.tug10_file_id, d.tug10_link, d.catatan, d.gudang_catatan,
+            d.tug10_file_id, d.tug10_link, d.catatan, d.gudang_catatan, d.nomor_inspeksi,
             d.pengawas_id, p.username AS pengawas_name, p.company_name AS pengawas_company,
             d.gudang_id, g.username AS gudang_name, g.company_name AS gudang_company,
             d.created_at, d.checked_at, d.completed_at
@@ -404,6 +411,7 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
     tug10Link: d.tug10_link,
     catatan: d.catatan,
     gudangCatatan: d.gudang_catatan,
+    nomorInspeksi: d.nomor_inspeksi ?? null,
     pengawasId: d.pengawas_id,
     pengawasName: d.pengawas_name,
     pengawasCompany: d.pengawas_company ?? null,
@@ -1134,7 +1142,7 @@ router.get("/retur", async (req, res): Promise<void> => {
 
   const result = await pool.query(
     `SELECT d.id, d.material_id, m.name AS material_name, d.status, d.jumlah_unit, d.lampiran,
-            d.tug10_file_id, d.tug10_link, d.catatan, d.gudang_catatan,
+            d.tug10_file_id, d.tug10_link, d.catatan, d.gudang_catatan, d.nomor_inspeksi,
             d.pengawas_id, p.username AS pengawas_name,
             d.gudang_id, g.username AS gudang_name,
             (SELECT COUNT(*)::int FROM retur_unit u WHERE u.dokumen_id = d.id) AS unit_count,
@@ -1165,6 +1173,7 @@ router.get("/retur", async (req, res): Promise<void> => {
       tug10Link: d.tug10_link,
       catatan: d.catatan,
       gudangCatatan: d.gudang_catatan,
+      nomorInspeksi: d.nomor_inspeksi ?? null,
       pengawasId: d.pengawas_id,
       pengawasName: d.pengawas_name,
       gudangId: d.gudang_id,
@@ -1179,6 +1188,25 @@ router.get("/retur", async (req, res): Promise<void> => {
       completedAt: d.completed_at ? new Date(d.completed_at).toISOString() : null,
     })),
   );
+});
+
+// ── Nomor Inspeksi tingkat dokumen — hanya master, diisi dari Riwayat setelah verifikasi ──
+router.put("/retur/:id/inspeksi", async (req: Request, res: Response) => {
+  const actor = await requireReturMaster(req, res);
+  if (!actor) return;
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "ID dokumen tidak valid" }); return; }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const raw = typeof body.nomorInspeksi === "string" ? body.nomorInspeksi.trim() : "";
+  if (raw.length > 100) { res.status(400).json({ error: "Nomor inspeksi maksimal 100 karakter" }); return; }
+  const docRes = await pool.query("SELECT status FROM retur_dokumen WHERE id = $1", [id]);
+  if (docRes.rows.length === 0) { res.status(404).json({ error: "Dokumen tidak ditemukan" }); return; }
+  if ((docRes.rows[0] as { status: string }).status !== "completed") {
+    res.status(400).json({ error: "Nomor inspeksi hanya dapat diisi setelah verifikasi selesai" });
+    return;
+  }
+  await pool.query("UPDATE retur_dokumen SET nomor_inspeksi = $2 WHERE id = $1", [id, raw || null]);
+  res.json({ ok: true, nomorInspeksi: raw || null });
 });
 
 // ═══ ROUTE DYNAMIC — setelah statis; :id dijaga numerik ════════════════════════
@@ -1379,16 +1407,20 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
     }
     return optsCache.get(mid)!;
   };
-  // Peta: unit -> label item yang punya foto dari tahap pengawas (dasar aturan "ikuti pengawas").
+  // Peta: unit -> label item yang punya foto dari tahap pengawas (dasar aturan "ikuti pengawas"),
+  // sekaligus referensi filenya: foto gudang default MENYALIN referensi foto pengawas
+  // (tanpa upload duplikat) — diganti hanya bila petugas gudang unggah foto baru.
   const pwFotoRes = await pool.query(
-    `SELECT unit_id, item_label FROM retur_item_cek
+    `SELECT unit_id, item_label, foto_file_id, foto_link FROM retur_item_cek
      WHERE stage = 'pengawas' AND foto_file_id IS NOT NULL AND unit_id = ANY($1::int[])`,
     [Array.from(docUnitIds)],
   );
   const pwFotoByUnit = new Map<number, Set<string>>();
-  for (const row of pwFotoRes.rows as { unit_id: number; item_label: string }[]) {
+  const pwFotoRef = new Map<string, { fileId: string; link: string | null }>();
+  for (const row of pwFotoRes.rows as { unit_id: number; item_label: string; foto_file_id: string; foto_link: string | null }[]) {
     if (!pwFotoByUnit.has(row.unit_id)) pwFotoByUnit.set(row.unit_id, new Set());
     pwFotoByUnit.get(row.unit_id)!.add(row.item_label);
+    pwFotoRef.set(`${row.unit_id}|${row.item_label}`, { fileId: row.foto_file_id, link: row.foto_link });
   }
 
   const verifyUnits: VerifyUnit[] = [];
@@ -1406,8 +1438,9 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
       return;
     }
     payloadUnitIds.add(unitId);
+    // Nomor Inspeksi TIDAK lagi diisi pada tahap ini — kini per dokumen oleh master dari
+    // Riwayat setelah verifikasi selesai. Kolom sn hanya menampung data lama; unit baru → NULL.
     const sn = typeof u.sn === "string" ? u.sn.trim() : "";
-    if (!sn) { res.status(400).json({ error: "Nomor Inspeksi wajib diisi" }); return; }
     const keputusanRaw = u.keputusan;
     if (keputusanRaw !== "layak_pakai" && keputusanRaw !== "usul_hapus") {
       res.status(400).json({ error: `Unit "${docUnits.find((du) => du.id === unitId)?.label}" wajib diputuskan: pilih "Layak Pakai (Standby)" atau "Tidak Layak Pakai (Usul Hapus)"` });
@@ -1423,7 +1456,7 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
       }
     }
     const v = validateCekItems(u.items, unitCfg, "gudang");
-    if (!v.ok) { res.status(400).json({ error: `Nomor Inspeksi "${sn}": ${v.error}` }); return; }
+    if (!v.ok) { res.status(400).json({ error: `Unit "${docUnits.find((du) => du.id === unitId)?.label}": ${v.error}` }); return; }
     // Kesimpulan formulir: wajib bila material punya template form dgn opsi kesimpulan.
     let formKeputusan: VerifyUnit["formKeputusan"] = null;
     const kesimpulanOpts = await optsForMat(unitMatId);
@@ -1442,13 +1475,13 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
   // SETIAP unit dokumen wajib hadir di payload
   for (const du of docUnits) {
     if (!payloadUnitIds.has(du.id)) {
-      res.status(400).json({ error: `Unit "${du.label}" belum diverifikasi (Nomor Inspeksi wajib diisi)` });
+      res.status(400).json({ error: `Unit "${du.label}" belum diverifikasi` });
       return;
     }
   }
 
   // SN duplikat: duplikat internal payload + precheck terhadap dokumen lain
-  const snList = verifyUnits.map((u) => u.sn);
+  const snList = verifyUnits.map((u) => u.sn).filter(Boolean);
   const seenSn = new Set<string>();
   for (const sn of snList) {
     if (seenSn.has(sn)) { res.status(409).json({ error: `Nomor Inspeksi sudah digunakan: ${sn}` }); return; }
@@ -1516,14 +1549,18 @@ router.post("/retur/:id/verify", async (req, res): Promise<void> => {
     for (let ui = 0; ui < verifyUnits.length; ui++) {
       await client.query(
         "UPDATE retur_unit SET sn = $1, keputusan = $2, form_keputusan = $5::jsonb WHERE id = $3 AND dokumen_id = $4",
-        [verifyUnits[ui].sn, verifyUnits[ui].keputusan, verifyUnits[ui].unitId, id, verifyUnits[ui].formKeputusan ? JSON.stringify(verifyUnits[ui].formKeputusan) : null],
+        [verifyUnits[ui].sn || null, verifyUnits[ui].keputusan, verifyUnits[ui].unitId, id, verifyUnits[ui].formKeputusan ? JSON.stringify(verifyUnits[ui].formKeputusan) : null],
       );
       for (let ii = 0; ii < verifyUnits[ui].items.length; ii++) {
         const it = verifyUnits[ui].items[ii];
+        // Foto "ikut pengawas": pakai ulang referensi file pengawas tanpa upload duplikat.
+        const pwRef = it.fotoIkutPengawas ? pwFotoRef.get(`${verifyUnits[ui].unitId}|${it.label}`) : undefined;
+        const gwFileId = unitFiles[ui][ii]?.fileId ?? pwRef?.fileId ?? null;
+        const gwLink = unitFiles[ui][ii]?.webViewLink ?? pwRef?.link ?? null;
         await client.query(
           `INSERT INTO retur_item_cek (unit_id, stage, item_label, hasil, catatan, foto_file_id, foto_link)
            VALUES ($1, 'gudang', $2, $3, $4, $5, $6)`,
-          [verifyUnits[ui].unitId, it.label, it.hasil, it.catatan, unitFiles[ui][ii]?.fileId ?? null, unitFiles[ui][ii]?.webViewLink ?? null],
+          [verifyUnits[ui].unitId, it.label, it.hasil, it.catatan, gwFileId, gwLink],
         );
       }
     }

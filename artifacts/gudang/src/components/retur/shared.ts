@@ -43,6 +43,7 @@ export interface ReturDokumen {
   tug10Link: string | null;
   catatan: string | null;
   gudangCatatan: string | null;
+  nomorInspeksi?: string | null; // diisi master dari Riwayat setelah verifikasi (per dokumen)
   pengawasId: number;
   pengawasName: string | null;
   pengawasCompany: string | null;
