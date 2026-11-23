@@ -57,6 +57,7 @@ export const returDokumenMaterialTable = pgTable("retur_dokumen_material", {
   dokumenId: integer("dokumen_id").notNull().references(() => returDokumenTable.id, { onDelete: "cascade" }),
   materialId: integer("material_id").notNull().references(() => materialsTable.id),
   jumlahUnit: integer("jumlah_unit"), // sampling per material; NULL = non-sampling
+  nomorInspeksi: text("nomor_inspeksi"), // nomor inspeksi per material (diisi master dari Riwayat setelah verifikasi); NULL = belum diisi
 }, (table) => [
   uniqueIndex("retur_dokumen_material_doc_mat_uidx").on(table.dokumenId, table.materialId),
 ]);

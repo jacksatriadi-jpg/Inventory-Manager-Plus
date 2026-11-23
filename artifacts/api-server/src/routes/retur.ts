@@ -244,7 +244,9 @@ interface ReturDetail {
   tug10Link: string | null;
   catatan: string | null;
   gudangCatatan: string | null;
-  nomorInspeksi: string | null; // diisi master dari Riwayat setelah verifikasi (tingkat dokumen)
+  // Legacy: kolom dokumen-level (data lama). Nilai CANONICAL sekarang per material:
+  // lihat materials[].nomorInspeksi.
+  nomorInspeksi: string | null;
   pengawasId: number;
   pengawasName: string;
   pengawasCompany: string | null; // nama perusahaan vendor pengawas (blok tanda tangan formulir)
@@ -253,7 +255,7 @@ interface ReturDetail {
   gudangCompany: string | null;
   formKey: string | null; // template formulir material ini (Cetak Formulir)
   unitCount: number;
-  materials: { id: number; name: string; jumlahUnit: number | null }[]; // multi-material per dokumen
+  materials: { id: number; name: string; jumlahUnit: number | null; nomorInspeksi: string | null }[]; // multi-material per dokumen
   createdAt: string;
   checkedAt: string;
   completedAt: string | null;
@@ -304,7 +306,7 @@ interface DocJoinedRow {
   checked_at: Date;
   completed_at: Date | null;
   unit_count?: number;
-  materials?: { id: number; name: string; jumlahUnit: number | null }[] | null;
+  materials?: { id: number; name: string; jumlahUnit: number | null; nomorInspeksi: string | null }[] | null;
   keputusan_values?: string[] | null;
 }
 
@@ -390,15 +392,15 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
 
   // Daftar material dokumen (multi-material); fallback utk data lama tanpa junction rows.
   const matsRes = await pool.query(
-    `SELECT dm.material_id, m.name, dm.jumlah_unit
+    `SELECT dm.material_id, m.name, dm.jumlah_unit, dm.nomor_inspeksi
      FROM retur_dokumen_material dm JOIN materials m ON m.id = dm.material_id
      WHERE dm.dokumen_id = $1 ORDER BY dm.id`,
     [dokumenId],
   );
   const materials = matsRes.rows.length > 0
-    ? (matsRes.rows as { material_id: number; name: string; jumlah_unit: number | null }[])
-        .map((x) => ({ id: x.material_id, name: x.name, jumlahUnit: x.jumlah_unit }))
-    : [{ id: d.material_id, name: d.material_name, jumlahUnit: d.jumlah_unit ?? null }];
+    ? (matsRes.rows as { material_id: number; name: string; jumlah_unit: number | null; nomor_inspeksi: string | null }[])
+        .map((x) => ({ id: x.material_id, name: x.name, jumlahUnit: x.jumlah_unit, nomorInspeksi: x.nomor_inspeksi ?? null }))
+    : [{ id: d.material_id, name: d.material_name, jumlahUnit: d.jumlah_unit ?? null, nomorInspeksi: d.nomor_inspeksi ?? null }];
 
   return {
     id: d.id,
@@ -1146,7 +1148,7 @@ router.get("/retur", async (req, res): Promise<void> => {
             d.pengawas_id, p.username AS pengawas_name,
             d.gudang_id, g.username AS gudang_name,
             (SELECT COUNT(*)::int FROM retur_unit u WHERE u.dokumen_id = d.id) AS unit_count,
-            (SELECT json_agg(json_build_object('id', m2.id, 'name', m2.name, 'jumlahUnit', dm.jumlah_unit) ORDER BY dm.id)
+            (SELECT json_agg(json_build_object('id', m2.id, 'name', m2.name, 'jumlahUnit', dm.jumlah_unit, 'nomorInspeksi', dm.nomor_inspeksi) ORDER BY dm.id)
              FROM retur_dokumen_material dm JOIN materials m2 ON m2.id = dm.material_id
              WHERE dm.dokumen_id = d.id) AS materials,
             (SELECT array_agg(DISTINCT u.keputusan) FROM retur_unit u
@@ -1180,8 +1182,8 @@ router.get("/retur", async (req, res): Promise<void> => {
       gudangName: d.gudang_name,
       unitCount: d.unit_count ?? 0,
       materials: Array.isArray(d.materials) && d.materials.length > 0
-        ? (d.materials as { id: number; name: string; jumlahUnit: number | null }[])
-        : [{ id: d.material_id, name: d.material_name, jumlahUnit: d.jumlah_unit ?? null }],
+        ? (d.materials as { id: number; name: string; jumlahUnit: number | null; nomorInspeksi: string | null }[])
+        : [{ id: d.material_id, name: d.material_name, jumlahUnit: d.jumlah_unit ?? null, nomorInspeksi: d.nomor_inspeksi ?? null }],
       keputusan: Array.isArray(d.keputusan_values) ? (d.keputusan_values.length === 1 ? d.keputusan_values[0] : d.keputusan_values.length > 1 ? "campur" : null) : null,
       createdAt: new Date(d.created_at).toISOString(),
       checkedAt: new Date(d.checked_at).toISOString(),
@@ -1190,23 +1192,92 @@ router.get("/retur", async (req, res): Promise<void> => {
   );
 });
 
-// ── Nomor Inspeksi tingkat dokumen — hanya master, diisi dari Riwayat setelah verifikasi ──
+// ── Nomor Inspeksi PER MATERIAL — hanya master, diisi dari Riwayat setelah verifikasi ──
+// Payload baru: { materials: [{ materialId, nomorInspeksi }] }.
+// Payload lama { nomorInspeksi } diterima utk kompat: nilai diterapkan ke SEMUA material dokumen.
 router.put("/retur/:id/inspeksi", async (req: Request, res: Response) => {
   const actor = await requireReturMaster(req, res);
   if (!actor) return;
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "ID dokumen tidak valid" }); return; }
   const body = (req.body ?? {}) as Record<string, unknown>;
-  const raw = typeof body.nomorInspeksi === "string" ? body.nomorInspeksi.trim() : "";
-  if (raw.length > 100) { res.status(400).json({ error: "Nomor inspeksi maksimal 100 karakter" }); return; }
   const docRes = await pool.query("SELECT status FROM retur_dokumen WHERE id = $1", [id]);
   if (docRes.rows.length === 0) { res.status(404).json({ error: "Dokumen tidak ditemukan" }); return; }
   if ((docRes.rows[0] as { status: string }).status !== "completed") {
     res.status(400).json({ error: "Nomor inspeksi hanya dapat diisi setelah verifikasi selesai" });
     return;
   }
-  await pool.query("UPDATE retur_dokumen SET nomor_inspeksi = $2 WHERE id = $1", [id, raw || null]);
-  res.json({ ok: true, nomorInspeksi: raw || null });
+
+  // Material dokumen (junction rows; fallback ke material dokumen utk data lama).
+  const matsRes = await pool.query(
+    `SELECT dm.material_id, m.name
+     FROM retur_dokumen_material dm JOIN materials m ON m.id = dm.material_id
+     WHERE dm.dokumen_id = $1 ORDER BY dm.id`,
+    [id],
+  );
+  const docMats = (matsRes.rows as { material_id: number; name: string }[]).map((x) => ({ id: x.material_id, name: x.name }));
+  if (docMats.length === 0) {
+    const legacy = await pool.query("SELECT material_id, name FROM materials m JOIN retur_dokumen d ON d.material_id = m.id WHERE d.id = $1", [id]);
+    if (legacy.rows.length === 0) { res.status(404).json({ error: "Dokumen tidak ditemukan" }); return; }
+    const { material_id, name } = legacy.rows[0] as { material_id: number; name: string };
+    docMats.push({ id: material_id, name });
+  }
+  const docMatIds = new Set(docMats.map((m) => m.id));
+
+  // Normalisasi payload -> daftar { materialId, nomorInspeksi }.
+  let targets: { materialId: number; nomorInspeksi: string | null }[];
+  const legacyRaw = typeof body.nomorInspeksi === "string" ? body.nomorInspeksi.trim() : "";
+  if (Array.isArray(body.materials)) {
+    targets = [];
+    const seen = new Set<number>();
+    for (const rawItem of body.materials as unknown[]) {
+      const item = (rawItem ?? {}) as Record<string, unknown>;
+      const mid = Number(item.materialId);
+      if (!Number.isInteger(mid)) { res.status(400).json({ error: "materialId tidak valid" }); return; }
+      if (!docMatIds.has(mid)) { res.status(400).json({ error: `Material #${mid} bukan milik dokumen ini` }); return; }
+      if (seen.has(mid)) { res.status(400).json({ error: `Material #${mid} dobel dalam payload` }); return; }
+      seen.add(mid);
+      const raw = typeof item.nomorInspeksi === "string" ? item.nomorInspeksi.trim() : "";
+      if (raw.length > 100) { res.status(400).json({ error: "Nomor inspeksi maksimal 100 karakter" }); return; }
+      targets.push({ materialId: mid, nomorInspeksi: raw || null });
+    }
+  } else {
+    // Payload lama { nomorInspeksi }: diterapkan ke semua material dokumen.
+    if (legacyRaw.length > 100) { res.status(400).json({ error: "Nomor inspeksi maksimal 100 karakter" }); return; }
+    targets = docMats.map((m) => ({ materialId: m.id, nomorInspeksi: legacyRaw || null }));
+  }
+
+  for (const t of targets) {
+    const has = await pool.query(
+      "SELECT id FROM retur_dokumen_material WHERE dokumen_id = $1 AND material_id = $2",
+      [id, t.materialId],
+    );
+    if (has.rows.length > 0) {
+      await pool.query(
+        "UPDATE retur_dokumen_material SET nomor_inspeksi = $3 WHERE dokumen_id = $1 AND material_id = $2",
+        [id, t.materialId, t.nomorInspeksi],
+      );
+    } else {
+      // Data lama tanpa junction row: buat junction row on-demand (tanpa jumlah_unit).
+      await pool.query(
+        "INSERT INTO retur_dokumen_material (dokumen_id, material_id, nomor_inspeksi) VALUES ($1, $2, $3) ON CONFLICT (dokumen_id, material_id) DO UPDATE SET nomor_inspeksi = $3",
+        [id, t.materialId, t.nomorInspeksi],
+      );
+    }
+  }
+
+  // Query ulang nilai final semua material dokumen.
+  const finalRes = await pool.query(
+    `SELECT dm.material_id, m.name, dm.nomor_inspeksi
+     FROM retur_dokumen_material dm JOIN materials m ON m.id = dm.material_id
+     WHERE dm.dokumen_id = $1 ORDER BY dm.id`,
+    [id],
+  );
+  const finalMaterials = finalRes.rows.length > 0
+    ? (finalRes.rows as { material_id: number; name: string; nomor_inspeksi: string | null }[]).map((x) => ({ materialId: x.material_id, name: x.name, nomorInspeksi: x.nomor_inspeksi ?? null }))
+    : docMats.map((m) => ({ materialId: m.id, name: m.name, nomorInspeksi: null as string | null }));
+
+  res.json({ ok: true, materials: finalMaterials });
 });
 
 // ═══ ROUTE DYNAMIC — setelah statis; :id dijaga numerik ════════════════════════

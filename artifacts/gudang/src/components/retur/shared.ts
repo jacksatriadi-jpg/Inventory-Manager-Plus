@@ -29,7 +29,8 @@ export function useReturMaterials() {
 }
 
 // Material dalam satu dokumen retur (multi-material); jumlahUnit = deklaratif sampling per material.
-export interface ReturDocMaterial { id: number; name: string; jumlahUnit: number | null }
+// nomorInspeksi = nomor inspeksi per material (diisi master dari Riwayat setelah verifikasi).
+export interface ReturDocMaterial { id: number; name: string; jumlahUnit: number | null; nomorInspeksi?: string | null }
 
 export interface ReturDokumen {
   id: number;
@@ -43,7 +44,8 @@ export interface ReturDokumen {
   tug10Link: string | null;
   catatan: string | null;
   gudangCatatan: string | null;
-  nomorInspeksi?: string | null; // diisi master dari Riwayat setelah verifikasi (per dokumen)
+  // Legacy kolom dokumen-level (data lama). Nilai CANONICAL sekarang per material: lihat materials[].nomorInspeksi.
+  nomorInspeksi?: string | null;
   pengawasId: number;
   pengawasName: string | null;
   pengawasCompany: string | null;

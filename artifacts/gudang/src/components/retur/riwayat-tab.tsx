@@ -73,11 +73,20 @@ export function RiwayatTab() {
   const [toReject, setToReject] = useState<ReturDokumen | null>(null);
   const [rejectAlasan, setRejectAlasan] = useState("");
   const [rejecting, setRejecting] = useState(false);
-  // Nomor Inspeksi per dokumen — hanya master, diisi setelah verifikasi selesai.
+  // Nomor Inspeksi PER MATERIAL — hanya master, diisi setelah verifikasi selesai.
   const isMaster = user?.role === "master";
   const [toInspeksi, setToInspeksi] = useState<ReturDokumen | null>(null);
-  const [inspeksiValue, setInspeksiValue] = useState("");
+  const [inspeksiValues, setInspeksiValues] = useState<Record<number, string>>({});
   const [savingInspeksi, setSavingInspeksi] = useState(false);
+
+  const openInspeksi = (d: ReturDokumen) => {
+    // Inisialisasi nilai dari setiap material dokumen (fallback data lama tanpa junction rows).
+    const mats = d.materials ?? [{ id: d.materialId, name: d.materialName, jumlahUnit: null, nomorInspeksi: d.nomorInspeksi ?? null }];
+    const vals: Record<number, string> = {};
+    for (const m of mats) vals[m.id] = m.nomorInspeksi ?? "";
+    setInspeksiValues(vals);
+    setToInspeksi(d);
+  };
 
   // Filter server-side; q didebounce 300 ms. Gudang hanya melihat dokumen selesai;
 // vendor/pengawas melihat semua dokumen miliknya (pending+selesai) supaya formulir
@@ -99,9 +108,14 @@ export function RiwayatTab() {
     if (!toInspeksi) return;
     setSavingInspeksi(true);
     try {
-      await returApi(`/${toInspeksi.id}/inspeksi`, { method: "PUT", body: JSON.stringify({ nomorInspeksi: inspeksiValue.trim() }) });
-      toast({ title: inspeksiValue.trim() ? "Nomor inspeksi tersimpan" : "Nomor inspeksi dikosongkan", description: `Dokumen #${toInspeksi.id}.` });
-      setToInspeksi(null); setInspeksiValue("");
+      const mats = toInspeksi.materials ?? [{ id: toInspeksi.materialId, name: toInspeksi.materialName, jumlahUnit: null, nomorInspeksi: toInspeksi.nomorInspeksi ?? null }];
+      const payload = {
+        materials: mats.map((m) => ({ materialId: m.id, nomorInspeksi: (inspeksiValues[m.id] ?? "").trim() })),
+      };
+      await returApi(`/${toInspeksi.id}/inspeksi`, { method: "PUT", body: JSON.stringify(payload) });
+      const hasAny = mats.some((m) => (inspeksiValues[m.id] ?? "").trim());
+      toast({ title: hasAny ? "Nomor inspeksi tersimpan" : "Nomor inspeksi dikosongkan", description: `Dokumen #${toInspeksi.id}.` });
+      setToInspeksi(null); setInspeksiValues({});
       loadDocs();
     } catch (e) {
       toast({ title: "Gagal menyimpan nomor inspeksi", description: (e as Error).message, variant: "destructive" });
@@ -209,7 +223,7 @@ export function RiwayatTab() {
           ["Pengawas", detail.pengawasName ?? "-"],
           ["Gudang", detail.gudangName ?? "-"],
           ["Status", "Selesai diverifikasi"],
-          ["Nomor Inspeksi", detail.nomorInspeksi ?? "(belum diisi)"],
+          ...(detail.materials ?? []).map((m) => [`Nomor Inspeksi — ${m.name}`, m.nomorInspeksi ?? "(belum diisi)"] as [string, string]),
           ["Catatan", detail.catatan ?? "-"],
           ["Catatan Gudang", detail.gudangCatatan ?? "-"],
         ];
@@ -315,7 +329,7 @@ export function RiwayatTab() {
           ["Tanggal", fmtTanggal(detail.createdAt)],
           ["Material", (detail.materials?.length ?? 0) > 1 ? (detail.materials as { name: string }[]).map((m) => m.name).join(", ") : detail.materialName],
           ["Status", "Selesai diverifikasi"],
-          ["Nomor Inspeksi", detail.nomorInspeksi ?? "(belum diisi)"],
+          ...(detail.materials ?? []).map((m) => [`Nomor Inspeksi — ${m.name}`, m.nomorInspeksi ?? "(belum diisi)"] as [string, string]),
           ["Pengawas", detail.pengawasName ?? "-"],
           ["Gudang", detail.gudangName ?? "-"],
         ];
@@ -586,7 +600,7 @@ export function RiwayatTab() {
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {fmtTanggal(d.completedAt)}
-                    {isMaster && d.status === "completed" && !d.nomorInspeksi && (
+                    {isMaster && d.status === "completed" && (d.materials ?? []).some((m) => !m.nomorInspeksi) && (
                       <div>
                         <Badge className="mt-1 bg-amber-100 text-amber-800" title="Klik tombol Nomor Inspeksi pada kolom Aksi untuk mengisi">
                           belum ada No. Inspeksi
@@ -604,7 +618,7 @@ export function RiwayatTab() {
                           <Pencil className="h-4 w-4" />
                         </Button>
                         {isMaster && d.status === "completed" && (
-                          <Button size="sm" variant="ghost" onClick={() => { setToInspeksi(d); setInspeksiValue(d.nomorInspeksi ?? ""); }} aria-label={`Nomor Inspeksi dokumen ${d.id}`}>
+                          <Button size="sm" variant="ghost" onClick={() => openInspeksi(d)} aria-label={`Nomor Inspeksi dokumen ${d.id}`}>
                             <ClipboardList className="h-4 w-4" />
                           </Button>
                         )}
@@ -673,18 +687,24 @@ export function RiwayatTab() {
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
-    <AlertDialog open={toInspeksi !== null} onOpenChange={(open) => { if (!open) { setToInspeksi(null); setInspeksiValue(""); } }}>
+    <AlertDialog open={toInspeksi !== null} onOpenChange={(open) => { if (!open) { setToInspeksi(null); setInspeksiValues({}); } }}>
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>Nomor Inspeksi dokumen #{toInspeksi?.id}</AlertDialogTitle>
           <AlertDialogDescription>
-            Nomor inspeksi tingkat dokumen (TUG) — hanya admin yang mengisi, setelah verifikasi selesai.
+            Nomor inspeksi per material — hanya admin yang mengisi, setelah verifikasi selesai.
             Nilai ini yang tampil pada hasil Export Excel/PDF (Cetak Formulir tidak menampilkan nomor inspeksi).
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <Label className="text-xs font-medium">Nomor Inspeksi</Label>
-        <Input value={inspeksiValue} onChange={(e) => setInspeksiValue(e.target.value)}
-          placeholder="mis. INS/2026/00123" maxLength={100} />
+        <div className="space-y-3">
+          {(toInspeksi?.materials ?? [{ id: toInspeksi?.materialId ?? 0, name: toInspeksi?.materialName ?? "", jumlahUnit: null, nomorInspeksi: toInspeksi?.nomorInspeksi ?? null }]).map((m) => (
+            <div key={m.id} className="space-y-1">
+              <Label className="text-xs font-medium">{m.name}</Label>
+              <Input value={inspeksiValues[m.id] ?? ""} onChange={(e) => setInspeksiValues((v) => ({ ...v, [m.id]: e.target.value }))}
+                placeholder="mis. INS/2026/00123" maxLength={100} />
+            </div>
+          ))}
+        </div>
         <AlertDialogFooter>
           <AlertDialogCancel>Batal</AlertDialogCancel>
           <AlertDialogAction disabled={savingInspeksi} onClick={(e) => { e.preventDefault(); void handleSaveInspeksi(); }}>

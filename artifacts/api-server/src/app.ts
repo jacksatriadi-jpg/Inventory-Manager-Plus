@@ -313,8 +313,27 @@ async function setupDatabase() {
     await pool.query(`ALTER TABLE retur_dokumen ADD COLUMN IF NOT EXISTS jumlah_unit INTEGER;`);
     // lampiran: daftar {name,fileId,webViewLink} dokumen pendukung dokumen sampling (diunggah ke Drive).
     await pool.query(`ALTER TABLE retur_dokumen ADD COLUMN IF NOT EXISTS lampiran JSONB NOT NULL DEFAULT '[]'::jsonb;`);
-    // nomor_inspeksi: nomor inspeksi tingkat dokumen TUG — diisi master dari Riwayat setelah verifikasi.
+    // nomor_inspeksi: LEGACY — nomor inspeksi tingkat dokumen TUG (kolom lama). Nilai CANONICAL sekarang
+    // per material di retur_dokumen_material.nomor_inspeksi; kolom ini tetap ada sebagai fallback data lama.
     await pool.query(`ALTER TABLE retur_dokumen ADD COLUMN IF NOT EXISTS nomor_inspeksi TEXT;`);
+    // nomor_inspeksi per material: diisi master dari Riwayat setelah verifikasi.
+    await pool.query(`ALTER TABLE retur_dokumen_material ADD COLUMN IF NOT EXISTS nomor_inspeksi TEXT;`);
+    // Backfill: dokumen lama (1 material) punya nilai dokumen-level — pindahkan ke junction row agar nilai lama ikut tampil.
+    // Hanya dokumen 1-material yang di-backfill — nilai dokumen lama tak boleh dipaksakan ke semua
+    // material multi-material. Multi-material dibiarkan NULL supaya master mengisi per material.
+    await pool.query(`
+      UPDATE retur_dokumen_material dm SET nomor_inspeksi = d.nomor_inspeksi
+      FROM retur_dokumen d
+      WHERE dm.dokumen_id = d.id AND dm.nomor_inspeksi IS NULL AND d.nomor_inspeksi IS NOT NULL
+        AND (SELECT COUNT(*) FROM retur_dokumen_material dm2 WHERE dm2.dokumen_id = d.id) = 1;
+    `);
+    await pool.query(`
+      INSERT INTO retur_dokumen_material (dokumen_id, material_id, nomor_inspeksi)
+      SELECT d.id, d.material_id, d.nomor_inspeksi
+      FROM retur_dokumen d
+      WHERE d.nomor_inspeksi IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM retur_dokumen_material dm WHERE dm.dokumen_id = d.id);
+    `);
     // unique (unit_id, stage, item_label): cegah baris cek ganda untuk item yang sama per unit per tahap.
     // Dedup data lama dulu (pertahankan id terbesar) supaya index bisa dibuat.
     await pool.query(`

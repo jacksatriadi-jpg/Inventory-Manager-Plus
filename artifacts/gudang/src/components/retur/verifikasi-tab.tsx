@@ -1,5 +1,5 @@
 // Tab VERIFIKASI (gudang): daftar dokumen status checked_supervisor, panel per unit dgn
-// nomor inspeksi kini per dokumen diisi master dari Riwayat (bukan di tab ini);
+// nomor inspeksi per material diisi master dari Riwayat (bukan di tab ini);
 // tabel pembanding data pengawas (kiri) vs form gudang (kanan),
 // lalu POST /retur/:id/verify.
 import { useEffect, useRef, useState } from "react";
