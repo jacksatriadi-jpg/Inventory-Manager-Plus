@@ -537,8 +537,14 @@ router.get("/retur/google/callback", async (req, res): Promise<void> => {
 // ─── POST /api/retur/google/disconnect (master) ─────────────────────────────────
 router.post("/retur/google/disconnect", async (req, res): Promise<void> => {
   if (!(await requireReturMaster(req, res))) return;
-  await disconnectReturDrive();
-  res.json({ ok: true });
+  try {
+    await disconnectReturDrive();
+    res.json({ ok: true });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Gagal memutus akun";
+    logger.error({ err }, "Retur Drive: disconnect gagal");
+    res.status(400).json({ error: msg });
+  }
 });
 
 // ─── POST /api/retur/google/refresh (master) — paksa refresh access token ───────

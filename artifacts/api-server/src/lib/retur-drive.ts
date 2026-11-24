@@ -2,9 +2,18 @@ import { google } from "googleapis";
 import { Readable } from "stream";
 import { pool } from "@workspace/db";
 import { logger } from "./logger";
+import {
+  isServiceAccountConfigured,
+  getServiceAccountDrive,
+  getServiceAccountEmail,
+} from "./service-account";
 
 // Google Drive AKUN KEDUA khusus modul Retur Material (terpisah dari backup).
 // Config disimpan di tabel retur_gdrive_config (1 baris).
+//
+// Service Account (GOOGLE_SERVICE_ACCOUNT_KEY_PATH) takes precedence when present:
+// the folder is shared with the SA email (Editor) and files are VISIBLE to the folder owner.
+// OAuth path remains as fallback (legacy setup).
 
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
@@ -74,7 +83,23 @@ async function driveAuthed(config: ReturGdriveRow) {
   return google.drive({ version: "v3", auth: client });
 }
 
+// Single entry point for a Drive client: SA when configured, OAuth otherwise.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getDrive(): Promise<any> {
+  if (isServiceAccountConfigured()) {
+    return await getServiceAccountDrive();
+  }
+  const config = await getReturConfigRow();
+  if (!config?.access_token) {
+    throw new Error("Akun Google Drive Retur belum terhubung");
+  }
+  return await driveAuthed(config);
+}
+
 export function getReturAuthUrl(): string {
+  if (isServiceAccountConfigured()) {
+    throw new Error("Drive Retur dikonfigurasi via Service Account — sambungkan lewat config server (GOOGLE_SERVICE_ACCOUNT_KEY_PATH)");
+  }
   const client = getReturClient();
   return client.generateAuthUrl({
     access_type: "offline",
@@ -84,6 +109,9 @@ export function getReturAuthUrl(): string {
 }
 
 export async function exchangeReturCodeAndSave(code: string): Promise<{ email: string }> {
+  if (isServiceAccountConfigured()) {
+    throw new Error("Drive Retur dikonfigurasi via Service Account — sambungkan lewat config server (GOOGLE_SERVICE_ACCOUNT_KEY_PATH)");
+  }
   const client = getReturClient();
   const { tokens } = await client.getToken(code);
   client.setCredentials(tokens);
@@ -115,6 +143,9 @@ export async function exchangeReturCodeAndSave(code: string): Promise<{ email: s
 }
 
 export async function disconnectReturDrive(): Promise<void> {
+  if (isServiceAccountConfigured()) {
+    throw new Error("Drive Retur dikonfigurasi via Service Account — disconnect tidak tersedia; hapus GOOGLE_SERVICE_ACCOUNT_KEY_PATH di server untuk kembali ke OAuth");
+  }
   await pool.query(
     `UPDATE retur_gdrive_config SET
       access_token = NULL,
@@ -133,7 +164,17 @@ export async function getReturDriveStatus(): Promise<{
   email: string | null;
   tokenExpiry: string | null;
   refreshTokenPresent: boolean;
+  serviceAccount?: boolean;
 }> {
+  if (isServiceAccountConfigured()) {
+    return {
+      connected: true,
+      email: getServiceAccountEmail(),
+      tokenExpiry: null,
+      refreshTokenPresent: false,
+      serviceAccount: true,
+    };
+  }
   try {
     const result = await pool.query(
       "SELECT account_email, access_token, refresh_token, token_expiry FROM retur_gdrive_config LIMIT 1"
@@ -154,6 +195,8 @@ export async function getReturDriveStatus(): Promise<{
 // Paksa refresh access token sekarang (btn "Refresh Token" di tab Pengaturan).
 // expiry_date=0 -> googleapis pasti refresh, tidak tunggu expired.
 export async function forceReturTokenRefresh(): Promise<Awaited<ReturnType<typeof getReturDriveStatus>>> {
+  // SA path: no token lifecycle to refresh — just report status.
+  if (isServiceAccountConfigured()) return getReturDriveStatus();
   const config = await getReturConfigRow();
   if (!config?.refresh_token) {
     throw new Error("Tidak ada refresh token — hubungkan ulang akun Drive di tab ini.");
@@ -179,6 +222,20 @@ export async function forceReturTokenRefresh(): Promise<Awaited<ReturnType<typeo
 
 // Cari atau buat folder Drive "Retur Gudang Pemaron"; id disimpan di config.
 export async function ensureReturFolder(): Promise<string> {
+  // SA path: folder is user-created + shared to the SA. Never create under SA —
+  // a SA-created folder would live in the SA's own storage and be invisible to the user.
+  if (isServiceAccountConfigured()) {
+    const drive = await getServiceAccountDrive();
+    const folderRes = await drive.files.list({
+      q: `mimeType='application/vnd.google-apps.folder' and name='${FOLDER_NAME}' and trashed=false`,
+      fields: "files(id, name)",
+    });
+    const folderId = folderRes.data.files?.[0]?.id;
+    if (!folderId) {
+      throw new Error(`Folder Drive "${FOLDER_NAME}" tidak ditemukan — pastikan folder sudah di-share ke SA email (Editor)`);
+    }
+    return folderId;
+  }
   const config = await getReturConfigRow();
   if (!config?.access_token) {
     throw new Error("Akun Google Drive Retur belum terhubung");
@@ -224,11 +281,7 @@ export function sanitizeFolderName(raw: string): string {
 // Cari atau buat subfolder `name` di dalam `parentId`. Pemanggil bertanggung jawab
 // menyimpan id hasil (retur_dokumen/retur_unit.folder_file_id) supaya stabil.
 export async function ensureChildFolder(name: string, parentId: string): Promise<string> {
-  const config = await getReturConfigRow();
-  if (!config?.access_token) {
-    throw new Error("Akun Google Drive Retur belum terhubung");
-  }
-  const drive = await driveAuthed(config);
+  const drive = await getDrive();
   const safeName = name.replace(/'/g, "\\'");
   const folderRes = await drive.files.list({
     q: `mimeType='application/vnd.google-apps.folder' and name='${safeName}' and parents in '${parentId}' and trashed=false`,
@@ -259,11 +312,7 @@ export async function uploadReturDataUrl(
   const mimeType = match[1];
   const buffer = Buffer.from(match[2], "base64");
 
-  const config = await getReturConfigRow();
-  if (!config?.access_token) {
-    throw new Error("Akun Google Drive Retur belum terhubung");
-  }
-  const drive = await driveAuthed(config);
+  const drive = await getDrive();
 
   const response = await drive.files.create({
     requestBody: {
@@ -291,11 +340,7 @@ export async function uploadReturDataUrl(
 export async function downloadReturFile(
   fileId: string
 ): Promise<{ contentType: string; buffer: Buffer }> {
-  const config = await getReturConfigRow();
-  if (!config?.access_token) {
-    throw new Error("Akun Google Drive Retur belum terhubung");
-  }
-  const drive = await driveAuthed(config);
+  const drive = await getDrive();
 
   const response = await drive.files.get(
     { fileId, alt: "media" },
@@ -317,11 +362,7 @@ export async function downloadReturFile(
 // Hapus satu file dari folder Retur. 404 dianggap sudah terhapus (pangilan best-effort
 // dari penghapusan dokumen: foto bisa saja sudah dipindah/dihapus manual di Drive).
 export async function deleteReturFile(fileId: string): Promise<void> {
-  const config = await getReturConfigRow();
-  if (!config?.access_token) {
-    throw new Error("Akun Google Drive Retur belum terhubung");
-  }
-  const drive = await driveAuthed(config);
+  const drive = await getDrive();
   try {
     await drive.files.delete({ fileId });
   } catch (err) {

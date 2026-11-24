@@ -1,14 +1,20 @@
 import { google } from "googleapis";
 import { logger } from "./logger";
 import { getFreshOAuthClient } from "./google-drive";
+import { isServiceAccountConfigured, getServiceAccountSheets } from "./service-account";
 
 export async function getSheetStockMap(
   spreadsheetId: string,
   sheetName: string | null = null
 ): Promise<{ stockMap: Map<string, number>; fetchTimestamp: string | null }> {
-  const client = await getFreshOAuthClient();
-
-  const sheets = google.sheets({ version: "v4", auth: client });
+  // Service Account (file shared as Viewer) takes precedence; OAuth fallback (legacy).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let sheets: any;
+  if (isServiceAccountConfigured()) {
+    sheets = await getServiceAccountSheets();
+  } else {
+    sheets = google.sheets({ version: "v4", auth: await getFreshOAuthClient() });
+  }
 
   // Read columns C (material name) and K (stock value) from row 9 onward
   const dataRange = sheetName ? `${sheetName}!C9:K1000` : "C9:K1000";
