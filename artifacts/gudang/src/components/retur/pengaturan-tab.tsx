@@ -20,7 +20,6 @@ interface DriveStatus {
   email: string | null;
   tokenExpiry: string | null;
   refreshTokenPresent: boolean;
-  serviceAccount?: boolean;
 }
 
 export function PengaturanTab() {
@@ -223,37 +222,25 @@ function DrivePanel() {
         {loading ? (
           <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Mengecek status...</p>
         ) : status?.connected ? (
-          status.serviceAccount ? (
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <Badge className="bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">Service Account</Badge>
-                <span className="text-sm">{status.email ?? "(email tidak tersedia)"}</span>
-              </div>
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">Terhubung</Badge>
+              <span className="text-sm">{status.email ?? "(email tidak tersedia)"}</span>
+              <Button variant="outline" size="sm" onClick={refreshNow} disabled={refreshing}>
+                {refreshing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />} Refresh Token
+              </Button>
+              <Button variant="outline" size="sm" onClick={disconnect} disabled={disconnecting}>
+                {disconnecting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Link2Off className="h-4 w-4 mr-2" />} Putuskan
+              </Button>
+            </div>
+            {status.tokenExpiry ? (
+              <TokenCountdown expiry={new Date(status.tokenExpiry).getTime() - (Date.now() - fetchedAt.current)} now={now} />
+            ) : status.refreshTokenPresent ? (
               <p className="text-xs text-muted-foreground">
-                Autentikasi lewat Service Account (GOOGLE_SERVICE_ACCOUNT_KEY_PATH) — folder Drive & file spreadsheet harus disharing ke email SA di Google Drive/Sheets. Tidak ada token OAuth yang perlu di-refresh atau disambung ulang.
+                <span className="text-amber-600 dark:text-amber-400 font-medium">Waktu kedaluwarsa token tidak diketahui</span> — auto-refresh tetap aktif; gunakan "Refresh Token" bila simpan dokumen gagal.
               </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-3">
-                <Badge className="bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400">Terhubung</Badge>
-                <span className="text-sm">{status.email ?? "(email tidak tersedia)"}</span>
-                <Button variant="outline" size="sm" onClick={refreshNow} disabled={refreshing}>
-                  {refreshing ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />} Refresh Token
-                </Button>
-                <Button variant="outline" size="sm" onClick={disconnect} disabled={disconnecting}>
-                  {disconnecting ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Link2Off className="h-4 w-4 mr-2" />} Putuskan
-                </Button>
-              </div>
-              {status.tokenExpiry ? (
-                <TokenCountdown expiry={new Date(status.tokenExpiry).getTime() - (Date.now() - fetchedAt.current)} now={now} />
-              ) : status.refreshTokenPresent ? (
-                <p className="text-xs text-muted-foreground">
-                  <span className="text-amber-600 dark:text-amber-400 font-medium">Waktu kedaluwarsa token tidak diketahui</span> — auto-refresh tetap aktif; gunakan "Refresh Token" bila simpan dokumen gagal.
-                </p>
-              ) : null}
-            </div>
-          )
+            ) : null}
+          </div>
         ) : (
           <div className="flex flex-wrap items-center gap-3">
             <Badge variant="destructive">Belum terhubung</Badge>
