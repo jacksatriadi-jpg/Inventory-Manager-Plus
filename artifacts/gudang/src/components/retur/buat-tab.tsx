@@ -12,8 +12,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Camera, FileText, ImageOff, ImagePlus, Loader2, PackageX, Paperclip, Plus, Trash2, Building2 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
-import { DEFAULT_RESULT_OPTIONS, FormDefinition, ReturTemplateItem, readFileCompressed, returApi, useReturMaterials } from "./shared";
+import { DEFAULT_RESULT_OPTIONS, FormDefinition, ReturTemplateItem, fmtTanggal, readFileCompressed, returApi, useReturMaterials } from "./shared";
 import { MaterialPicker } from "./material-picker";
+import { clearReturDraft, draftHasContent, loadReturDraft, ReturDraft, saveReturDraft } from "./draft-store";
 
 interface ItemForm {
   label: string;
@@ -99,7 +100,9 @@ export function BuatTab() {
     (materials ?? []).find((m) => String(m.id) === String(id))?.name ?? String(id);
 
   // Muat template ceklist + definisi form untuk material milik grup gi (paralel, per grup).
-  const loadMaterialIntoGroup = (gi: number, materialId: string) => {
+  // keepSampling: saat memulihkan draft, jumlahUnit & lampiran tersimpan JANGAN direset
+  // (berbeda dengan kasus ganti material manual yang memang mengosongkan state sampling).
+  const loadMaterialIntoGroup = (gi: number, materialId: string, keepSampling = false) => {
     const token = (loadToken.current[gi] = (loadToken.current[gi] ?? 0) + 1);
     if (!materialId) {
       updateGroup(gi, { materialId: "", labels: [], units: [], cfgByLabel: {}, formDef: null, samplingMode: false, jumlahUnit: "", lampiranFiles: [], templateLoading: false, templateError: null });
@@ -131,8 +134,8 @@ export function BuatTab() {
                 })),
             formDef: fd.formKey ? fd.definition : null,
             samplingMode: fd.samplingEnabled === true,
-            jumlahUnit: "",
-            lampiranFiles: [],
+            jumlahUnit: keepSampling ? g.jumlahUnit : "",
+            lampiranFiles: keepSampling ? g.lampiranFiles : [],
             templateLoading: false,
             templateError: null,
           };
@@ -143,6 +146,82 @@ export function BuatTab() {
         updateGroup(gi, { templateLoading: false, templateError: (e as Error).message });
         toast({ title: "Gagal memuat template", description: (e as Error).message, variant: "destructive" });
       });
+  };
+
+  // ---------- DRAFT: autosave ke IndexedDB + pemulihan saat mount ----------
+  // Refresh halaman / pindah tab tidak lagi menghapus isian (permintaan Jack, Nov 2026).
+  const draftKey = user?.username ?? null;
+  const [draftInfo, setDraftInfo] = useState<{ savedAt: number } | null>(null);
+  const draftReadyRef = useRef<string | null>(null); // username yang sudah dicoba dipulihkan
+  const restoringRef = useRef(false); // autosave jangan menimpa draft sebelum restore selesai
+  const draftPayloadRef = useRef<{ tug10: string; catatan: string; groups: ReturDraft["groups"] }>({ tug10: "", catatan: "", groups: [] });
+  draftPayloadRef.current = {
+    tug10,
+    catatan,
+    groups: groups.map((g) => ({ materialId: g.materialId, units: g.units, jumlahUnit: g.jumlahUnit, lampiranFiles: g.lampiranFiles })),
+  };
+
+  const persistDraftNow = () => {
+    if (!draftKey || restoringRef.current) return;
+    const d: ReturDraft = { savedAt: Date.now(), ...draftPayloadRef.current };
+    if (draftHasContent(d)) void saveReturDraft(draftKey, d);
+    else void clearReturDraft(draftKey);
+  };
+  const persistRef = useRef(persistDraftNow);
+  persistRef.current = persistDraftNow;
+
+  // Pulihkan draft milik user ini — sekali per username, bukan per render.
+  useEffect(() => {
+    if (!draftKey || draftReadyRef.current === draftKey) return;
+    draftReadyRef.current = draftKey;
+    restoringRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      const draft = await loadReturDraft(draftKey);
+      restoringRef.current = false;
+      if (cancelled || !draft || !draftHasContent(draft)) return;
+      const restored: MatGroup[] = (draft.groups ?? []).filter((g) => g.materialId).map((g) => ({
+        ...emptyGroup(),
+        materialId: g.materialId,
+        units: (g.units ?? []).map((u) => ({ label: u.label, items: u.items ?? [], formData: u.formData ?? {} })),
+        jumlahUnit: g.jumlahUnit ?? "",
+        lampiranFiles: g.lampiranFiles ?? [],
+      }));
+      if (restored.length === 0) return;
+      setTug10(draft.tug10 ?? "");
+      setCatatan(draft.catatan ?? "");
+      setGroups(restored);
+      setDraftInfo({ savedAt: draft.savedAt ?? Date.now() });
+      // Template dimuat ulang per material; isian unit lama dipertahankan (merge by label).
+      restored.forEach((g, gi) => loadMaterialIntoGroup(gi, g.materialId, true));
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftKey]);
+
+  // Autosave dengan debounce 800 ms; form kosong = hapus draft.
+  useEffect(() => {
+    if (!draftKey || restoringRef.current) return;
+    const t = setTimeout(persistDraftNow, 800);
+    return () => clearTimeout(t);
+  }, [tug10, catatan, groups, draftKey]);
+
+  // Flush saat halaman ditutup atau tab dipindah (penting di HP).
+  useEffect(() => {
+    const flush = () => persistRef.current();
+    const onVis = () => { if (document.visibilityState === "hidden") flush(); };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, []);
+
+  const discardDraft = () => {
+    if (draftKey) void clearReturDraft(draftKey);
+    groups.forEach((_, gi) => { loadToken.current[gi] = (loadToken.current[gi] ?? 0) + 1; });
+    setTug10(""); setCatatan(""); setGroups([emptyGroup()]); setDraftInfo(null);
   };
 
   const addGroup = () => {
@@ -272,6 +351,8 @@ export function BuatTab() {
       });
       toast({ title: "Dokumen retur tersimpan", description: "Status: sudah dicek pengawas, menunggu verifikasi gudang. Formulir bisa dicetak dari tab Riwayat — pilih dokumen, klik Cetak Formulir." });
       setTug10(""); setCatatan(""); setGroups([emptyGroup()]);
+      if (draftKey) void clearReturDraft(draftKey);
+      setDraftInfo(null);
     } catch (e) {
       toast({ title: "Gagal menyimpan dokumen", description: (e as Error).message, variant: "destructive" });
     } finally {
@@ -290,6 +371,17 @@ export function BuatTab() {
             <p className="text-sm font-semibold text-emerald-800 dark:text-emerald-300">Selamat datang, {user?.username} 👋</p>
             <p className="text-xs text-emerald-700/80 dark:text-emerald-400/80">{greetingCompany}</p>
           </div>
+        </div>
+      )}
+      {draftInfo && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-3 flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-amber-800 dark:text-amber-300">
+            Draft retur dari perangkat ini dipulihkan (tersimpan {fmtTanggal(new Date(draftInfo.savedAt).toISOString())}).
+            Isian otomatis disimpan kembali &mdash; halaman boleh di-refresh.
+          </p>
+          <Button variant="outline" size="sm" onClick={discardDraft}>
+            <Trash2 className="h-4 w-4 mr-1" /> Buang draft &amp; kosongkan
+          </Button>
         </div>
       )}
       <div className="grid gap-6 lg:grid-cols-2">
