@@ -187,10 +187,10 @@ export function BuatTab() {
         jumlahUnit: g.jumlahUnit ?? "",
         lampiranFiles: g.lampiranFiles ?? [],
       }));
-      if (restored.length === 0) return;
+      // tug10/catatan tetap dipulihkan walau belum ada material yang dipilih.
       setTug10(draft.tug10 ?? "");
       setCatatan(draft.catatan ?? "");
-      setGroups(restored);
+      setGroups(restored.length > 0 ? restored : [emptyGroup()]);
       setDraftInfo({ savedAt: draft.savedAt ?? Date.now() });
       // Template dimuat ulang per material; isian unit lama dipertahankan (merge by label).
       restored.forEach((g, gi) => loadMaterialIntoGroup(gi, g.materialId, true));
