@@ -208,7 +208,10 @@ export function BuatTab() {
       } else if (localOk) { draft = localOk; }
       else if (remoteOk) { draft = remoteOk; fromServer = true; }
       if (cancelled) { restoringRef.current = false; return; }
-      if (draft) lastPushSigRef.current = photoSignature(draft);
+      // Hanya draft dari SERVER yang boleh dianggap "sudah terkirim" (push berikutnya boleh lite).
+      // Draft dari IndexedDB lokal (mis. dibuat sebelum fitur sync / server dihapus) WAJIB push
+      // penuh sekali — kalau tidak, foto tidak pernah naik karena server tidak punya apa2 utk di-merge.
+      if (draft && fromServer) lastPushSigRef.current = photoSignature(draft);
       if (fromServer && draft) void saveReturDraft(draftKey, draft);
       restoringRef.current = false;
       if (cancelled || !draft) return;
