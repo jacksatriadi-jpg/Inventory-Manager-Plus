@@ -1,9 +1,9 @@
 import fs from "fs";
 import path from "path";
-import { db, usersTable, materialsTable, scanInTable, scanItemsTable, scanOutTable, nonScanMasukTable, nonScanKeluarTable, materialBekasGaransiTable, materialBekasUsulHapusTable } from "@workspace/db";
 import { pool } from "@workspace/db";
 import { logger } from "./logger";
 import { uploadBackupToDrive } from "./google-drive";
+import { collectBackupData } from "./backup-data";
 
 export const BACKUP_DIR = path.resolve(process.cwd(), "backups");
 
@@ -16,23 +16,14 @@ export function ensureBackupDir() {
 export async function runBackupToFile(): Promise<string> {
   ensureBackupDir();
 
-  const [users, materials, scanIns, scanItems, scanOuts, nonScanMasuk, nonScanKeluar, materialBekasGaransi, materialBekasUsulHapus] = await Promise.all([
-    db.select().from(usersTable),
-    db.select().from(materialsTable),
-    db.select().from(scanInTable),
-    db.select().from(scanItemsTable),
-    db.select().from(scanOutTable),
-    db.select().from(nonScanMasukTable),
-    db.select().from(nonScanKeluarTable),
-    db.select().from(materialBekasGaransiTable),
-    db.select().from(materialBekasUsulHapusTable),
-  ]);
+  // v3: seluruh tabel aplikasi ikut ter-backup (lihat BACKUP_TABLES di lib/backup-data.ts).
+  const data = await collectBackupData();
 
   const backup = {
     exportedAt: new Date().toISOString(),
-    version: 2,
+    version: 3,
     autoBackup: true,
-    data: { users, materials, scanIns, scanItems, scanOuts, nonScanMasuk, nonScanKeluar, materialBekasGaransi, materialBekasUsulHapus },
+    data,
   };
 
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);

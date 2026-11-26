@@ -1357,6 +1357,10 @@ function BackupTab() {
                 <span>Sesi scan-out:</span><span className="font-mono font-bold text-foreground">{restoreResult.scanOuts}</span>
                 <span>Material masuk:</span><span className="font-mono font-bold text-foreground">{restoreResult.nonScanMasuk}</span>
                 <span>Material keluar:</span><span className="font-mono font-bold text-foreground">{restoreResult.nonScanKeluar}</span>
+                {restoreResult.returDokumen !== undefined && (<><span>Dokumen retur:</span><span className="font-mono font-bold text-foreground">{restoreResult.returDokumen}</span></>)}
+                {restoreResult.kasTransaksi !== undefined && (<><span>Transaksi kas:</span><span className="font-mono font-bold text-foreground">{restoreResult.kasTransaksi}</span></>)}
+                {restoreResult.lemburAbsensi !== undefined && (<><span>Absensi lembur:</span><span className="font-mono font-bold text-foreground">{restoreResult.lemburAbsensi}</span></>)}
+                {restoreResult.totalRows !== undefined && (<><span>Total (semua tabel):</span><span className="font-mono font-bold text-foreground">{restoreResult.totalRows} baris / {restoreResult.tables} tabel</span></>)}
               </div>
             </div>
           )}

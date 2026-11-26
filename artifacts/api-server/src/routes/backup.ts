@@ -1,11 +1,10 @@
 import { Router, type IRouter } from "express";
-import { sql } from "drizzle-orm";
 import fs from "fs";
 import path from "path";
-import { db, usersTable, materialsTable, scanInTable, scanItemsTable, scanOutTable, nonScanMasukTable, nonScanKeluarTable, materialBekasGaransiTable, materialBekasUsulHapusTable } from "@workspace/db";
 import { pool } from "@workspace/db";
 import { parseToken } from "../lib/auth";
 import { runBackupToFile, listBackupFiles, getBackupFilePath, ensureBackupDir } from "../lib/backup-scheduler";
+import { applyBackupData, collectBackupData, isLegacyBackupData, legacyShapedResult } from "../lib/backup-data";
 import { getAuthUrl, exchangeCodeAndSave, disconnectGoogleDrive, getGoogleDriveStatus } from "../lib/google-drive";
 
 const router: IRouter = Router();
@@ -37,32 +36,12 @@ router.get("/backup", async (req, res): Promise<void> => {
   if (!requireMaster(req, res)) return;
 
   try {
-    const [users, materials, scanIns, scanItems, scanOuts, nonScanMasuk, nonScanKeluar, materialBekasGaransi, materialBekasUsulHapus] = await Promise.all([
-      db.select().from(usersTable),
-      db.select().from(materialsTable),
-      db.select().from(scanInTable),
-      db.select().from(scanItemsTable),
-      db.select().from(scanOutTable),
-      db.select().from(nonScanMasukTable),
-      db.select().from(nonScanKeluarTable),
-      db.select().from(materialBekasGaransiTable),
-      db.select().from(materialBekasUsulHapusTable),
-    ]);
-
+    // v3: dump generik SEMUA tabel aplikasi (lihat BACKUP_TABLES di lib/backup-data.ts).
+    const data = await collectBackupData();
     const backup = {
       exportedAt: new Date().toISOString(),
-      version: 2,
-      data: {
-        users,
-        materials,
-        scanIns,
-        scanItems,
-        scanOuts,
-        nonScanMasuk,
-        nonScanKeluar,
-        materialBekasGaransi,
-        materialBekasUsulHapus,
-      },
+      version: 3,
+      data,
     };
 
     res.setHeader("Content-Type", "application/json");
@@ -83,6 +62,24 @@ router.post("/restore", async (req, res): Promise<void> => {
       return;
     }
 
+    // Format v3 (hasil collectBackupData): key = nama tabel, pulihkan generik semua tabel.
+    if (!isLegacyBackupData(data)) {
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const { perTable, totalRows } = await applyBackupData(client, data);
+        await client.query("COMMIT");
+        res.json({ success: true, restored: legacyShapedResult(perTable, totalRows) });
+      } catch (txErr) {
+        await client.query("ROLLBACK");
+        throw txErr;
+      } finally {
+        client.release();
+      }
+      return;
+    }
+
+    // Format lama (v1/v2): hanya 9 tabel awal — path lama tetap didukung utk file lawas.
     const { users = [], materials = [], scanIns = [], scanItems = [], scanOuts = [], nonScanMasuk = [], nonScanKeluar = [], materialBekasGaransi = [], materialBekasUsulHapus = [] } = data;
 
     let insertedUsers = 0, insertedMaterials = 0, insertedScanIns = 0;
