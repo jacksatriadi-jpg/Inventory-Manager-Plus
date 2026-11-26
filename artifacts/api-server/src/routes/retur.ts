@@ -660,6 +660,18 @@ router.put("/retur/template/:materialId", async (req, res): Promise<void> => {
     // tipe "teks" = input form bebas; opsi tidak relevan -> paksa null.
     cleaned.push({ label, options: tipeInput === "teks" ? null : options, tipeInput, fwP: it.fotoWajibPengawas !== false, fwG: it.fotoWajibGudang !== false });
   }
+  // Label item template harus unik — duplikat membuat retur gagal disimpan (constraint retur_item_cek).
+  const seenLabels = new Set<string>();
+  const dupLabels = new Set<string>();
+  for (const it of cleaned) {
+    const key = it.label.toLowerCase();
+    if (seenLabels.has(key)) dupLabels.add(it.label);
+    seenLabels.add(key);
+  }
+  if (dupLabels.size > 0) {
+    res.status(400).json({ error: `Label item template tidak boleh duplikat: ${[...dupLabels].join(", ")}` });
+    return;
+  }
 
   const mat = await pool.query("SELECT id FROM materials WHERE id = $1", [materialId]);
   if (mat.rows.length === 0) { res.status(404).json({ error: "Material tidak ditemukan" }); return; }
@@ -922,6 +934,18 @@ router.post("/retur", async (req, res): Promise<void> => {
 
     const cfg = await getTemplateConfig(materialId as number); // sudah lolos guard Number.isInteger
     const formTpl = await getFormTemplate(materialId as number); // null = material tanpa template formulir
+    // Template dengan label duplikat membuat dokumen gagal disimpan (constraint retur_item_cek).
+    if (cfg.size > 0) {
+      const dupRows = await pool.query(
+        "SELECT label, count(*) AS n FROM retur_template_item WHERE material_id = $1 GROUP BY label HAVING count(*) > 1",
+        [materialId],
+      );
+      if (dupRows.rows.length > 0) {
+        const dupLabels = dupRows.rows.map((r) => r.label as string).join(", ");
+        res.status(400).json({ error: `Material "${materialName}" — template ceklist memiliki label duplikat: ${dupLabels}. Hubungi admin untuk memperbaiki template sebelum membuat retur` });
+        return;
+      }
+    }
     // Material tanpa template tersimpan DAN tanpa formulir tertaut akan menghasilkan
     // dokumen retur tanpa data berarti — tolak sejak awal (bug dokumen #34/#36).
     // Catatan: presetForMaterialName adalah fallback generik, BUKAN konfigurasi template.
