@@ -1189,12 +1189,13 @@ router.put("/retur/draft", async (req, res): Promise<void> => {
   const body = bodyObject(req);
   const payload = body.payload;
   if (!draftShapeOk(payload)) { res.status(400).json({ error: "Payload draft tidak valid" }); return; }
-  const serialized = JSON.stringify(payload);
-  if (serialized.length > DRAFT_MAX_BYTES) { res.status(413).json({ error: "Draft terlalu besar untuk disinkronkan" }); return; }
+  if (JSON.stringify(payload).length > DRAFT_MAX_BYTES) { res.status(413).json({ error: "Draft terlalu besar untuk disinkronkan" }); return; }
   if (body.mergePhotos === true) {
     const prev = await pool.query("SELECT payload FROM retur_draft WHERE user_id = $1", [actor.id]);
     if (prev.rows.length > 0) mergeDraftPhotos(payload, prev.rows[0].payload);
   }
+  // Serialize SETELAH merge — lite push harus menyimpan foto hasil merge, bukan yang kosong.
+  const serialized = JSON.stringify(payload);
   const r = await pool.query(
     `INSERT INTO retur_draft (user_id, payload, updated_at) VALUES ($1, $2::jsonb, NOW())
      ON CONFLICT (user_id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()
