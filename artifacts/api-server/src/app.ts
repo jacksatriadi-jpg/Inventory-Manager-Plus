@@ -393,6 +393,15 @@ async function setupDatabase() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       );
     `);
+    // Draft "Buat Retur" lintas perangkat: salinan server dari draft IndexedDB FE
+    // (payload = struktur ReturDraft, foto inline sbg data URL). Satu baris per user.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS retur_draft (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        payload JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+    `);
 
     logger.info("Database tables ready");
 

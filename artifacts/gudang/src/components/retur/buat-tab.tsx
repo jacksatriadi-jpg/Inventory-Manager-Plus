@@ -14,7 +14,7 @@ import { Camera, FileText, ImageOff, ImagePlus, Loader2, PackageX, Paperclip, Pl
 import { useAuth } from "@/lib/auth";
 import { DEFAULT_RESULT_OPTIONS, FormDefinition, ReturTemplateItem, fmtTanggal, readFileCompressed, returApi, useReturMaterials } from "./shared";
 import { MaterialPicker } from "./material-picker";
-import { clearReturDraft, draftHasContent, loadReturDraft, ReturDraft, saveReturDraft } from "./draft-store";
+import { clearReturDraft, deleteServerDraft, draftHasContent, fetchServerDraft, liteDraft, loadReturDraft, photoSignature, pushServerDraft, ReturDraft, saveReturDraft } from "./draft-store";
 
 interface ItemForm {
   label: string;
@@ -151,9 +151,10 @@ export function BuatTab() {
   // ---------- DRAFT: autosave ke IndexedDB + pemulihan saat mount ----------
   // Refresh halaman / pindah tab tidak lagi menghapus isian (permintaan Jack, Nov 2026).
   const draftKey = user?.username ?? null;
-  const [draftInfo, setDraftInfo] = useState<{ savedAt: number } | null>(null);
+  const [draftInfo, setDraftInfo] = useState<{ savedAt: number; fromServer?: boolean } | null>(null);
   const draftReadyRef = useRef<string | null>(null); // username yang sudah dicoba dipulihkan
   const restoringRef = useRef(false); // autosave jangan menimpa draft sebelum restore selesai
+  const lastPushSigRef = useRef<string | null>(null); // signature foto draft terakhir yang sukses dikirim ke server
   const draftPayloadRef = useRef<{ tug10: string; catatan: string; groups: ReturDraft["groups"] }>({ tug10: "", catatan: "", groups: [] });
   draftPayloadRef.current = {
     tug10,
@@ -161,25 +162,56 @@ export function BuatTab() {
     groups: groups.map((g) => ({ materialId: g.materialId, units: g.units, jumlahUnit: g.jumlahUnit, lampiranFiles: g.lampiranFiles })),
   };
 
+  const buildDraftNow = (): ReturDraft => ({ savedAt: Date.now(), ...draftPayloadRef.current });
+
   const persistDraftNow = () => {
     if (!draftKey || restoringRef.current) return;
-    const d: ReturDraft = { savedAt: Date.now(), ...draftPayloadRef.current };
+    const d = buildDraftNow();
     if (draftHasContent(d)) void saveReturDraft(draftKey, d);
     else void clearReturDraft(draftKey);
   };
   const persistRef = useRef(persistDraftNow);
   persistRef.current = persistDraftNow;
 
+  // Sinkron ke server (debounce lebih panjang — payload bisa berisi foto).
+  // Lite push dipakai selama susunan foto tidak berubah (hemat kuota HP).
+  const pushDraftToServer = () => {
+    if (!draftKey || restoringRef.current) return;
+    const d = buildDraftNow();
+    if (!draftHasContent(d)) return;
+    const sig = photoSignature(d);
+    const lite = lastPushSigRef.current !== null && sig === lastPushSigRef.current;
+    void pushServerDraft(lite ? liteDraft(d) : d, lite).then((ok) => {
+      if (ok) lastPushSigRef.current = sig;
+    });
+  };
+  const pushRef = useRef(pushDraftToServer);
+  pushRef.current = pushDraftToServer;
+
   // Pulihkan draft milik user ini — sekali per username, bukan per render.
+  // Sumber: IndexedDB lokal DAN salinan server; yang lebih baru dipakai
+  // (draft dari device lain ikut dipulihkan, lalu di-cache ke IndexedDB).
   useEffect(() => {
     if (!draftKey || draftReadyRef.current === draftKey) return;
     draftReadyRef.current = draftKey;
     restoringRef.current = true;
     let cancelled = false;
     void (async () => {
-      const draft = await loadReturDraft(draftKey);
+      const [local, remote] = await Promise.all([loadReturDraft(draftKey), fetchServerDraft()]);
+      const localOk = local && draftHasContent(local) ? local : null;
+      const remoteOk = remote && draftHasContent(remote) ? remote : null;
+      let draft: ReturDraft | null = null;
+      let fromServer = false;
+      if (localOk && remoteOk) {
+        fromServer = (remoteOk.savedAt ?? 0) > (localOk.savedAt ?? 0);
+        draft = fromServer ? remoteOk : localOk;
+      } else if (localOk) { draft = localOk; }
+      else if (remoteOk) { draft = remoteOk; fromServer = true; }
+      if (cancelled) { restoringRef.current = false; return; }
+      if (draft) lastPushSigRef.current = photoSignature(draft);
+      if (fromServer && draft) void saveReturDraft(draftKey, draft);
       restoringRef.current = false;
-      if (cancelled || !draft || !draftHasContent(draft)) return;
+      if (cancelled || !draft) return;
       const restored: MatGroup[] = (draft.groups ?? []).filter((g) => g.materialId).map((g) => ({
         ...emptyGroup(),
         materialId: g.materialId,
@@ -191,7 +223,7 @@ export function BuatTab() {
       setTug10(draft.tug10 ?? "");
       setCatatan(draft.catatan ?? "");
       setGroups(restored.length > 0 ? restored : [emptyGroup()]);
-      setDraftInfo({ savedAt: draft.savedAt ?? Date.now() });
+      setDraftInfo({ savedAt: draft.savedAt ?? Date.now(), fromServer });
       // Template dimuat ulang per material; isian unit lama dipertahankan (merge by label).
       restored.forEach((g, gi) => loadMaterialIntoGroup(gi, g.materialId, true));
     })();
@@ -199,10 +231,17 @@ export function BuatTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftKey]);
 
-  // Autosave dengan debounce 800 ms; form kosong = hapus draft.
+  // Autosave lokal dengan debounce 800 ms; form kosong = hapus draft.
   useEffect(() => {
     if (!draftKey || restoringRef.current) return;
     const t = setTimeout(persistDraftNow, 800);
+    return () => clearTimeout(t);
+  }, [tug10, catatan, groups, draftKey]);
+
+  // Autosave server dengan debounce 4 s (ringan untuk kuota; foto hanya naik saat berubah).
+  useEffect(() => {
+    if (!draftKey || restoringRef.current) return;
+    const t = setTimeout(() => pushRef.current(), 4000);
     return () => clearTimeout(t);
   }, [tug10, catatan, groups, draftKey]);
 
@@ -220,6 +259,8 @@ export function BuatTab() {
 
   const discardDraft = () => {
     if (draftKey) void clearReturDraft(draftKey);
+    lastPushSigRef.current = null;
+    void deleteServerDraft();
     groups.forEach((_, gi) => { loadToken.current[gi] = (loadToken.current[gi] ?? 0) + 1; });
     setTug10(""); setCatatan(""); setGroups([emptyGroup()]); setDraftInfo(null);
   };
@@ -352,6 +393,7 @@ export function BuatTab() {
       toast({ title: "Dokumen retur tersimpan", description: "Status: sudah dicek pengawas, menunggu verifikasi gudang. Formulir bisa dicetak dari tab Riwayat — pilih dokumen, klik Cetak Formulir." });
       setTug10(""); setCatatan(""); setGroups([emptyGroup()]);
       if (draftKey) void clearReturDraft(draftKey);
+      lastPushSigRef.current = null; // server sudah menghapus draft ini juga
       setDraftInfo(null);
     } catch (e) {
       toast({ title: "Gagal menyimpan dokumen", description: (e as Error).message, variant: "destructive" });
@@ -376,7 +418,7 @@ export function BuatTab() {
       {draftInfo && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-3 flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-amber-800 dark:text-amber-300">
-            Draft retur dari perangkat ini dipulihkan (tersimpan {fmtTanggal(new Date(draftInfo.savedAt).toISOString())}).
+            Draft retur {draftInfo.fromServer ? "dari perangkat lain" : "dari perangkat ini"} dipulihkan (tersimpan {fmtTanggal(new Date(draftInfo.savedAt).toISOString())}).
             Isian otomatis disimpan kembali &mdash; halaman boleh di-refresh.
           </p>
           <Button variant="outline" size="sm" onClick={discardDraft}>

@@ -2,6 +2,10 @@
 // pindah tab tidak menghapus isian. Foto & lampiran (data URL, bisa puluhan MB total)
 // melebihi kuota localStorage (~5MB), jadi pakai IndexedDB. Semua operasi best-effort:
 // gagal simpan (private mode, kuota) tidak boleh mengganggu form.
+// Selain itu draft disinkronkan ke server (returApi /draft) supaya device lain bisa
+// memuat draft yang sama (permintaan Jack, Nov 2026).
+import { returApi } from "./shared";
+
 export interface DraftItem { label: string; hasil: string; catatan: string; foto: string }
 export interface DraftUnit { label: string; items: DraftItem[]; formData: Record<string, string> }
 export interface DraftGroup {
@@ -63,6 +67,65 @@ export async function clearReturDraft(username: string): Promise<void> {
   } catch {
     /* abaikan */
   }
+}
+
+// ---------- Sinkronisasi ke server (lintas perangkat) ----------
+// Semua best-effort: server tidak reachable / draft terlalu besar => draft lokal tetap jalan.
+
+export async function fetchServerDraft(): Promise<ReturDraft | null> {
+  try {
+    const r = await returApi<{ payload: ReturDraft | null }>("/draft");
+    return r.payload && Array.isArray(r.payload.groups) ? r.payload : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function pushServerDraft(draft: ReturDraft, mergePhotos: boolean): Promise<boolean> {
+  try {
+    await returApi("/draft", { method: "PUT", body: JSON.stringify({ payload: draft, mergePhotos }) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteServerDraft(): Promise<void> {
+  try {
+    await returApi("/draft", { method: "DELETE" });
+  } catch {
+    /* abaikan */
+  }
+}
+
+// Signature susunan foto/lampiran (jumlah + panjang data URL). Selama signature sama,
+// push "lite" (tanpa data URL) aman: server mengisi kembali foto dari salinan tersimpan
+// pada posisi yang identik. Perubahan foto apa pun => signature beda => push penuh.
+export function photoSignature(d: ReturDraft): string {
+  const parts: string[] = [String((d.tug10 ?? "").length)];
+  for (const g of d.groups ?? []) {
+    parts.push("L" + (g.lampiranFiles ?? []).map((f) => `${f.name}:${f.dataUrl.length}`).join(","));
+    for (const u of g.units ?? []) {
+      parts.push("U" + (u.items ?? []).map((it) => String((it.foto ?? "").length)).join(","));
+    }
+  }
+  return parts.join("|");
+}
+
+// Salinan ringan untuk lite push: semua data URL dikosongkan (struktur tetap identik).
+export function liteDraft(d: ReturDraft): ReturDraft {
+  return {
+    ...d,
+    tug10: "",
+    groups: (d.groups ?? []).map((g) => ({
+      ...g,
+      lampiranFiles: (g.lampiranFiles ?? []).map((f) => ({ ...f, dataUrl: "" })),
+      units: (g.units ?? []).map((u) => ({
+        ...u,
+        items: (u.items ?? []).map((it) => ({ ...it, foto: "" })),
+      })),
+    })),
+  };
 }
 
 // Draft dianggap berisi bila ada minimal satu isian nyata (foto, nomor TUG10, material,

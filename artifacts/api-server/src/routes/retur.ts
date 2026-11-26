@@ -1113,8 +1113,103 @@ router.post("/retur", async (req, res): Promise<void> => {
     client.release();
   }
 
+  // Dokumen tersimpan → draft user ini tidak relevan lagi di perangkat mana pun.
+  await pool.query("DELETE FROM retur_draft WHERE user_id = $1", [actor.id]);
+
   const detail = await buildReturDetail(dokumenId);
   res.status(201).json(detail);
+});
+
+// ─── Draft "Buat Retur" lintas perangkat ──────────────────────────────────────
+// FE menyimpan draft di IndexedDB (offline-first) dan menyinkronkan salinan ke sini
+// supaya device lain bisa memuat draft yang sama. payload = struktur ReturDraft FE.
+// mergePhotos=true ("lite push"): foto/lampiran dikirim kosong dan diisi kembali dari
+// salinan tersimpan — FE hanya mengirim lite bila susunan foto TIDAK berubah
+// (photoSignature cocok), jadi posisi merge selalu aman.
+const DRAFT_MAX_BYTES = 60_000_000;
+const DRAFT_MAX_AGE_DAYS = 14;
+
+function draftShapeOk(p: unknown): p is Record<string, unknown> {
+  return !!p && typeof p === "object" && !Array.isArray(p) && Array.isArray((p as Record<string, unknown>).groups);
+}
+
+function mergeDraftPhotos(incoming: Record<string, unknown>, stored: unknown): void {
+  if (!stored || typeof stored !== "object") return;
+  const s = stored as Record<string, unknown>;
+  if (!incoming.tug10 && typeof s.tug10 === "string") incoming.tug10 = s.tug10;
+  const sg0 = s.groups;
+  const ig0 = incoming.groups;
+  if (!Array.isArray(sg0) || !Array.isArray(ig0)) return;
+  for (let gi = 0; gi < ig0.length; gi++) {
+    const ig = ig0[gi] as Record<string, unknown> | null;
+    const sg = gi < sg0.length ? (sg0[gi] as Record<string, unknown> | null) : null;
+    if (!ig || !sg || typeof ig !== "object" || typeof sg !== "object") continue;
+    const il = Array.isArray(ig.lampiranFiles) ? (ig.lampiranFiles as Record<string, unknown>[]) : [];
+    const sl = Array.isArray(sg.lampiranFiles) ? (sg.lampiranFiles as Record<string, unknown>[]) : [];
+    for (let li = 0; li < il.length; li++) {
+      const item = il[li];
+      const src = li < sl.length ? sl[li] : undefined;
+      if (item && !item.dataUrl && src && typeof src.dataUrl === "string") item.dataUrl = src.dataUrl;
+    }
+    const iu = Array.isArray(ig.units) ? (ig.units as Record<string, unknown>[]) : [];
+    const su = Array.isArray(sg.units) ? (sg.units as Record<string, unknown>[]) : [];
+    for (let ui = 0; ui < iu.length; ui++) {
+      const iUnit = iu[ui];
+      const sUnit = ui < su.length ? (su[ui] as Record<string, unknown> | null) : null;
+      if (!iUnit || !sUnit || typeof iUnit !== "object" || typeof sUnit !== "object") continue;
+      const ii = Array.isArray(iUnit.items) ? (iUnit.items as Record<string, unknown>[]) : [];
+      const si = Array.isArray(sUnit.items) ? (sUnit.items as Record<string, unknown>[]) : [];
+      for (let k = 0; k < ii.length; k++) {
+        const it = ii[k];
+        const src = k < si.length ? si[k] : undefined;
+        if (it && !it.foto && src && typeof src.foto === "string") it.foto = src.foto;
+      }
+    }
+  }
+}
+
+// GET /api/retur/draft — salinan draft user ini (null bila tidak ada / sudah basi).
+router.get("/retur/draft", async (req, res): Promise<void> => {
+  const actor = await requireReturUser(req, res);
+  if (!actor) return;
+  // Draft basi dibuang saat disentuh — tanpa cron.
+  await pool.query(
+    "DELETE FROM retur_draft WHERE user_id = $1 AND updated_at < NOW() - ($2 || ' days')::interval",
+    [actor.id, String(DRAFT_MAX_AGE_DAYS)],
+  );
+  const r = await pool.query("SELECT payload, updated_at FROM retur_draft WHERE user_id = $1", [actor.id]);
+  if (r.rows.length === 0) { res.json({ payload: null }); return; }
+  res.json({ payload: r.rows[0].payload, updatedAt: r.rows[0].updated_at });
+});
+
+// PUT /api/retur/draft — simpan/perbarui draft (last-write-wins antar perangkat).
+router.put("/retur/draft", async (req, res): Promise<void> => {
+  const actor = await requireReturUser(req, res);
+  if (!actor) return;
+  const body = bodyObject(req);
+  const payload = body.payload;
+  if (!draftShapeOk(payload)) { res.status(400).json({ error: "Payload draft tidak valid" }); return; }
+  const serialized = JSON.stringify(payload);
+  if (serialized.length > DRAFT_MAX_BYTES) { res.status(413).json({ error: "Draft terlalu besar untuk disinkronkan" }); return; }
+  if (body.mergePhotos === true) {
+    const prev = await pool.query("SELECT payload FROM retur_draft WHERE user_id = $1", [actor.id]);
+    if (prev.rows.length > 0) mergeDraftPhotos(payload, prev.rows[0].payload);
+  }
+  const r = await pool.query(
+    `INSERT INTO retur_draft (user_id, payload, updated_at) VALUES ($1, $2::jsonb, NOW())
+     ON CONFLICT (user_id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()
+     RETURNING updated_at`,
+    [actor.id, serialized],
+  );
+  res.json({ ok: true, updatedAt: r.rows[0].updated_at });
+});
+
+// DELETE /api/retur/draft — buang draft (tombol "Buang draft & kosongkan").
+router.delete("/retur/draft", async (req, res): Promise<void> => {
+  const actor = await requireReturUser(req, res);
+  if (!actor) return;
+  await pool.query("DELETE FROM retur_draft WHERE user_id = $1", [actor.id]);
+  res.json({ ok: true });
 });
 
 // ─── GET /api/retur — daftar dokumen (gudang: semua; selain gudang: milik sendiri)
