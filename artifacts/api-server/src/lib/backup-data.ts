@@ -76,17 +76,28 @@ export async function applyBackupData(
       const placeholders = cols.map((_, i) => `$${i + 1}`).join(",");
       await client.query(
         `INSERT INTO ${quoteId(t)} (${cols.map(quoteId).join(",")}) VALUES (${placeholders})`,
-        cols.map((c) => row[c]),
+        // Array dikirim sebagai JSON string: tanpa ini driver pg mengirim literal
+        // array PG (`{a,b}`) yang ditolak kolom jsonb (mis. users.menu_access).
+        cols.map((c) => (Array.isArray(row[c]) ? JSON.stringify(row[c]) : row[c])),
       );
       n++;
     }
-    const seq = await client.query("SELECT pg_get_serial_sequence($1, 'id') AS s", [t]);
-    const seqName = seq.rows[0]?.s as string | null;
-    if (seqName) {
-      await client.query(
-        `SELECT setval($1, (SELECT COALESCE(MAX(id), 0) + 1 FROM ${quoteId(t)}), false)`,
-        [seqName],
-      );
+    // Reset sequence utk tabel ber-id serial. Cek eksistensi kolom dulu:
+    // pg_get_serial_sequence MELEMPAR utk kolom tak ada, dan error di dalam
+    // transaction membatalkan seluruh transaksi.
+    const hasId = await client.query(
+      "SELECT 1 FROM information_schema.columns WHERE table_name = $1 AND column_name = 'id'",
+      [t],
+    );
+    if (hasId.rowCount) {
+      const seq = await client.query("SELECT pg_get_serial_sequence($1, 'id') AS s", [t]);
+      const seqName = seq.rows[0]?.s as string | null;
+      if (seqName) {
+        await client.query(
+          `SELECT setval($1, (SELECT COALESCE(MAX(id), 0) + 1 FROM ${quoteId(t)}), false)`,
+          [seqName],
+        );
+      }
     }
     perTable[t] = n;
     totalRows += n;
