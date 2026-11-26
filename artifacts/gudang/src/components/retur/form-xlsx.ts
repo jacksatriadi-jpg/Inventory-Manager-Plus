@@ -215,6 +215,37 @@ function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: Retur
     ws.mergeCells(`B${r}:H${r}`); cell("B", sec.judul, { bold: true, border: true });
     rowCells(ws, r, "C", "H", (a) => { ws.getCell(a).border = BORDER; });
     r++;
+
+    // ── Mode JUMLAH (revisi form kWh/MCB): tabel ringkas, bukan daftar item checklist ──
+    if (sec.jumlah) {
+      const cols = sec.jumlahCols ?? ["ARUS", "JUMLAH", "KETERANGAN"];
+      const h1 = r, h2 = r + 1;
+      cell("B", cols[0] ?? "", { bold: true, border: true, align: { horizontal: "center", vertical: "middle", wrapText: true } });
+      ws.mergeCells(`B${h1}:B${h2}`);
+      ws.getCell(`B${h2}`).border = BORDER;
+      cell("C", cols[1] ?? "", { bold: true, border: true, align: { horizontal: "center", vertical: "middle", wrapText: true } });
+      ws.mergeCells(`C${h1}:C${h2}`);
+      ws.getCell(`C${h2}`).border = BORDER;
+      cell("D", cols[2] ?? "", { bold: true, border: true, align: { horizontal: "center", vertical: "middle", wrapText: true } });
+      ws.mergeCells(`D${h1}:F${h2}`);
+      rowCells(ws, h1, "E", "F", (a) => { ws.getCell(a).border = BORDER; });
+      rowCells(ws, h2, "E", "F", (a) => { ws.getCell(a).border = BORDER; });
+      ws.getCell(`D${h2}`).border = BORDER;
+      r = h2 + 1;
+      const jumlahRows = sec.jumlahRows?.length ? sec.jumlahRows : [""];
+      for (const lbl of jumlahRows) {
+        cell("B", lbl, { border: true, align: { horizontal: "center", vertical: "middle" } });
+        cell("C", "", { border: true, align: { horizontal: "center", vertical: "middle" } });
+        cell("D", "", { border: true, align: { horizontal: "center", vertical: "middle" } });
+        ws.mergeCells(`D${r}:F${r}`);
+        ws.getCell(`E${r}`).border = BORDER;
+        ws.getCell(`F${r}`).border = BORDER;
+        r++;
+      }
+      r += 2;
+      continue;
+    }
+
     const hR = r;
     cell("B", "NO", { bold: true, border: true, align: { horizontal: "center" } });
     cell("C", "MATA UJI", { bold: true, border: true, align: { horizontal: "center" } });
@@ -304,40 +335,42 @@ function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: Retur
   }
 
   // ── Seksi kesimpulan (huruf setelah seksi pemeriksaan terakhir) ────────────────
-  const nextKode = String.fromCharCode((def.sections[def.sections.length - 1]?.kode.charCodeAt(0) ?? 66) + 1);
-  cell("A", nextKode, { border: true, align: { horizontal: "center", vertical: "top" } });
-  ws.mergeCells(`B${r}:H${r}`); cell("B", "KESIMPULAN", { bold: true, border: true });
-  rowCells(ws, r, "C", "H", (a) => { ws.getCell(a).border = BORDER; });
-  r++;
-
   const fk = unit.formKeputusan;
-  if (def.kesimpulan?.mode === "meter") {
-    for (const opt of def.kesimpulan.options) {
-      const meterVal = fk?.[opt.meterKey as keyof typeof fk];
+  if (def.kesimpulan) {
+    const nextKode = String.fromCharCode((def.sections[def.sections.length - 1]?.kode.charCodeAt(0) ?? 66) + 1);
+    cell("A", nextKode, { border: true, align: { horizontal: "center", vertical: "top" } });
+    ws.mergeCells(`B${r}:H${r}`); cell("B", "KESIMPULAN", { bold: true, border: true });
+    rowCells(ws, r, "C", "H", (a) => { ws.getCell(a).border = BORDER; });
+    r++;
+
+    if (def.kesimpulan.mode === "meter") {
+      for (const opt of def.kesimpulan.options) {
+        const meterVal = fk?.[opt.meterKey as keyof typeof fk];
+        ws.mergeCells(`B${r}:H${r}`);
+        cell("B", `${opt.label} ${meterVal ? `${meterVal}` : "......................"} meter`, {
+          bold: true,
+          strike: !!fk && fk.code !== opt.code,
+        });
+        r++;
+      }
+    } else {
+      const parts = def.kesimpulan.options.map((opt) => ({ text: opt.label, strike: !!fk ? fk.code !== opt.code : false }));
       ws.mergeCells(`B${r}:H${r}`);
-      cell("B", `${opt.label} ${meterVal ? `${meterVal}` : "......................"} meter`, {
-        bold: true,
-        strike: !!fk && fk.code !== opt.code,
-      });
+      const c = ws.getCell(`B${r}`);
+      c.value = {
+        richText: [
+          { text: "*) " },
+          ...parts.flatMap((p, i) => [
+            { text: p.text, font: { ...FONT, strike: p.strike } },
+            ...(i < parts.length - 1 ? [{ text: " / " }] : []),
+          ]),
+        ],
+      };
       r++;
     }
-  } else {
-    const parts = def.kesimpulan.options.map((opt) => ({ text: opt.label, strike: !!fk ? fk.code !== opt.code : false }));
-    ws.mergeCells(`B${r}:H${r}`);
-    const c = ws.getCell(`B${r}`);
-    c.value = {
-      richText: [
-        { text: "*) " },
-        ...parts.flatMap((p, i) => [
-          { text: p.text, font: { ...FONT, strike: p.strike } },
-          ...(i < parts.length - 1 ? [{ text: " / " }] : []),
-        ]),
-      ],
-    };
+    if (def.note) { ws.mergeCells(`B${r}:H${r}`); cell("B", def.note, { bold: true }); r++; }
     r++;
   }
-  if (def.note) { ws.mergeCells(`B${r}:H${r}`); cell("B", def.note, { bold: true }); r++; }
-  r++;
 
   // ── Blok tanda tangan ──────────────────────────────────────────────────────────
   ws.mergeCells(`E${r}:G${r}`); cell("E", "DISETUJUI OLEH", { align: { horizontal: "center" } }); r++;
@@ -352,10 +385,11 @@ function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: Retur
 
   // ── Legenda ────────────────────────────────────────────────────────────────────
   cell("B", "Keterangan:");
-  cell("C", "");
+  cell("C", "…");
   r++;
-  cell("B", "✓"); cell("C", "sesuai"); r++;
-  cell("B", "✗"); cell("C", "tidak sesuai"); r++;
+  for (const lg of def.legend ?? []) {
+    cell("B", lg.mark); cell("C", lg.label); r++;
+  }
   cell("B", "*)"); cell("C", def.coretNote ?? "coret yang tidak diperlukan");
 
   ws.pageSetup = { paperSize: 9, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 0, margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } };

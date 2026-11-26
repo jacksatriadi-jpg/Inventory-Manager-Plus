@@ -31,38 +31,25 @@ const DEFS = {
     title: "FORMULIR INSPEKSI MATERIAL RETUR KWH METER",
     intro: "kWh Meter",
     fields: {
-      left: [F("idPelanggan", "ID Pelanggan"), F("ulp", "Unit Layanan Pelanggan"), F("tahunProduksi", "Tahun Produksi")],
-      right: [F("tipe", "Tipe kWh Meter"), F("sn", "No Serial"), F("pabrikan", "Nama Pabrikan")],
+      left: [F("ulp", "Unit Layanan Pelanggan"), F("tipe", "Tipe kWh Meter", "1PH/3PH"), F("jenis", "Jenis kWh Meter", "Prabayar/Pascabayar")],
+      right: [],
     },
-    sections: [{ kode: "B", judul: "PEMERIKSAAN VISUAL DAN KONSTRUKSI", colL: "BAIK", colR: "RUSAK" }],
-    rows: [
-      R("1.0", "Masa pakai", { req: "< 5 tahun", textValue: "tahun" }),
-      R("2.0", "Kondisi body kWh Meter", { req: "Baik", ket: "termasuk kaca depan meter" }),
-      R("3.0", "Kondisi segel meterologi", { req: "Baik" }),
-      R("4.0", "Kondisi terminal", { req: "Baik" }),
-      R("5.0", "Kondisi stand kWh Meter", { req: "Baik" }),
-      R("6.0", "Kondisi cover terminal kWh Meter", { req: "Baik", ket: "tutup terminal dan MCB" }),
-      R("7.0", "Kondisi nameplate", { req: "Baik" }),
-    ],
-    kesimpulan: CORET(["bekas layak pakai (K6)", "masih garansi (K7)", "bekas tidak layak pakai (K8)"]),
+    sections: [{ kode: "B", judul: "JUMLAH PEMERIKSAAN VISUAL DAN KONSTRUKSI", colL: "", colR: "", jumlah: true, jumlahCols: ["< 5 TAHUN", "> 5 TAHUN", "KETERANGAN"], jumlahRows: [] }],
+    rows: [],
+    kesimpulan: null,
   },
 
   "form-01-b-mcb": {
     formCode: "Formulir 01-B",
-    title: "FORMULIR INSPEKSI MATERIAL RETUR MCB",
-    intro: "MCB",
+    title: "FORMULIR INSPEKSI MATERIAL RETUR MCB/MCCB",
+    intro: "MCB/MCCB",
     fields: {
-      left: [F("idPelanggan", "ID Pelanggan"), F("ulp", "Unit Layanan Pelanggan")],
-      right: [F("tipe", "Tipe MCB", "1 fasa / 3 fasa* ; .......... A"), F("sn", "No Serial"), F("pabrikan", "Nama Pabrikan")],
+      left: [F("ulp", "Unit Layanan Pelanggan"), F("tipe", "Tipe MCB/MCCB", "1PH/3PH")],
+      right: [],
     },
-    sections: [{ kode: "B", judul: "PEMERIKSAAN VISUAL DAN KONSTRUKSI", colL: "Baik", colR: "Rusak" }],
-    rows: [
-      R("1.0", "Pengujian ketidakhapusan penandaan", { req: "Baik" }),
-      R("2.0", "Pengujian toggle switch", { req: "Baik" }),
-      R("3.0", "Pengujian keandalan sekrup, bagian yang menghantar arus dan sambungan", { req: "Baik", ket: "Pengujian dapat dilakukan bersamaan dengan memutar sekrup" }),
-      R("4.0", "Pengujian keandalan terminal untuk penghantar luar", { req: "Baik" }),
-    ],
-    kesimpulan: CORET(["bekas layak pakai (K6)", "masih garansi (K7)", "bekas tidak layak pakai (K8)"]),
+    sections: [{ kode: "B", judul: "JUMLAH PEMERIKSAAN VISUAL DAN KONSTRUKSI", colL: "", colR: "", jumlah: true, jumlahCols: ["ARUS", "JUMLAH", "KETERANGAN"], jumlahRows: ["2A","4A","6A","10A","20A","25A","35A","50A","63A","80A","100A","125A","160A","200A","225A","250A","300A"] }],
+    rows: [],
+    kesimpulan: null,
   },
 
   "form-01-c-kotak-app": {
@@ -147,15 +134,17 @@ const DEFS = {
     intro: "Trafo Distribusi",
     fields: {
       left: [F("lokasi", "Lokasi akhir terpasang"), F("ulp", "Unit Layanan Pelanggan"), F("tahunProduksi", "Tahun produksi")],
-      right: [F("tipe", "Tipe Trafo Distribusi"), F("sn", "No Serial"), F("pabrikan", "Nama Pabrikan")],
+      right: [F("tipe", "Daya Trafo Distribusi"), F("sn", "No Serial"), F("pabrikan", "Nama Pabrikan")],
     },
     sections: [{ kode: "B", judul: "PEMERIKSAAN VISUAL", colL: "Ada", colR: "Tidak ada" }],
     rows: [
       R("1.0", "Nameplate", { req: "Ada" }),
       R("2.0", "Penandaaan Terminal Primer dan Sekunder", { req: "Ada" }),
       R("3.0", "Pengaman tekanan lebih", { req: "Ada" }),
-      R("4.0", "Kondisi tangki (ada kebocoran/bengkak/cacat radiator(sirip)/seal top cover rembes)", { req: "Tidak ada" }),
-      R("5.0", "Kondisi fisik bushing HV dan LV (ada retak/longgar dari tangki/seal bushing rembes)", { req: "Tidak ada", ket: "*) Rusak pada fasa R/S/T/N" }),
+      R("4.0", "Kondisi tangki (ada kebocoran/bengkak/cacat radiator(sirip)/seal top cover rembes)", { req: "Ada" }),
+      R("5.0", "Kondisi fisik bushing HV dan LV (ada retak/longgar dari tangki/seal bushing rembes)", { req: "Ada", ket: "*) Rusak pada fasa R/S/T/N" }),
+      R("6.0", "Justifikasi penyebab kerusakan", { req: "Ada" }),
+      R("7.0", "Analitical Review", { req: "Ada" }),
     ],
     kesimpulan: CORET(["bekas layak pakai (K6)", "bekas bisa diperbaiki (K7)", "bekas tidak layak pakai (K8)"]),
   },
@@ -227,7 +216,7 @@ const DEFS = {
     intro: "PHBTM/Cubicle",
     fields: {
       left: [F("lokasi", "Lokasi akhir terpasang"), F("ulp", "Unit Layanan Pelanggan"), F("tahunProduksi", "Tahun produksi")],
-      right: [F("tipe", "Tipe PHBTM / Cubicle"), F("sn", "No Serial"), F("pabrikan", "Nama Pabrikan")],
+      right: [F("tipe", "Jenis PHBTM / Cubicle", "LBS/METERING/CBOG/.......................*)"), F("sn", "No Serial"), F("pabrikan", "Nama Pabrikan")],
     },
     sections: [
       { kode: "B", judul: "PEMERIKSAAN VISUAL", colL: "Ada", colR: "Tidak ada" },
@@ -239,6 +228,10 @@ const DEFS = {
       R("3.0", "Busbar dan penyangga busbar", { req: "Ada" }),
       R("4.0", "Kondisi pembumian dan kelengkapannya", { req: "Ada" }),
       R("5.0", "Kondisi selungkup untuk PHBTM (ada retak/longgar dari selungkup)", { req: "Tidak ada" }),
+      R("6.0", "CT (Khusus Metering)", { req: "Ada" }),
+      R("7.0", "PT (Khusus Metering)", { req: "Ada" }),
+      R("8.0", "Justifikasi penyebab kerusakan", { req: "Ada" }),
+      R("9.0", "Analitical Review", { req: "Ada" }),
       R("1.0", "Pengujian mekanik:", { section: "C", parent: true }),
       R("", "Pengujian operasi LBS & ES (torsi/manual)", { section: "C", req: "Baik", level: 1 }),
       R("", "Pengujian interlock mekanik", { section: "C", req: "Baik", level: 1 }),
@@ -319,7 +312,7 @@ const DEFS = {
 
   "form-01-n-lbs": {
     formCode: "Formulir 01-N",
-    title: "FORMULIR INSPEKSI MATERIAL RETUR LBS",
+    title: "FORMULIR INSPEKSI MATERIAL RETUR LBS/RECLOSER *)",
     intro: "LBS",
     fields: {
       left: [F("lokasi", "Lokasi akhir terpasang"), F("ulp", "Unit Layanan Pelanggan"), F("tahunProduksi", "Tahun produksi")],
@@ -370,11 +363,13 @@ const DEFS = {
 for (const def of Object.values(DEFS)) {
   def.header = HEADER;
   def.signature = SIG;
-  def.legend = [
+  def.coretNote = "coret yang tidak diperlukan";
+  // Formulir ringkas JUMLAH (revisi kWh/MCB) tidak punya legenda ✓/✗ seperti formulir checklist —
+  // legendanya hanya "Keterangan:" + "*) coret...".
+  def.legend = def.sections?.some((s) => s.jumlah) ? [] : [
     { mark: "✓", label: "sesuai" },
     { mark: "✗", label: "tidak sesuai" },
   ];
-  def.coretNote = "coret yang tidak diperlukan";
 }
 
 const NAMES = Object.fromEntries(

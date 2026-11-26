@@ -92,7 +92,15 @@ export interface FormRowDef {
   no?: string; label: string; persyaratan?: string; ket?: string;
   section?: string; level?: number; parent?: boolean; textValue?: string; satuan?: string;
 }
-export interface FormSectionDef { kode: string; judul: string; colL: string; colR: string; nilaiSatuan?: boolean }
+export interface FormSectionDef {
+  kode: string; judul: string; colL: string; colR: string; nilaiSatuan?: boolean;
+  // Mode tabel ringkas "JUMLAH PEMERIKSAAN" (revisi form kWh/MCB): satu tabel, kolom
+  // jumlahCols, baris jumlahRows (label arus fixed; kosong = 1 baris kosong untuk
+  // user isi tangan). Tidak ada row checklist item per seksi.
+  jumlah?: boolean;
+  jumlahCols?: string[];
+  jumlahRows?: string[];
+}
 export interface FormKesimpulanOption { code: string; label: string; meterKey?: string }
 export interface FormKesimpulanDef { mode: "coret" | "meter"; options: FormKesimpulanOption[] }
 export interface FormDefinition {
@@ -104,7 +112,7 @@ export interface FormDefinition {
   fields: { left: FormFieldDef[]; right: FormFieldDef[] };
   sections: FormSectionDef[];
   rows: FormRowDef[];
-  kesimpulan: FormKesimpulanDef;
+  kesimpulan?: FormKesimpulanDef | null;
   legend?: { mark: string; label: string }[];
   coretNote?: string;
   note?: string;
