@@ -117,6 +117,22 @@ function isImageDataUrl(v: unknown): v is string {
   return typeof v === "string" && /^data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+$/i.test(v);
 }
 
+// Jalankan async jobs dengan batas concurrency terpisah — worker idle mengambil job berikut.
+// Urutan hasil tetap sesuai urutan input → aman untuk dipetakan ulang.
+async function runWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 function extFromDataUrl(dataUrl: string): string {
   const mime = dataUrl.slice(5, dataUrl.indexOf(";"));
   const sub = (mime.split("/")[1] || "jpeg").replace(/[^a-z0-9]/gi, "");
@@ -1000,8 +1016,8 @@ router.post("/retur", async (req, res): Promise<void> => {
   let docFolderId = "";
   let tug10File: DriveFile;
   let lampiranFiles: LampiranFile[] = [];
-  const unitFiles: (DriveFile | null)[][][] = []; // [group][unit][item]
-  const unitFolderIds: string[][] = [];           // [group][unit]
+  let unitFiles: (DriveFile | null)[][][] = [];  // [group][unit][item]
+  let unitFolderIds: string[][] = [];            // [group][unit]
   try {
     const root = await ensureReturFolder();
     const docFolderName = groups.length === 1
@@ -1014,31 +1030,49 @@ router.post("/retur", async (req, res): Promise<void> => {
       const up = await uploadReturDataUrl(lf.dataUrl, `Lampiran-${li + 1}-${sanitizeFolderName(lf.name)}.${ext}`, docFolderId);
       return { name: lf.name, fileId: up.fileId, webViewLink: up.webViewLink };
     }));
-    for (let gi = 0; gi < groups.length; gi++) {
-      const g = groups[gi];
-      const folders: string[] = [];
-      const filesPerUnit: (DriveFile | null)[][] = [];
-      for (let ui = 0; ui < g.units.length; ui++) {
-        const unitFolder = await ensureChildFolder(
-          groups.length === 1
-            ? `Unit ${ui + 1} - ${sanitizeFolderName(g.units[ui].label)}`
-            : `${sanitizeFolderName(g.materialName)} Unit ${ui + 1} - ${sanitizeFolderName(g.units[ui].label)}`,
-          docFolderId,
-        );
-        folders.push(unitFolder);
-        const files: (DriveFile | null)[] = [];
-        for (let ii = 0; ii < g.units[ui].items.length; ii++) {
-          const it = g.units[ui].items[ii];
-          // Item tanpa foto (komponen tidak wajib foto) -> tidak ada file Drive, fileId null.
-          files.push(it.foto
-            ? await uploadReturDataUrl(it.foto, `U${gi + 1}-${ui + 1}-I${ii + 1}-${stamp}.${extFromDataUrl(it.foto)}`, unitFolder)
-            : null);
-        }
-        filesPerUnit.push(files);
-      }
-      unitFolderIds.push(folders);
-      unitFiles.push(filesPerUnit);
+    // 1) Buat folder unit SECARA PARALEL (batas concurrency) — sebelumnya satu per satu.
+    const folderJobs: { gi: number; ui: number; name: string }[] = [];
+    groups.forEach((g, gi) => {
+      g.units.forEach((unit, ui) => {
+        folderJobs.push({
+          gi,
+          ui,
+          name: groups.length === 1
+            ? `Unit ${ui + 1} - ${sanitizeFolderName(unit.label)}`
+            : `${sanitizeFolderName(g.materialName)} Unit ${ui + 1} - ${sanitizeFolderName(unit.label)}`,
+        });
+      });
+    });
+    const folderIds = await runWithConcurrency(folderJobs, 8, async (job) => await ensureChildFolder(job.name, docFolderId));
+    unitFolderIds = groups.map(() => []);
+    folderJobs.forEach((job, k) => { unitFolderIds[job.gi][job.ui] = folderIds[k]; });
+
+    // 2) Upload foto — SECARA PARALEL + deduplikasi per folder (foto identik 1 upload, dipakai bersama item).
+    const photoJobs: { gi: number; ui: number; ii: number; foto: string; folderId: string }[] = [];
+    groups.forEach((g, gi) => {
+      g.units.forEach((unit, ui) => {
+        unit.items.forEach((it, ii) => {
+          if (it.foto) photoJobs.push({ gi, ui, ii, foto: it.foto, folderId: unitFolderIds[gi][ui] });
+        });
+      });
+    });
+    const uniquePhotos = new Map<string, { foto: string; folderId: string; jobs: { gi: number; ui: number; ii: number }[] }>();
+    for (const job of photoJobs) {
+      const key = `${job.folderId}|${job.foto}`;
+      const existing = uniquePhotos.get(key);
+      if (existing) existing.jobs.push({ gi: job.gi, ui: job.ui, ii: job.ii });
+      else uniquePhotos.set(key, { foto: job.foto, folderId: job.folderId, jobs: [{ gi: job.gi, ui: job.ui, ii: job.ii }] });
     }
+    const uniqueList = [...uniquePhotos.values()];
+    const photoResults = await runWithConcurrency(uniqueList, 6, async (u) => {
+      const first = u.jobs[0];
+      return uploadReturDataUrl(u.foto, `U${first.gi + 1}-${first.ui + 1}-I${first.ii + 1}-${stamp}.${extFromDataUrl(u.foto)}`, u.folderId);
+    });
+    unitFiles = groups.map((g, gi) => g.units.map((unit, ui) => unit.items.map(() => null)));
+    uniqueList.forEach((u, i) => {
+      const f = photoResults[i];
+      for (const j of u.jobs) unitFiles[j.gi][j.ui][j.ii] = f;
+    });
   } catch (err: unknown) {
     logger.error({ err }, "Retur: upload foto ke Drive gagal");
     res.status(502).json({ error: "Gagal upload foto ke Google Drive" });
