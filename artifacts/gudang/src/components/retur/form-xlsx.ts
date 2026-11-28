@@ -17,6 +17,12 @@ const FONT = { name: "Arial", size: 10 } as const;
 const BOLD = { name: "Arial", size: 10, bold: true } as const;
 const THIN = { style: "thin" as const, color: { argb: "FF000000" } };
 const BORDER = { top: THIN, bottom: THIN, left: THIN, right: THIN };
+type Alignment = {
+  horizontal?: "left" | "center" | "right" | "justify" | "distributed" | "general";
+  vertical?: "top" | "middle" | "bottom" | "justify";
+  wrapText?: boolean; shrinkToFit?: boolean; indent?: number; readingOrder?: number; textRotation?: number;
+};
+
 const DOTS = "…………………………………………";
 
 const norm = (s: string): string => (s || "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -142,15 +148,15 @@ function tanggalIndonesia(iso: string): { hari: string; tanggal: string; bulan: 
   };
 }
 
-function put(ws: ExcelJS.Worksheet, addr: string, value: string, opts: { bold?: boolean; border?: boolean; align?: ExcelJS.Alignment; strike?: boolean } = {}): void {
+function put(ws: exceljsNs.Worksheet, addr: string, value: string, opts: { bold?: boolean; border?: boolean; align?: Alignment; strike?: boolean } = {}): void {
   const c = ws.getCell(addr);
   c.value = value;
   c.font = { ...FONT, ...(opts.bold ? { bold: true } : {}), ...(opts.strike ? { strike: true } : {}) };
   if (opts.border) c.border = BORDER;
-  if (opts.align) c.alignment = { vertical: "middle", ...opts.align };
+  if (opts.align) c.alignment = { vertical: "middle", ...opts.align } as unknown as exceljsNs.Alignment;
 }
 
-function rowCells(ws: ExcelJS.Worksheet, r: number, from: string, to: string, fn: (addr: string) => void): void {
+function rowCells(ws: exceljsNs.Worksheet, r: number, from: string, to: string, fn: (addr: string) => void): void {
   const start = ws.getColumn(from).number;
   const end = ws.getColumn(to).number;
   const row = ws.getRow(r);
@@ -200,7 +206,7 @@ export function buildMultiFormWorkbook(entries: FormWorkbookEntry[]) {
   return wb;
 }
 
-function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: ReturDetail, unit: ReturUnitDetail, unitIdx: number, prefix?: string): void {
+function buildFormSheet(wb: exceljsNs.Workbook, def: FormDefinition, detail: ReturDetail, unit: ReturUnitDetail, unitIdx: number, prefix?: string): void {
   const phase = parsePhaseMaterial(unitMaterialCode(unit, detail));
   const ws = wb.addWorksheet(sheetName(unit.label, unitIdx, prefix));
   ws.columns = COL_W.map((width) => ({ width }));
@@ -208,7 +214,7 @@ function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: Retur
   const matched = new Set<string>();
   let r = 1;
 
-  const cell = (col: string, value: string, opts: Parameters<typeof put>[2] = {}) => put(ws, `${col}${r}`, value, opts);
+  const cell = (col: string, value: string, opts: { bold?: boolean; border?: boolean; align?: Alignment; strike?: boolean } = {}) => put(ws, `${col}${r}`, value, opts);
 
   // Judul cetak mengikuti fasa material ("MCB 3 PHASA"), bukan tetap "MCB/MCCB".
   const printedTitle = phase ? `FORMULIR INSPEKSI MATERIAL RETUR ${phase.device} ${phase.fasa} PHASA` : def.title;
@@ -300,6 +306,38 @@ function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: Retur
         ws.getCell(`F${r}`).border = BORDER;
         r++;
       }
+      // ── Tabel komponen pemeriksaan (utk form JUMLAH: MCB/kWh) ─────────────
+      // Hasil komponen yang wajib diisi pengawas tetap tampil di form cetak.
+      if (items.size > 0) {
+        const t0 = r;
+        cell("A", "", { border: true });
+        ws.mergeCells(`B${t0}:H${t0}`);
+        cell("B", "KOMPONEN PEMERIKSAAN", { bold: true, border: true, align: { horizontal: "center" } });
+        rowCells(ws, t0, "C", "H", (a) => { ws.getCell(a).border = BORDER; });
+        r = t0 + 1;
+        const h3 = r;
+        cell("B", "NO", { bold: true, border: true, align: { horizontal: "center" } });
+        cell("C", "MATA UJI", { bold: true, border: true, align: { horizontal: "center" } });
+        ws.mergeCells(`D${h3}:E${h3}`); cell("D", "HASIL", { bold: true, border: true, align: { horizontal: "center" } }); ws.getCell(`E${h3}`).border = BORDER;
+        cell("F", "KETERANGAN", { bold: true, border: true, align: { horizontal: "center" } });
+        ws.mergeCells(`F${h3}:H${h3}`); rowCells(ws, h3, "G", "H", (a) => { ws.getCell(a).border = BORDER; });
+        r = h3 + 1;
+        let no = 0;
+        for (const [, item] of items) {
+          no++;
+          const side = hasilSide(item.hasil, {} as FormRowDef, { kode: "", judul: "", colL: "", colR: "" });
+          const dVal = side === "L" ? "\u2713" : side === "R" ? "\u2717" : (item.hasil || "");
+          cell("B", autoNo(no), { border: true, align: { horizontal: "center", vertical: "middle" } });
+          cell("C", item.itemLabel, { border: true, align: { wrapText: true, vertical: "middle" } });
+          ws.mergeCells(`D${r}:E${r}`);
+          cell("D", dVal, { border: true, align: { horizontal: "center", vertical: "middle" } }); ws.getCell(`E${r}`).border = BORDER;
+          ws.mergeCells(`F${r}:H${r}`);
+          cell("F", item.catatan ?? "", { border: true, align: { wrapText: true, vertical: "middle" } });
+          rowCells(ws, r, "G", "H", (a) => { ws.getCell(a).border = BORDER; });
+          r++;
+        }
+        r += 2;
+      }
       r += 2;
       continue;
     }
@@ -340,7 +378,7 @@ function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: Retur
         // kolom Nilai/Satuan: teks hasil (mis. "Baik") atau angka dimensi; satuan dari definisi.
         cell("D", hasil || (row.textValue ?? ""), { border: true, align: { horizontal: "center" } });
         cell("E", row.satuan ?? "-", { border: true, align: { horizontal: "center" } });
-        cell("F", row.persyaratan, { border: true, align: { wrapText: true } });
+        cell("F", row.persyaratan ?? "", { border: true, align: { wrapText: true } });
         cell("G", kesesuaianMark(hasil, row), { border: true, align: { horizontal: "center" } });
       } else {
         const side = hasilSide(hasil, row, sec);
@@ -361,7 +399,7 @@ function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: Retur
         }
         cell("D", dText, { border: true, align: { horizontal: "center" } });
         cell("E", eText, { border: true, align: { horizontal: "center" } });
-        cell("F", row.persyaratan, { border: true, align: { wrapText: true } });
+        cell("F", row.persyaratan ?? "", { border: true, align: { wrapText: true } });
         cell("G", gMark, { border: true, align: { horizontal: "center" } });
       }
       const ketParts = [row.ket, item?.catatan].filter((x) => x && x.trim());
