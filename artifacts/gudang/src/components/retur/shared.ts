@@ -30,12 +30,13 @@ export function useReturMaterials() {
 
 // Material dalam satu dokumen retur (multi-material); jumlahUnit = deklaratif sampling per material.
 // nomorInspeksi = nomor inspeksi per material (diisi master dari Riwayat setelah verifikasi).
-export interface ReturDocMaterial { id: number; name: string; jumlahUnit: number | null; nomorInspeksi?: string | null }
+export interface ReturDocMaterial { id: number; name: string; code?: string | null; jumlahUnit: number | null; nomorInspeksi?: string | null }
 
 export interface ReturDokumen {
   id: number;
   materialId: number;
   materialName: string;
+  materialCode?: string | null; // kode material human-readable (mis. "MCB 3PH 16A") — untuk judul formulir fase
   materials?: ReturDocMaterial[]; // daftar material dokumen (multi-material)
   status: "checked_supervisor" | "completed";
   jumlahUnit: number | null; // mode sampling: total unit deklaratif; unit terisi = sampel
@@ -74,6 +75,7 @@ export interface ReturUnitDetail {
   label: string;
   materialId?: number; // material milik unit ini (multi-material per dokumen)
   materialName?: string;
+  materialCode?: string | null; // kode human-readable (untuk judul formulir fase)
   sn: string | null;
   keputusan: Keputusan | null; // disposisi gudang per unit; null = belum diverifikasi
   formData?: Record<string, string> | null; // isian "A. DATA MATERIAL" utk Cetak Formulir

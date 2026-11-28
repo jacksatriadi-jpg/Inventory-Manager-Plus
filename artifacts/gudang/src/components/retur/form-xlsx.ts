@@ -96,6 +96,34 @@ function labelsClose(rowLabel: string, itemKey: string): boolean {
   return Math.min(a.length, itemKey.length) >= 12 && editDistance(a, itemKey) <= 2;
 }
 
+// ── Fasa MCB/MCCB — judul sheet & jumlah otomatis ────────────────────────────────
+// Material MCB/MCCB berbentuk kode "MCB 3PH 16A" / "MCCB 3PH 100A". Dari sana kita ambil
+// fasa (1PH/3PH) → judul formulir + pengelompokan sheet, dan arus (16A) → baris ARUS yang
+// diisi dengan jumlah unit dari app (mode sampling).
+function parsePhaseMaterial(code: string | null | undefined): { device: string; fasa: number; arus: string } | null {
+  if (!code) return null;
+  const m = /^\s*(MCB|MCCB)\s+(\d+)\s*PH\s+(\d+)\s*A\s*$/i.exec(code);
+  if (!m) return null;
+  return { device: m[1].toUpperCase(), fasa: Number(m[2]), arus: `${m[3]}A` };
+}
+
+// Kode human-readable material unit (dari detail unit, lalu materials[], lalu dokumen).
+function unitMaterialCode(unit: ReturUnitDetail, detail: ReturDetail): string | null {
+  if (unit.materialCode) return unit.materialCode;
+  const mats = detail.materials ?? [];
+  const mat = mats.find((m) => (unit.materialId != null ? m.id === unit.materialId : detail.materialId === m.id));
+  if (mat?.code) return mat.code;
+  return detail.materialCode ?? null;
+}
+
+// Jumlah unit user input (mode sampling) utk material unit ini — null bila non-sampling/legacy.
+function unitJumlahUnit(unit: ReturUnitDetail, detail: ReturDetail): number | null {
+  const mats = detail.materials ?? [];
+  const mat = mats.find((m) => (unit.materialId != null ? m.id === unit.materialId : detail.materialId === m.id));
+  const ju = mat?.jumlahUnit ?? detail.jumlahUnit ?? null;
+  return typeof ju === "number" && ju >= 1 ? ju : null;
+}
+
 function sheetName(label: string, idx: number, prefix?: string): string {
   const base = label || `Unit ${idx + 1}`;
   const raw = prefix ? `${prefix} ${base}` : base;
@@ -131,32 +159,49 @@ function rowCells(ws: ExcelJS.Worksheet, r: number, from: string, to: string, fn
 
 // defsByMaterial: dokumen multi-material — tiap unit pakai definisi formulir material miliknya.
 export function buildFormWorkbook(def: FormDefinition, detail: ReturDetail, defsByMaterial?: Record<number, FormDefinition>) {
-  const wb = new ExcelJS.Workbook();
   const multi = (detail.materials?.length ?? 0) > 1;
-  detail.units.forEach((unit, ui) => {
+  const units = [...detail.units].sort((a, b) => phaseRank(a, detail) - phaseRank(b, detail));
+  const wb = new ExcelJS.Workbook();
+  units.forEach((unit, ui) => {
     const d = (unit.materialId != null && defsByMaterial?.[unit.materialId]) || def;
-    buildFormSheet(wb, d, detail, unit, ui, multi ? (unit.materialName ?? detail.materialName) : undefined);
+    const phase = parsePhaseMaterial(unitMaterialCode(unit, detail));
+    const prefix = phase ? `${phase.device} ${phase.fasa} PHASA` : multi ? (unit.materialName ?? detail.materialName) : undefined;
+    buildFormSheet(wb, d, detail, unit, ui, prefix);
   });
   return wb;
 }
 
+// Kelompokkan sheet per fasa (3PH dulu, lalu 1PH) — utk cetak banyak dokumen sekaligus.
+function phaseRank(unit: ReturUnitDetail, detail: ReturDetail): number {
+  const phase = parsePhaseMaterial(unitMaterialCode(unit, detail));
+  if (!phase) return 2;
+  return phase.fasa >= 3 ? 0 : 1;
+}
+
 // Cetak banyak dokumen (material) sekaligus: SATU file Excel, satu sheet per unit per
 // dokumen. Sampling tetap 1 unit per material — sheet dinamai "<material> Dok<id>" agar
-// tidak bentrok antar dokumen (satu material bisa muncul di dokumen berbeda).
+// tidak bentrok antar dokumen (satu material bisa muncul di dokumen berbeda). Sheet diurutkan
+// per fasa (3PH → 1PH) supaya dokumen campuran tetap mudah dibaca.
 export interface FormWorkbookEntry { def: FormDefinition; detail: ReturDetail; defsByMaterial?: Record<number, FormDefinition> }
 
 export function buildMultiFormWorkbook(entries: FormWorkbookEntry[]) {
-  const wb = new ExcelJS.Workbook();
+  const sheets: { def: FormDefinition; detail: ReturDetail; unit: ReturUnitDetail; prefix: string; rank: number }[] = [];
   for (const { def, detail, defsByMaterial } of entries) {
-    detail.units.forEach((unit, ui) => {
+    for (const unit of detail.units) {
       const d = (unit.materialId != null && defsByMaterial?.[unit.materialId]) || def;
-      buildFormSheet(wb, d, detail, unit, ui, `${unit.materialName ?? detail.materialName} Dok${detail.id}`);
-    });
+      const phase = parsePhaseMaterial(unitMaterialCode(unit, detail));
+      const prefix = phase ? `${phase.device} ${phase.fasa} PHASA Dok${detail.id}` : `${unit.materialName ?? detail.materialName} Dok${detail.id}`;
+      sheets.push({ def: d, detail, unit, prefix, rank: phase ? (phase.fasa >= 3 ? 0 : 1) : 2 });
+    }
   }
+  sheets.sort((a, b) => a.rank - b.rank);
+  const wb = new ExcelJS.Workbook();
+  sheets.forEach((s, i) => buildFormSheet(wb, s.def, s.detail, s.unit, i, s.prefix));
   return wb;
 }
 
 function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: ReturDetail, unit: ReturUnitDetail, unitIdx: number, prefix?: string): void {
+  const phase = parsePhaseMaterial(unitMaterialCode(unit, detail));
   const ws = wb.addWorksheet(sheetName(unit.label, unitIdx, prefix));
   ws.columns = COL_W.map((width) => ({ width }));
   const items = finalItems(unit);
@@ -165,12 +210,15 @@ function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: Retur
 
   const cell = (col: string, value: string, opts: Parameters<typeof put>[2] = {}) => put(ws, `${col}${r}`, value, opts);
 
+  // Judul cetak mengikuti fasa material ("MCB 3 PHASA"), bukan tetap "MCB/MCCB".
+  const printedTitle = phase ? `FORMULIR INSPEKSI MATERIAL RETUR ${phase.device} ${phase.fasa} PHASA` : def.title;
+
   // ── Header kop formulir ────────────────────────────────────────────────────────
   ws.mergeCells(`A${r}:G${r}`); cell("A", def.header.line1, { bold: true }); cell("H", def.formCode, { align: { horizontal: "right" } }); r++;
   ws.mergeCells(`A${r}:H${r}`); cell("A", def.header.line2); r++;
   ws.mergeCells(`A${r}:H${r}`); cell("A", def.header.line3); r += 4; // jarak identik contoh (title di baris ~7)
 
-  ws.mergeCells(`A${r}:H${r}`); cell("A", def.title, { bold: true, align: { horizontal: "center" } }); r++;
+  ws.mergeCells(`A${r}:H${r}`); cell("A", printedTitle, { bold: true, align: { horizontal: "center" } }); r++;
   ws.mergeCells(`A${r}:H${r}`); cell("A", `NO: ${detail.id}`); r += 3;
 
   const t = tanggalIndonesia(detail.checkedAt);
@@ -232,10 +280,20 @@ function buildFormSheet(wb: ExcelJS.Workbook, def: FormDefinition, detail: Retur
       rowCells(ws, h2, "E", "F", (a) => { ws.getCell(a).border = BORDER; });
       ws.getCell(`D${h2}`).border = BORDER;
       r = h2 + 1;
-      const jumlahRows = sec.jumlahRows?.length ? sec.jumlahRows : [""];
+      // Otomatis isi kolom JUMLAH baris ARUS yang sesuai material (mode sampling):
+      // jumlah unit = user menginput "Jumlah unit seluruhnya" di tab Buat.
+      const jumlahUnit = unitJumlahUnit(unit, detail);
+      const matchArus = phase?.arus ?? null;
+      // Baris ARUS yang kebetulan hilang di seed (mis. 16A yang ada di materials tapi tidak
+      // di jumlahRows) ikut ditambahkan otomatis, diurutkan numerik.
+      const _rawRows = [...(sec.jumlahRows?.length ? sec.jumlahRows : [""])];
+      if (matchArus && !_rawRows.some((l) => norm(l) === norm(matchArus))) _rawRows.push(matchArus);
+      const _arusNum = (s: string): number => { const m = /(\d+)/.exec(s); return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER; };
+      const jumlahRows = _rawRows.sort((a, b) => _arusNum(a) - _arusNum(b));
       for (const lbl of jumlahRows) {
+        const isMatch = !!matchArus && norm(lbl) === norm(matchArus);
         cell("B", lbl, { border: true, align: { horizontal: "center", vertical: "middle" } });
-        cell("C", "", { border: true, align: { horizontal: "center", vertical: "middle" } });
+        cell("C", isMatch && jumlahUnit ? String(jumlahUnit) : "", { border: true, align: { horizontal: "center", vertical: "middle" } });
         cell("D", "", { border: true, align: { horizontal: "center", vertical: "middle" } });
         ws.mergeCells(`D${r}:F${r}`);
         ws.getCell(`E${r}`).border = BORDER;

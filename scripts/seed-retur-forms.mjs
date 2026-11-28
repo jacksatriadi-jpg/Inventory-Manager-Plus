@@ -47,7 +47,7 @@ const DEFS = {
       left: [F("ulp", "Unit Layanan Pelanggan"), F("tipe", "Tipe MCB/MCCB", "1PH/3PH")],
       right: [],
     },
-    sections: [{ kode: "B", judul: "JUMLAH PEMERIKSAAN VISUAL DAN KONSTRUKSI", colL: "", colR: "", jumlah: true, jumlahCols: ["ARUS", "JUMLAH", "KETERANGAN"], jumlahRows: ["2A","4A","6A","10A","20A","25A","35A","50A","63A","80A","100A","125A","160A","200A","225A","250A","300A"] }],
+    sections: [{ kode: "B", judul: "JUMLAH PEMERIKSAAN VISUAL DAN KONSTRUKSI", colL: "", colR: "", jumlah: true, jumlahCols: ["ARUS", "JUMLAH", "KETERANGAN"], jumlahRows: ["2A","4A","6A","10A","16A","20A","25A","35A","50A","63A","80A","100A","125A","160A","200A","225A","250A","300A"] }],
     rows: [],
     kesimpulan: null,
   },

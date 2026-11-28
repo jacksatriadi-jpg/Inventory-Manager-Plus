@@ -253,6 +253,7 @@ interface ReturDetail {
   id: number;
   materialId: number;
   materialName: string;
+  materialCode: string | null; // kode human-readable material (mis. "MCB 3PH 16A") — untuk judul formulir fase
   status: string;
   jumlahUnit: number | null; // total unit deklaratif dokumen sampling
   lampiran: LampiranFile[]; // dokumen lampiran (mode sampling) — fileId & link Drive
@@ -271,7 +272,7 @@ interface ReturDetail {
   gudangCompany: string | null;
   formKey: string | null; // template formulir material ini (Cetak Formulir)
   unitCount: number;
-  materials: { id: number; name: string; jumlahUnit: number | null; nomorInspeksi: string | null }[]; // multi-material per dokumen
+  materials: { id: number; name: string; code: string | null; jumlahUnit: number | null; nomorInspeksi: string | null }[]; // multi-material per dokumen
   createdAt: string;
   checkedAt: string;
   completedAt: string | null;
@@ -283,6 +284,7 @@ interface ReturUnitDetail {
   label: string;
   materialId: number; // material milik unit ini (multi-material per dokumen)
   materialName: string;
+  materialCode: string | null; // kode human-readable material — untuk judul formulir fase
   sn: string | null;
   keputusan: "layak_pakai" | "usul_hapus" | null; // disposisi gudang, diisi saat verifikasi
   formData: Record<string, string> | null; // isian "A. DATA MATERIAL" utk cetak formulir
@@ -303,6 +305,7 @@ interface DocJoinedRow {
   id: number;
   material_id: number;
   material_name: string;
+  material_code: string | null;
   status: string;
   tug10_file_id: string;
   tug10_link: string | null;
@@ -322,7 +325,7 @@ interface DocJoinedRow {
   checked_at: Date;
   completed_at: Date | null;
   unit_count?: number;
-  materials?: { id: number; name: string; jumlahUnit: number | null; nomorInspeksi: string | null }[] | null;
+  materials?: { id: number; name: string; code: string | null; jumlahUnit: number | null; nomorInspeksi: string | null }[] | null;
   keputusan_values?: string[] | null;
 }
 
@@ -331,6 +334,7 @@ interface UnitRow {
   label: string;
   material_id: number;
   material_name: string;
+  material_code: string | null;
   sn: string | null;
   keputusan: "layak_pakai" | "usul_hapus" | null; // dicegah CHECK constraint di DB
   form_data: Record<string, string> | null;
@@ -349,7 +353,7 @@ interface ItemCekRow {
 
 async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> {
   const docRes = await pool.query(
-    `SELECT d.id, d.material_id, m.name AS material_name, m.form_key, d.status, d.jumlah_unit, d.lampiran,
+    `SELECT d.id, d.material_id, m.name AS material_name, m.code AS material_code, m.form_key, d.status, d.jumlah_unit, d.lampiran,
             d.tug10_file_id, d.tug10_link, d.catatan, d.gudang_catatan, d.nomor_inspeksi,
             d.pengawas_id, p.username AS pengawas_name, p.company_name AS pengawas_company,
             d.gudang_id, g.username AS gudang_name, g.company_name AS gudang_company,
@@ -366,7 +370,7 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
 
   const unitsRes = await pool.query(
     `SELECT u.id, u.label, u.sn, u.keputusan, u.form_data, u.form_keputusan,
-            COALESCE(u.material_id, d.material_id) AS material_id, um.name AS material_name
+            COALESCE(u.material_id, d.material_id) AS material_id, um.name AS material_name, um.code AS material_code
      FROM retur_unit u
      JOIN retur_dokumen d ON d.id = u.dokumen_id
      JOIN materials um ON um.id = COALESCE(u.material_id, d.material_id)
@@ -390,6 +394,7 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
     label: u.label,
     materialId: u.material_id,
     materialName: u.material_name,
+    materialCode: u.material_code ?? null,
     sn: u.sn,
     keputusan: u.keputusan,
     formData: u.form_data ?? null,
@@ -408,20 +413,21 @@ async function buildReturDetail(dokumenId: number): Promise<ReturDetail | null> 
 
   // Daftar material dokumen (multi-material); fallback utk data lama tanpa junction rows.
   const matsRes = await pool.query(
-    `SELECT dm.material_id, m.name, dm.jumlah_unit, dm.nomor_inspeksi
+    `SELECT dm.material_id, m.name, m.code, dm.jumlah_unit, dm.nomor_inspeksi
      FROM retur_dokumen_material dm JOIN materials m ON m.id = dm.material_id
      WHERE dm.dokumen_id = $1 ORDER BY dm.id`,
     [dokumenId],
   );
   const materials = matsRes.rows.length > 0
-    ? (matsRes.rows as { material_id: number; name: string; jumlah_unit: number | null; nomor_inspeksi: string | null }[])
-        .map((x) => ({ id: x.material_id, name: x.name, jumlahUnit: x.jumlah_unit, nomorInspeksi: x.nomor_inspeksi ?? null }))
-    : [{ id: d.material_id, name: d.material_name, jumlahUnit: d.jumlah_unit ?? null, nomorInspeksi: d.nomor_inspeksi ?? null }];
+    ? (matsRes.rows as { material_id: number; name: string; code: string | null; jumlah_unit: number | null; nomor_inspeksi: string | null }[])
+        .map((x) => ({ id: x.material_id, name: x.name, code: x.code ?? null, jumlahUnit: x.jumlah_unit, nomorInspeksi: x.nomor_inspeksi ?? null }))
+    : [{ id: d.material_id, name: d.material_name, code: d.material_code ?? null, jumlahUnit: d.jumlah_unit ?? null, nomorInspeksi: d.nomor_inspeksi ?? null }];
 
   return {
     id: d.id,
     materialId: d.material_id,
     materialName: d.material_name,
+    materialCode: d.material_code ?? null,
     status: d.status,
     jumlahUnit: d.jumlah_unit ?? null,
     lampiran: Array.isArray(d.lampiran) ? (d.lampiran as LampiranFile[]) : [],
@@ -1297,12 +1303,12 @@ router.get("/retur", async (req, res): Promise<void> => {
   if (keputusanF) { args.push(keputusanF); conds.push(`EXISTS (SELECT 1 FROM retur_unit fu WHERE fu.dokumen_id = d.id AND fu.keputusan = $${args.length})`); }
 
   const result = await pool.query(
-    `SELECT d.id, d.material_id, m.name AS material_name, d.status, d.jumlah_unit, d.lampiran,
+    `SELECT d.id, d.material_id, m.name AS material_name, m.code AS material_code, d.status, d.jumlah_unit, d.lampiran,
             d.tug10_file_id, d.tug10_link, d.catatan, d.gudang_catatan, d.nomor_inspeksi,
             d.pengawas_id, p.username AS pengawas_name,
             d.gudang_id, g.username AS gudang_name,
             (SELECT COUNT(*)::int FROM retur_unit u WHERE u.dokumen_id = d.id) AS unit_count,
-            (SELECT json_agg(json_build_object('id', m2.id, 'name', m2.name, 'jumlahUnit', dm.jumlah_unit, 'nomorInspeksi', dm.nomor_inspeksi) ORDER BY dm.id)
+            (SELECT json_agg(json_build_object('id', m2.id, 'name', m2.name, 'code', m2.code, 'jumlahUnit', dm.jumlah_unit, 'nomorInspeksi', dm.nomor_inspeksi) ORDER BY dm.id)
              FROM retur_dokumen_material dm JOIN materials m2 ON m2.id = dm.material_id
              WHERE dm.dokumen_id = d.id) AS materials,
             (SELECT array_agg(DISTINCT u.keputusan) FROM retur_unit u
@@ -1322,6 +1328,7 @@ router.get("/retur", async (req, res): Promise<void> => {
       id: d.id,
       materialId: d.material_id,
       materialName: d.material_name,
+      materialCode: d.material_code ?? null,
       status: d.status,
       jumlahUnit: d.jumlah_unit ?? null,
       lampiran: Array.isArray(d.lampiran) ? (d.lampiran as LampiranFile[]) : [],
@@ -1336,8 +1343,8 @@ router.get("/retur", async (req, res): Promise<void> => {
       gudangName: d.gudang_name,
       unitCount: d.unit_count ?? 0,
       materials: Array.isArray(d.materials) && d.materials.length > 0
-        ? (d.materials as { id: number; name: string; jumlahUnit: number | null; nomorInspeksi: string | null }[])
-        : [{ id: d.material_id, name: d.material_name, jumlahUnit: d.jumlah_unit ?? null, nomorInspeksi: d.nomor_inspeksi ?? null }],
+        ? (d.materials as { id: number; name: string; code: string | null; jumlahUnit: number | null; nomorInspeksi: string | null }[])
+        : [{ id: d.material_id, name: d.material_name, code: d.material_code ?? null, jumlahUnit: d.jumlah_unit ?? null, nomorInspeksi: d.nomor_inspeksi ?? null }],
       keputusan: Array.isArray(d.keputusan_values) ? (d.keputusan_values.length === 1 ? d.keputusan_values[0] : d.keputusan_values.length > 1 ? "campur" : null) : null,
       createdAt: new Date(d.created_at).toISOString(),
       checkedAt: new Date(d.checked_at).toISOString(),
