@@ -290,21 +290,34 @@ function buildFormSheet(wb: exceljsNs.Workbook, def: FormDefinition, detail: Ret
       // jumlah unit = user menginput "Jumlah unit seluruhnya" di tab Buat.
       const jumlahUnit = unitJumlahUnit(unit, detail);
       const matchArus = phase?.arus ?? null;
-      // Baris ARUS yang kebetulan hilang di seed (mis. 16A yang ada di materials tapi tidak
-      // di jumlahRows) ikut ditambahkan otomatis, diurutkan numerik.
-      const _rawRows = [...(sec.jumlahRows?.length ? sec.jumlahRows : [""])];
-      if (matchArus && !_rawRows.some((l) => norm(l) === norm(matchArus))) _rawRows.push(matchArus);
-      const _arusNum = (s: string): number => { const m = /(\d+)/.exec(s); return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER; };
-      const jumlahRows = _rawRows.sort((a, b) => _arusNum(a) - _arusNum(b));
-      for (const lbl of jumlahRows) {
-        const isMatch = !!matchArus && norm(lbl) === norm(matchArus);
-        cell("B", lbl, { border: true, align: { horizontal: "center", vertical: "middle" } });
-        cell("C", isMatch && jumlahUnit ? String(jumlahUnit) : "", { border: true, align: { horizontal: "center", vertical: "middle" } });
+      const isKwhCols = (cols[0] ?? "").toLowerCase().includes("5 tahun") || (cols[1] ?? "").toLowerCase().includes("5 tahun");
+      if (isKwhCols) {
+        // Form kWh: pengawas menginput jumlah pemeriksaan visual (<5/>5 Tahun) di tab Buat;
+        // nilai itu tercetak di tabel JUMLAH.
+        cell("B", unit.formData?.kurang5 ?? "", { border: true, align: { horizontal: "center", vertical: "middle" } });
+        cell("C", unit.formData?.lebih5 ?? "", { border: true, align: { horizontal: "center", vertical: "middle" } });
         cell("D", "", { border: true, align: { horizontal: "center", vertical: "middle" } });
         ws.mergeCells(`D${r}:F${r}`);
         ws.getCell(`E${r}`).border = BORDER;
         ws.getCell(`F${r}`).border = BORDER;
         r++;
+      } else {
+        // Baris ARUS yang kebetulan hilang di seed (mis. 16A yang ada di materials tapi tidak
+        // di jumlahRows) ikut ditambahkan otomatis, diurutkan numerik.
+        const _rawRows = [...(sec.jumlahRows?.length ? sec.jumlahRows : [""])];
+        if (matchArus && !_rawRows.some((l) => norm(l) === norm(matchArus))) _rawRows.push(matchArus);
+        const _arusNum = (s: string): number => { const m = /(\d+)/.exec(s); return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER; };
+        const jumlahRows = _rawRows.sort((a, b) => _arusNum(a) - _arusNum(b));
+        for (const lbl of jumlahRows) {
+          const isMatch = !!matchArus && norm(lbl) === norm(matchArus);
+          cell("B", lbl, { border: true, align: { horizontal: "center", vertical: "middle" } });
+          cell("C", isMatch && jumlahUnit ? String(jumlahUnit) : "", { border: true, align: { horizontal: "center", vertical: "middle" } });
+          cell("D", "", { border: true, align: { horizontal: "center", vertical: "middle" } });
+          ws.mergeCells(`D${r}:F${r}`);
+          ws.getCell(`E${r}`).border = BORDER;
+          ws.getCell(`F${r}`).border = BORDER;
+          r++;
+        }
       }
       // ── Tabel komponen pemeriksaan (utk form JUMLAH: hanya kWh — MCB/MCCB tanpa komponen) ──
       // Hasil komponen yang wajib diisi pengawas tetap tampil di form cetak.

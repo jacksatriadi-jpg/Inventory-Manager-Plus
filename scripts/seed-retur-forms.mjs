@@ -31,7 +31,7 @@ const DEFS = {
     title: "FORMULIR INSPEKSI MATERIAL RETUR KWH METER",
     intro: "kWh Meter",
     fields: {
-      left: [F("ulp", "Unit Layanan Pelanggan"), F("tipe", "Tipe kWh Meter", "1PH/3PH"), F("jenis", "Jenis kWh Meter", "Prabayar/Pascabayar")],
+      left: [F("ulp", "Unit Layanan Pelanggan"), F("tipe", "Tipe kWh Meter", undefined, ["1PH", "3PH"]), F("jenis", "Jenis kWh Meter", undefined, ["Prabayar", "Pascabayar"])],
       right: [],
     },
     sections: [{ kode: "B", judul: "JUMLAH PEMERIKSAAN VISUAL DAN KONSTRUKSI", colL: "", colR: "", jumlah: true, jumlahCols: ["< 5 TAHUN", "> 5 TAHUN", "KETERANGAN"], jumlahRows: [] }],

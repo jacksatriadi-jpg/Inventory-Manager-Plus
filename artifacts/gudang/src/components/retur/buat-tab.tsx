@@ -102,6 +102,10 @@ export function BuatTab() {
   // Material MCB/MCCB tidak punya komponen pemeriksaan (form = Data Material + JUMLAH).
   const isMcbCode = (code?: string | null) => /^\s*(MCB|MCCB)\s+/i.test(code ?? "");
 
+  // kWh: definisi tabel JUMLAH dengan kolum <5/>5 Tahun — tampilkan input jumlah pemeriksaan visual.
+  const isKwhJumlahDef = (def: FormDefinition | null) =>
+    (def?.sections ?? []).some((s) => (s.jumlah ?? false) && (s.jumlahCols ?? []).some((c) => (c ?? "").toLowerCase().includes("5 tahun")));
+
   // Muat template ceklist + definisi form untuk material milik grup gi (paralel, per grup).
   // keepSampling: saat memulihkan draft, jumlahUnit & lampiran tersimpan JANGAN direset
   // (berbeda dengan kasus ganti material manual yang memang mengosongkan state sampling).
@@ -576,6 +580,26 @@ export function BuatTab() {
                             )}
                           </div>
                         ))}
+                      </div>
+                    </div>
+                  )}
+                  {isKwhJumlahDef(g.formDef) && (
+                    <div className="mb-4 rounded-md border border-border/60 bg-muted/30 p-3 space-y-3">
+                      <p className="text-sm font-medium">Jumlah pemeriksaan visual</p>
+                      <p className="text-xs text-muted-foreground">Catat jumlah pemeriksaan visual (&lt;5 Tahun / &gt;5 Tahun) — tercantum di tabel JUMLAH di form cetak.</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <Label className="text-xs">&lt; 5 Tahun</Label>
+                          <Input type="number" min={0} className="h-8 text-xs" placeholder="mis. 5"
+                            value={unit.formData?.kurang5 ?? ""}
+                            onChange={(e) => setFormValue(gi, ui, "kurang5", e.target.value)} />
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-xs">&gt; 5 Tahun</Label>
+                          <Input type="number" min={0} className="h-8 text-xs" placeholder="mis. 3"
+                            value={unit.formData?.lebih5 ?? ""}
+                            onChange={(e) => setFormValue(gi, ui, "lebih5", e.target.value)} />
+                        </div>
                       </div>
                     </div>
                   )}
