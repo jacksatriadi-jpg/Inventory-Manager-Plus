@@ -13,6 +13,14 @@ import type { ReturDetail, ReturUnitDetail, ReturItemCek } from "./shared";
 
 // Lebar kolom A..H — sama persis dengan file contoh.
 const COL_W = [2.3, 4.6, 30.9, 10.6, 14.0, 20.4, 14.4, 27.4];
+
+// Lebar resmi per formulir — diambil dari file reference (DOC-20261127-WA0055.xlsx).
+// Hanya di-override untuk form jumlah (kWh/MCB) & khususnya kWh — kolom B/C resmi 15.14
+// (bukan 4.6) sehingga tabel <5/>5 Tahun dan tabel MCB proporsional.
+const COL_W_BY_CODE: Record<string, number[]> = {
+  "Formulir 01-A": [2.29, 15.14, 15.14, 14.57, 15.86, 20.43, 14.43, 27.43],
+  "Formulir 01-B": [2.29, 14.14, 15.14, 14.57, 15.86, 20.43, 14.43, 27.43],
+};
 const FONT = { name: "Arial", size: 10 } as const;
 const BOLD = { name: "Arial", size: 10, bold: true } as const;
 const THIN = { style: "thin" as const, color: { argb: "FF000000" } };
@@ -209,7 +217,8 @@ export function buildMultiFormWorkbook(entries: FormWorkbookEntry[]) {
 function buildFormSheet(wb: exceljsNs.Workbook, def: FormDefinition, detail: ReturDetail, unit: ReturUnitDetail, unitIdx: number, prefix?: string): void {
   const phase = parsePhaseMaterial(unitMaterialCode(unit, detail));
   const ws = wb.addWorksheet(sheetName(unit.label, unitIdx, prefix));
-  ws.columns = COL_W.map((width) => ({ width }));
+  const colW = COL_W_BY_CODE[def.formCode] ?? COL_W;
+  ws.columns = colW.map((width) => ({ width }));
   const items = finalItems(unit);
   const matched = new Set<string>();
   let r = 1;
