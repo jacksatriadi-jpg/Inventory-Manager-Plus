@@ -618,9 +618,12 @@ router.get("/retur/template/:materialId", async (req, res): Promise<void> => {
     return;
   }
 
-  const mat = await pool.query("SELECT name FROM materials WHERE id = $1", [materialId]);
-  const matRow = mat.rows[0] as { name: string } | undefined; // kolom sesuai SELECT
+  const mat = await pool.query("SELECT name, code FROM materials WHERE id = $1", [materialId]);
+  const matRow = mat.rows[0] as { name: string; code: string | null } | undefined; // kolom sesuai SELECT
   const name = matRow ? matRow.name : "";
+  const code = matRow ? matRow.code : null;
+  // Material MCB/MCCB tidak punya komponen pemeriksaan — kembalikan daftar kosong.
+  if (code && /^\s*(MCB|MCCB)\s+/i.test(code)) { res.json({ items: [] }); return; }
   res.json({
     items: presetForMaterialName(name).map((label) => ({ id: null, label, options: null, tipeInput: "opsi" as const, fotoWajibPengawas: true, fotoWajibGudang: true })),
   });
@@ -919,10 +922,11 @@ router.post("/retur", async (req, res): Promise<void> => {
     const unitsRaw = g.units;
     if (!Array.isArray(unitsRaw) || unitsRaw.length === 0) { res.status(400).json({ error: `Material ${gi + 1}: minimal 1 unit harus diisi` }); return; }
 
-    const mat = await pool.query("SELECT id, name, sampling_enabled FROM materials WHERE id = $1", [materialId]);
+    const mat = await pool.query("SELECT id, name, code, sampling_enabled FROM materials WHERE id = $1", [materialId]);
     if (mat.rows.length === 0) { res.status(400).json({ error: `Material ${gi + 1} tidak ditemukan` }); return; }
-    const matRow = mat.rows[0] as { id: number; name: string; sampling_enabled: boolean }; // kolom sesuai SELECT
+    const matRow = mat.rows[0] as { id: number; name: string; code: string | null; sampling_enabled: boolean }; // kolom sesuai SELECT
     const materialName = matRow.name;
+    const isMcbMaterial = /^\s*(MCB|MCCB)\s+/i.test(matRow.code ?? "");
 
     // Mode sampling: total unit deklaratif per material; unit terisi = sampel perwakilan.
     let jumlahUnit: number | null = null;
@@ -960,7 +964,7 @@ router.post("/retur", async (req, res): Promise<void> => {
       return;
     }
     // Item ceklist yang diharapkan = baris template tersimpan; jika belum ada, preset generik.
-    const expectedLabels = cfg.size > 0 ? [...cfg.keys()] : presetForMaterialName(materialName);
+    const expectedLabels = isMcbMaterial ? [] : (cfg.size > 0 ? [...cfg.keys()] : presetForMaterialName(materialName));
     const allowedFormKeys = formTpl ? formFieldKeys(formTpl.definition) : new Set<string>();
     const fieldLabelByKey = new Map<string, string>();
     if (formTpl) {
