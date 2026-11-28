@@ -175,12 +175,42 @@ function rowCells(ws: exceljsNs.Worksheet, r: number, from: string, to: string, 
 export function buildFormWorkbook(def: FormDefinition, detail: ReturDetail, defsByMaterial?: Record<number, FormDefinition>) {
   const multi = (detail.materials?.length ?? 0) > 1;
   const units = [...detail.units].sort((a, b) => phaseRank(a, detail) - phaseRank(b, detail));
-  const wb = new ExcelJS.Workbook();
-  units.forEach((unit, ui) => {
-    const d = (unit.materialId != null && defsByMaterial?.[unit.materialId]) || def;
+  // Kelompokkan unit dengan phasa sama (MCB/MCCB) ke SATU sheet — tabel JUMLAH sudah
+  // punya satu baris per Ampere, jadi sheet baru per material berulang dan membingungkan.
+  // Unit tanpa phasa (kWh & lain-lain) tetap 1 sheet per unit.
+  interface Group { key: string; prefix: string | undefined; rank: number; units: ReturUnitDetail[] }
+  const byKey = new Map<string, Group>();
+  const groups: Group[] = [];
+  for (const unit of units) {
     const phase = parsePhaseMaterial(unitMaterialCode(unit, detail));
-    const prefix = phase ? `${phase.device} ${phase.fasa} PHASA` : multi ? (unit.materialName ?? detail.materialName) : undefined;
-    buildFormSheet(wb, d, detail, unit, ui, prefix);
+    const key = phase ? `phase:${phase.device}:${phase.fasa}` : `unit:${unit.id}`;
+    let g = byKey.get(key);
+    if (!g) {
+      const rank = phase ? (phase.fasa >= 3 ? 0 : 1) : 2;
+      const prefix = phase ? `${phase.device} ${phase.fasa} PHASA` : (multi ? (unit.materialName ?? detail.materialName) : undefined);
+      g = { key, prefix, rank, units: [] };
+      byKey.set(key, g);
+      groups.push(g);
+    }
+    g.units.push(unit);
+  }
+  groups.sort((a, b) => a.rank - b.rank);
+  const wb = new ExcelJS.Workbook();
+  const usedNames = new Set<string>();
+  const uniqueName = (raw: string): string => {
+    const clean = raw.replace(/[\[\]:*?/\\']/g, " ").slice(0, 31) || `Sheet`;
+    if (!usedNames.has(clean)) { usedNames.add(clean); return clean; }
+    for (let i = 2; ; i++) {
+      const cand = `${clean.slice(0, 27)} ${i}`;
+      if (!usedNames.has(cand)) { usedNames.add(cand); return cand; }
+    }
+  };
+  groups.forEach((g, gi) => {
+    const firstUnit = g.units[0];
+    const d = (firstUnit.materialId != null && defsByMaterial?.[firstUnit.materialId]) || def;
+    const sheetRaw = g.prefix ? g.prefix : (g.units.length > 1 ? `${g.prefix ?? "Formulir"} ${gi + 1}` : (firstUnit.materialName ?? detail.materialName));
+    const sheetName = uniqueName(sheetRaw);
+    buildFormSheet(wb, d, detail, g.units, gi, g.prefix, sheetName);
   });
   return wb;
 }
@@ -199,26 +229,51 @@ function phaseRank(unit: ReturUnitDetail, detail: ReturDetail): number {
 export interface FormWorkbookEntry { def: FormDefinition; detail: ReturDetail; defsByMaterial?: Record<number, FormDefinition> }
 
 export function buildMultiFormWorkbook(entries: FormWorkbookEntry[]) {
-  const sheets: { def: FormDefinition; detail: ReturDetail; unit: ReturUnitDetail; prefix: string; rank: number }[] = [];
+  const sheets: { def: FormDefinition; detail: ReturDetail; units: ReturUnitDetail[]; prefix: string; rank: number }[] = [];
   for (const { def, detail, defsByMaterial } of entries) {
-    for (const unit of detail.units) {
-      const d = (unit.materialId != null && defsByMaterial?.[unit.materialId]) || def;
+    // Kelompokkan per phasa seperti di buildFormWorkbook — jumlah tabel sudah per Ampere.
+    const units = [...detail.units].sort((a, b) => phaseRank(a, detail) - phaseRank(b, detail));
+    const byKey = new Map<string, { prefix: string; rank: number; units: ReturUnitDetail[] }>();
+    for (const unit of units) {
       const phase = parsePhaseMaterial(unitMaterialCode(unit, detail));
-      const prefix = phase ? `${phase.device} ${phase.fasa} PHASA Dok${detail.id}` : `${unit.materialName ?? detail.materialName} Dok${detail.id}`;
-      sheets.push({ def: d, detail, unit, prefix, rank: phase ? (phase.fasa >= 3 ? 0 : 1) : 2 });
+      const key = phase ? `phase:${phase.device}:${phase.fasa}` : `unit:${unit.id}`;
+      let g = byKey.get(key);
+      if (!g) {
+        const rank = phase ? (phase.fasa >= 3 ? 0 : 1) : 2;
+        const prefix = phase ? `${phase.device} ${phase.fasa} PHASA Dok${detail.id}` : `${unit.materialName ?? detail.materialName} Dok${detail.id}`;
+        g = { prefix, rank, units: [] };
+        byKey.set(key, g);
+      }
+      g.units.push(unit);
+    }
+    for (const g of byKey.values()) {
+      const firstUnit = g.units[0];
+      const d = (firstUnit.materialId != null && defsByMaterial?.[firstUnit.materialId]) || def;
+      sheets.push({ def: d, detail, units: g.units, prefix: g.prefix, rank: g.rank });
     }
   }
   sheets.sort((a, b) => a.rank - b.rank);
   const wb = new ExcelJS.Workbook();
-  sheets.forEach((s, i) => buildFormSheet(wb, s.def, s.detail, s.unit, i, s.prefix));
+  const usedNames = new Set<string>();
+  const uniqueName = (raw: string): string => {
+    const clean = raw.replace(/[\[\]:*?/\\']/g, " ").slice(0, 31) || `Sheet`;
+    if (!usedNames.has(clean)) { usedNames.add(clean); return clean; }
+    for (let i = 2; ; i++) {
+      const cand = `${clean.slice(0, 27)} ${i}`;
+      if (!usedNames.has(cand)) { usedNames.add(cand); return cand; }
+    }
+  };
+  sheets.forEach((s, i) => buildFormSheet(wb, s.def, s.detail, s.units, i, s.prefix, uniqueName(s.prefix)));
   return wb;
 }
 
-function buildFormSheet(wb: exceljsNs.Workbook, def: FormDefinition, detail: ReturDetail, unit: ReturUnitDetail, unitIdx: number, prefix?: string): void {
+function buildFormSheet(wb: exceljsNs.Workbook, def: FormDefinition, detail: ReturDetail, units: ReturUnitDetail[], unitIdx: number, prefix?: string, sheetLabel?: string): void {
+  const unit = units[0];
   const phase = parsePhaseMaterial(unitMaterialCode(unit, detail));
-  const ws = wb.addWorksheet(sheetName(unit.label, unitIdx, prefix));
+  const ws = wb.addWorksheet(sheetLabel ?? sheetName(unit.label, unitIdx, prefix));
   const colW = COL_W_BY_CODE[def.formCode] ?? COL_W;
   ws.columns = colW.map((width) => ({ width }));
+  const multi = units.length > 1;
   const items = finalItems(unit);
   const matched = new Set<string>();
   let r = 1;
@@ -249,18 +304,27 @@ function buildFormSheet(wb: exceljsNs.Workbook, def: FormDefinition, detail: Ret
   const fieldsLeft = def.fields.left ?? [];
   const fieldsRight = def.fields.right ?? [];
   const fieldRowspan = Math.max(fieldsLeft.length, fieldsRight.length);
-  for (let i = 0; i < fieldRowspan; i++) {
-    const fl = fieldsLeft[i];
-    const fr = fieldsRight[i];
-    if (fl) {
-      ws.mergeCells(`B${r}:D${r}`);
-      cell("B", `${fl.label}: ${displayValue(unit, fl.key)}${fl.hint ? `  (${fl.hint})` : ""}`, { align: { wrapText: true } });
+  // Multi-unit: isi per unit — ulp/tipe per material tetap truthful (beda antar material).
+  for (const u of multi ? units : [unit]) {
+    if (multi) {
+      ws.mergeCells(`B${r}:H${r}`);
+      cell("B", `— ${u.materialName ?? detail.materialName} —`, { bold: true, align: { horizontal: "left" } });
+      r++;
     }
-    if (fr) {
-      ws.mergeCells(`F${r}:H${r}`);
-      cell("F", `${fr.label}: ${displayValue(unit, fr.key)}${fr.hint ? `  (${fr.hint})` : ""}`, { align: { wrapText: true } });
+    for (let i = 0; i < fieldRowspan; i++) {
+      const fl = fieldsLeft[i];
+      const fr = fieldsRight[i];
+      if (fl) {
+        ws.mergeCells(`B${r}:D${r}`);
+        cell("B", `${fl.label}: ${displayValue(u, fl.key)}${fl.hint ? `  (${fl.hint})` : ""}`, { align: { wrapText: true } });
+      }
+      if (fr) {
+        ws.mergeCells(`F${r}:H${r}`);
+        cell("F", `${fr.label}: ${displayValue(u, fr.key)}${fr.hint ? `  (${fr.hint})` : ""}`, { align: { wrapText: true } });
+      }
+      r++;
     }
-    r++;
+    if (multi) r++;
   }
   r++;
 
@@ -297,6 +361,15 @@ function buildFormSheet(wb: exceljsNs.Workbook, def: FormDefinition, detail: Ret
       r = h2 + 1;
       // Otomatis isi kolom JUMLAH baris ARUS yang sesuai material (mode sampling):
       // jumlah unit = user menginput "Jumlah unit seluruhnya" di tab Buat.
+      // Multi-material phasa sama: isi per-arus dari unit pemiliknya.
+      const unitJumlahMap = new Map<string, number>();
+      for (const u of units) {
+        const up = parsePhaseMaterial(unitMaterialCode(u, detail));
+        if (up?.arus) {
+          const j = unitJumlahUnit(u, detail);
+          if (j) unitJumlahMap.set(norm(up.arus), j);
+        }
+      }
       const jumlahUnit = unitJumlahUnit(unit, detail);
       const matchArus = phase?.arus ?? null;
       const isKwhCols = (cols[0] ?? "").toLowerCase().includes("5 tahun") || (cols[1] ?? "").toLowerCase().includes("5 tahun");
@@ -318,9 +391,9 @@ function buildFormSheet(wb: exceljsNs.Workbook, def: FormDefinition, detail: Ret
         const _arusNum = (s: string): number => { const m = /(\d+)/.exec(s); return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER; };
         const jumlahRows = _rawRows.sort((a, b) => _arusNum(a) - _arusNum(b));
         for (const lbl of jumlahRows) {
-          const isMatch = !!matchArus && norm(lbl) === norm(matchArus);
+          const jumlah = unitJumlahMap.get(norm(lbl)) ?? (!!matchArus && norm(lbl) === norm(matchArus) && jumlahUnit ? jumlahUnit : null);
           cell("B", lbl, { border: true, align: { horizontal: "center", vertical: "middle" } });
-          cell("C", isMatch && jumlahUnit ? String(jumlahUnit) : "", { border: true, align: { horizontal: "center", vertical: "middle" } });
+          cell("C", jumlah ? String(jumlah) : "", { border: true, align: { horizontal: "center", vertical: "middle" } });
           cell("D", "", { border: true, align: { horizontal: "center", vertical: "middle" } });
           ws.mergeCells(`D${r}:F${r}`);
           ws.getCell(`E${r}`).border = BORDER;
