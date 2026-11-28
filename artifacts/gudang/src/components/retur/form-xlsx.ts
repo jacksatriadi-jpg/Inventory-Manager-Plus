@@ -319,38 +319,8 @@ function buildFormSheet(wb: exceljsNs.Workbook, def: FormDefinition, detail: Ret
           r++;
         }
       }
-      // ── Tabel komponen pemeriksaan (utk form JUMLAH: hanya kWh — MCB/MCCB tanpa komponen) ──
-      // Hasil komponen yang wajib diisi pengawas tetap tampil di form cetak.
-      if (items.size > 0 && !phase) {
-        const t0 = r;
-        cell("A", "", { border: true });
-        ws.mergeCells(`B${t0}:H${t0}`);
-        cell("B", "KOMPONEN PEMERIKSAAN", { bold: true, border: true, align: { horizontal: "center" } });
-        rowCells(ws, t0, "C", "H", (a) => { ws.getCell(a).border = BORDER; });
-        r = t0 + 1;
-        const h3 = r;
-        cell("B", "NO", { bold: true, border: true, align: { horizontal: "center" } });
-        cell("C", "MATA UJI", { bold: true, border: true, align: { horizontal: "center" } });
-        ws.mergeCells(`D${h3}:E${h3}`); cell("D", "HASIL", { bold: true, border: true, align: { horizontal: "center" } }); ws.getCell(`E${h3}`).border = BORDER;
-        cell("F", "KETERANGAN", { bold: true, border: true, align: { horizontal: "center" } });
-        ws.mergeCells(`F${h3}:H${h3}`); rowCells(ws, h3, "G", "H", (a) => { ws.getCell(a).border = BORDER; });
-        r = h3 + 1;
-        let no = 0;
-        for (const [, item] of items) {
-          no++;
-          const side = hasilSide(item.hasil, {} as FormRowDef, { kode: "", judul: "", colL: "", colR: "" });
-          const dVal = side === "L" ? "\u2713" : side === "R" ? "\u2717" : (item.hasil || "");
-          cell("B", autoNo(no), { border: true, align: { horizontal: "center", vertical: "middle" } });
-          cell("C", item.itemLabel, { border: true, align: { wrapText: true, vertical: "middle" } });
-          ws.mergeCells(`D${r}:E${r}`);
-          cell("D", dVal, { border: true, align: { horizontal: "center", vertical: "middle" } }); ws.getCell(`E${r}`).border = BORDER;
-          ws.mergeCells(`F${r}:H${r}`);
-          cell("F", item.catatan ?? "", { border: true, align: { wrapText: true, vertical: "middle" } });
-          rowCells(ws, r, "G", "H", (a) => { ws.getCell(a).border = BORDER; });
-          r++;
-        }
-        r += 2;
-      }
+      // ── Form JUMLAH (kWh/MCB): komponen pemeriksaan TIDAK tercetak — sesuai form
+      // resmi reference (Hanya A. DATA MATERIAL + B. JUMLAH + DISETUJUI OLEH). ──
       r += 2;
       continue;
     }
