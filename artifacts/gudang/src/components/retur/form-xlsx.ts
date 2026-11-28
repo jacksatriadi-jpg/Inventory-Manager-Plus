@@ -306,9 +306,9 @@ function buildFormSheet(wb: exceljsNs.Workbook, def: FormDefinition, detail: Ret
         ws.getCell(`F${r}`).border = BORDER;
         r++;
       }
-      // ── Tabel komponen pemeriksaan (utk form JUMLAH: MCB/kWh) ─────────────
+      // ── Tabel komponen pemeriksaan (utk form JUMLAH: hanya kWh — MCB/MCCB tanpa komponen) ──
       // Hasil komponen yang wajib diisi pengawas tetap tampil di form cetak.
-      if (items.size > 0) {
+      if (items.size > 0 && !phase) {
         const t0 = r;
         cell("A", "", { border: true });
         ws.mergeCells(`B${t0}:H${t0}`);

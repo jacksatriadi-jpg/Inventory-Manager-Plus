@@ -89,7 +89,7 @@ export interface ReturDetail extends ReturDokumen {
 
 // ─── Template Formulir Inspeksi (Cetak Formulir 01-A..01-O) ─────────────────────
 // Bentuk definition = persis yang di-seed scripts/seed-retur-forms.mjs ke DB.
-export interface FormFieldDef { key: string; label: string; hint?: string }
+export interface FormFieldDef { key: string; label: string; hint?: string; options?: string[] } // options = dropdown (opsi tetap) di tab Buat
 export interface FormRowDef {
   no?: string; label: string; persyaratan?: string; ket?: string;
   section?: string; level?: number; parent?: boolean; textValue?: string; satuan?: string;

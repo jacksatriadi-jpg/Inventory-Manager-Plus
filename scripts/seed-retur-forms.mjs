@@ -6,7 +6,7 @@
 // Definisi JSONB dibaca: UI input Data Material (buat-tab), kesimpulan (verifikasi-tab),
 // dan renderer Cetak Formulir (components/retur/form-xlsx.ts).
 
-const F = (key, label, hint) => ({ key, label, ...(hint ? { hint } : {}) });
+const F = (key, label, hint, options) => ({ key, label, ...(hint ? { hint } : {}), ...(options ? { options } : {}) });
 const R = (no, label, opts = {}) => ({
   no, label, persyaratan: opts.req ?? "", ket: opts.ket ?? "",
   ...(opts.level ? { level: opts.level } : {}),
@@ -44,7 +44,7 @@ const DEFS = {
     title: "FORMULIR INSPEKSI MATERIAL RETUR MCB/MCCB",
     intro: "MCB/MCCB",
     fields: {
-      left: [F("ulp", "Unit Layanan Pelanggan"), F("tipe", "Tipe MCB/MCCB", "1PH/3PH")],
+      left: [F("ulp", "Unit Layanan Pelanggan"), F("tipe", "Tipe MCB/MCCB", undefined, ["MCB 1 Phasa", "MCB 3 Phasa", "MCCB"])],
       right: [],
     },
     sections: [{ kode: "B", judul: "JUMLAH PEMERIKSAAN VISUAL DAN KONSTRUKSI", colL: "", colR: "", jumlah: true, jumlahCols: ["ARUS", "JUMLAH", "KETERANGAN"], jumlahRows: ["2A","4A","6A","10A","16A","20A","25A","35A","50A","63A","80A","100A","125A","160A","200A","225A","250A","300A"] }],

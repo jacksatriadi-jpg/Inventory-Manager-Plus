@@ -99,6 +99,9 @@ export function BuatTab() {
   const nameOf = (id: string | number) =>
     (materials ?? []).find((m) => String(m.id) === String(id))?.name ?? String(id);
 
+  // Material MCB/MCCB tidak punya komponen pemeriksaan (form = Data Material + JUMLAH).
+  const isMcbCode = (code?: string | null) => /^\s*(MCB|MCCB)\s+/i.test(code ?? "");
+
   // Muat template ceklist + definisi form untuk material milik grup gi (paralel, per grup).
   // keepSampling: saat memulihkan draft, jumlahUnit & lampiran tersimpan JANGAN direset
   // (berbeda dengan kasus ganti material manual yang memang mengosongkan state sampling).
@@ -559,9 +562,18 @@ export function BuatTab() {
                         {[...(g.formDef.fields?.left ?? []), ...(g.formDef.fields?.right ?? [])].map((f) => (
                           <div key={f.key} className="space-y-1">
                             <Label className="text-xs">{f.label} <span className="text-red-600 font-bold" title="Wajib diisi">*</span>{f.hint ? <span className="text-muted-foreground font-normal"> — {f.hint}</span> : ""}</Label>
-                            <Input className="h-8 text-xs" placeholder={f.hint ?? f.label}
-                              value={unit.formData?.[f.key] ?? ""}
-                              onChange={(e) => setFormValue(gi, ui, f.key, e.target.value)} />
+                            {f.options ? (
+                              <Select value={unit.formData?.[f.key] ?? ""} onValueChange={(v) => setFormValue(gi, ui, f.key, v)}>
+                                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder={f.hint ?? f.label} /></SelectTrigger>
+                                <SelectContent>
+                                  {f.options.map((o) => <SelectItem key={o} value={o}>{o}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <Input className="h-8 text-xs" placeholder={f.hint ?? f.label}
+                                value={unit.formData?.[f.key] ?? ""}
+                                onChange={(e) => setFormValue(gi, ui, f.key, e.target.value)} />
+                            )}
                           </div>
                         ))}
                       </div>
@@ -572,7 +584,9 @@ export function BuatTab() {
                       {g.materialId
                         ? g.templateError
                           ? `Gagal memuat template material: ${g.templateError} — muat ulang halaman atau pilih ulang material.`
-                          : "Template material ini kosong — atur daftar komponen di tab Pengaturan (master)."
+                          : isMcbCode((materials ?? []).find((m) => String(m.id) === String(g.materialId))?.code)
+                            ? "Material MCB/MCCB tidak memerlukan komponen pemeriksaan — tipe dipilih dari dropdown di atas."
+                            : "Template material ini kosong — atur daftar komponen di tab Pengaturan (master)."
                         : "Pilih material untuk memuat daftar pemeriksaan."}
                     </p>
                   ) : (
