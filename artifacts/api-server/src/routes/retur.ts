@@ -743,6 +743,19 @@ function formFieldKeys(definition: Record<string, unknown>): Set<string> {
   return keys;
 }
 
+// kWh: definisi tabel JUMLAH dengan kolum <5/>5 Tahun — formData kurang5/lebih5 harus lolos validasi
+// allowlist (nilai ini opsional, bukan field A. DATA MATERIAL wajib).
+function isKwhJumlahDef(definition: Record<string, unknown>): boolean {
+  const sections = Array.isArray(definition.sections) ? (definition.sections as unknown[]) : [];
+  for (const sec of sections) {
+    if (sec && typeof sec === "object" && (sec as Record<string, unknown>).jumlah === true) {
+      const cols = Array.isArray((sec as Record<string, unknown>).jumlahCols) ? ((sec as Record<string, unknown>).jumlahCols as string[]) : [];
+      if (cols.some((c) => (c ?? "").toLowerCase().includes("5 tahun"))) return true;
+    }
+  }
+  return false;
+}
+
 // ─── GET /api/retur/forms — daftar template formulir ( utk UI assignment master ) ─
 router.get("/retur/forms", async (req, res): Promise<void> => {
   if (!(await requireReturMaster(req, res))) return;
@@ -965,7 +978,14 @@ router.post("/retur", async (req, res): Promise<void> => {
     }
     // Item ceklist yang diharapkan = baris template tersimpan; jika belum ada, preset generik.
     const expectedLabels = isMcbMaterial ? [] : (cfg.size > 0 ? [...cfg.keys()] : presetForMaterialName(materialName));
-    const allowedFormKeys = formTpl ? formFieldKeys(formTpl.definition) : new Set<string>();
+    const defFieldKeys = formTpl ? formFieldKeys(formTpl.definition) : new Set<string>();
+    // kWh jumlah: key kurang5/lebih5 disimpan di formData tapi TIDAK wajib — allowlist aja, mandatory tetap def-only.
+    const allowedFormKeys = new Set(defFieldKeys);
+    if (formTpl && isKwhJumlahDef(formTpl.definition)) {
+      allowedFormKeys.add("kurang5");
+      allowedFormKeys.add("lebih5");
+    }
+    const mandatoryKeys = defFieldKeys;
     const fieldLabelByKey = new Map<string, string>();
     if (formTpl) {
       const flds = (formTpl.definition.fields ?? {}) as Record<string, unknown>;
@@ -1008,7 +1028,7 @@ router.post("/retur", async (req, res): Promise<void> => {
           }
         }
         // Field "A. DATA MATERIAL" mandatory untuk material dengan template formulir.
-        const missingForm = [...allowedFormKeys].filter((k) => !fd[k]);
+        const missingForm = [...mandatoryKeys].filter((k) => !fd[k]);
         if (missingForm.length > 0) {
           res.status(400).json({ error: `Material "${materialName}" unit "${label}": isian data material wajib diisi — belum: ${missingForm.map((k) => fieldLabelByKey.get(k) ?? k).join(", ")}` });
           return;
